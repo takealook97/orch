@@ -1,0 +1,278 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"syscall"
+	"time"
+)
+
+type Worker struct {
+	Name       string   `json:"name"`
+	Key        string   `json:"key"`
+	Family     string   `json:"family"`
+	Kind       string   `json:"kind"`
+	Pane       string   `json:"pane"`
+	Role       string   `json:"role"`
+	Purpose    string   `json:"purpose,omitempty"`
+	Reviews    []string `json:"reviews,omitempty"`
+	Account    string   `json:"account"`
+	Cwd        string   `json:"cwd"`
+	Worktree   string   `json:"worktree,omitempty"`
+	Contract   string   `json:"contract,omitempty"`
+	Result     string   `json:"result"`
+	Status     string   `json:"status"` // spawned, prompted, done, blocked, partial, failed, quota, lost, closed
+	FallbackOf string   `json:"fallback_of,omitempty"`
+	Tried      []string `json:"tried,omitempty"`
+	// Baseline maps files already changed at prompt time to their content hash.
+	Baseline      map[string]string `json:"baseline,omitempty"`
+	TriedAccounts []string          `json:"tried_accounts,omitempty"`
+	Started       time.Time         `json:"started"`
+	Prompted      time.Time         `json:"prompted,omitempty"`
+	Closed        time.Time         `json:"closed,omitempty"`
+}
+
+type Event struct {
+	At   time.Time `json:"at"`
+	What string    `json:"what"`
+}
+
+type Run struct {
+	ID        string    `json:"id"`
+	Created   time.Time `json:"created"`
+	HeadPane  string    `json:"head_pane"`
+	Workspace string    `json:"workspace"`
+	Tab       string    `json:"tab"`
+	Mode      string    `json:"mode"`
+	Playbook  string    `json:"playbook,omitempty"`
+	Goal      string    `json:"goal,omitempty"`
+	Status    string    `json:"status"` // active, closed
+	Workers   []*Worker `json:"workers"`
+	Events    []Event   `json:"events"`
+}
+
+// envOrch reads ORCH_<key>.
+func envOrch(key string) string { return os.Getenv("ORCH_" + key) }
+
+func orchHome() string {
+	if v := envOrch("HOME"); v != "" {
+		return v
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".orch")
+}
+
+func runsDir() string         { return filepath.Join(orchHome(), "runs") }
+func runDir(id string) string { return filepath.Join(runsDir(), id) }
+
+func (r *Run) dir() string                  { return runDir(r.ID) }
+func (r *Run) contractPath(n string) string { return filepath.Join(r.dir(), "contracts", n+".md") }
+func (r *Run) resultPath(n string) string   { return filepath.Join(r.dir(), "results", n+".md") }
+func (r *Run) evidenceDir(n string) string  { return filepath.Join(r.dir(), "evidence", n) }
+
+func (r *Run) event(format string, args ...any) {
+	r.Events = append(r.Events, Event{At: time.Now(), What: fmt.Sprintf(format, args...)})
+}
+
+func (r *Run) worker(name string) *Worker {
+	for _, w := range r.Workers {
+		if w.Name == name {
+			return w
+		}
+	}
+	return nil
+}
+
+func (r *Run) liveWorkers() []*Worker {
+	var out []*Worker
+	for _, w := range r.Workers {
+		if w.Pane != "" && w.Status != "closed" && w.Status != "lost" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func newRunID() string {
+	b := make([]byte, 3)
+	_, _ = rand.Read(b)
+	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
+}
+
+func loadRun(id string) (*Run, error) {
+	data, err := os.ReadFile(filepath.Join(runDir(id), "run.json"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("run %s not found", id)
+		}
+		return nil, err
+	}
+	var r Run
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("run.json for run %s is corrupt: %w", id, err)
+	}
+	return &r, nil
+}
+
+func saveRun(r *Run) error {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(r.dir(), ".run-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(r.dir(), "run.json"))
+}
+
+// withRun loads a run under an exclusive lock, applies fn and saves it.
+func withRun(id string, fn func(*Run) error) error {
+	lock, err := os.OpenFile(filepath.Join(runDir(id), ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("cannot lock run %s: %w", id, err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	r, err := loadRun(id)
+	if err != nil {
+		return err
+	}
+	// A failed callback leaves run.json untouched (no partial ownership changes).
+	if err := fn(r); err != nil {
+		return err
+	}
+	return saveRun(r)
+}
+
+func allRuns() ([]*Run, error) {
+	entries, err := os.ReadDir(runsDir())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []*Run
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		r, err := loadRun(e.Name())
+		if err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Created.Before(out[j].Created) })
+	return out, nil
+}
+
+// resolveRun picks --run, then ORCH_RUN, then the newest active run owned by this Head pane.
+func resolveRun(flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	if v := envOrch("RUN"); v != "" {
+		return v, nil
+	}
+	runs, err := allRuns()
+	if err != nil {
+		return "", err
+	}
+	head := os.Getenv("HERDR_PANE_ID")
+	for i := len(runs) - 1; i >= 0; i-- {
+		if runs[i].Status == "active" && runs[i].HeadPane == head {
+			return runs[i].ID, nil
+		}
+	}
+	return "", errors.New("no active run. Create one with 'orch run new' or specify --run")
+}
+
+// ownedPanes returns every live worker pane of active runs owned by head, oldest first.
+func ownedPanes(head string) ([]string, error) {
+	runs, err := allRuns()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range runs {
+		if r.Status != "active" || r.HeadPane != head {
+			continue
+		}
+		for _, w := range r.liveWorkers() {
+			out = append(out, w.Pane)
+		}
+	}
+	return out, nil
+}
+
+const acceptanceTemplate = `# Acceptance criteria
+
+Criteria derived by Head from the original request. Use one sentence per numbered item.
+
+1.
+`
+
+const decisionsTemplate = `# Decision log
+
+Head records implicit decisions (names, interfaces, libraries, formats, scope) as numbered items.
+Every contract references this file as input. Workers list needed new decisions under Blockers in the result report.
+
+`
+
+const findingsTemplate = `# Findings
+
+Classify as confirmed defect / plausible risk / unsupported concern / resolved. Give primary evidence for each item.
+
+`
+
+func createRun(request, mode, playbook, goal string) (*Run, error) {
+	r := &Run{
+		ID:        newRunID(),
+		Created:   time.Now(),
+		HeadPane:  os.Getenv("HERDR_PANE_ID"),
+		Workspace: os.Getenv("HERDR_WORKSPACE_ID"),
+		Tab:       os.Getenv("HERDR_TAB_ID"),
+		Mode:      mode,
+		Playbook:  playbook,
+		Goal:      goal,
+		Status:    "active",
+		Workers:   []*Worker{},
+	}
+	for _, sub := range []string{"contracts", "results", "evidence"} {
+		if err := os.MkdirAll(filepath.Join(r.dir(), sub), 0700); err != nil {
+			return nil, err
+		}
+	}
+	files := map[string]string{
+		"request.md":    request,
+		"acceptance.md": acceptanceTemplate,
+		"decisions.md":  decisionsTemplate,
+		"findings.md":   findingsTemplate,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(r.dir(), name), []byte(body), 0600); err != nil {
+			return nil, err
+		}
+	}
+	r.event("run created mode=%s playbook=%s goal=%s", mode, playbook, goal)
+	return r, saveRun(r)
+}

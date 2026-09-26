@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Optional ORCH_ACCOUNT_CMD adapter for the Capacity Roller (cr) registry.
+
+orch never depends on cr. This script only *reads* cr's registry.json and answers orch's
+account protocol:  orch-account-cr <kind> <comma-separated excluded labels>
+  stdout: KEY=VALUE lines for the worker pane, plus LABEL=<id>; exit 1 if no account fits.
+
+Enable:  export ORCH_ACCOUNT_CMD=~/IdeaProjects/orch/scripts/orch-account-cr
+Pick:    usable accounts (state ready, 5h and weekly remaining > 0), most headroom first.
+Labels are hashed so run.json never stores e-mail addresses.
+"""
+import hashlib
+import json
+import os
+import sys
+
+PROVIDERS = {"codex": "codex", "claude": "claude"}
+
+
+def registry_path():
+    root = os.environ.get("CR_HOME") or os.path.expanduser("~/.local/share/cr")
+    return os.path.join(root, "registry.json")
+
+
+def label(acc):
+    digest = hashlib.sha256((acc["provider"] + ":" + acc["email"].strip().lower()).encode()).hexdigest()
+    return acc["provider"] + ":" + digest[:10]
+
+
+def remaining(window):
+    value = (window or {}).get("remaining")
+    return 100.0 if value is None else float(value)
+
+
+def needs_no_daemon(home):
+    # Darwin's sockaddr_un.sun_path holds 104 bytes including the terminator (same rule as cr).
+    if sys.platform != "darwin":
+        return False
+    home = os.path.realpath(home or os.path.expanduser("~/.codex"))
+    sock = os.path.join(home, "app-server-control", "app-server-control.sock")
+    return len(sock) + 1 > 104
+
+
+def link(src, dest):
+    """Symlink dest -> src unless dest already exists (never overwrite the account's files)."""
+    if os.path.exists(src) and not os.path.lexists(dest):
+        os.symlink(src, dest)
+
+
+def toml_blocks(text):
+    """Split TOML text into (header, lines) blocks; the preamble has header None."""
+    blocks, header, body = [], None, []
+    for line in text.splitlines():
+        if line.startswith("["):
+            blocks.append((header, body))
+            header, body = line, []
+        else:
+            body.append(line)
+    blocks.append((header, body))
+    return blocks
+
+
+def trust_codex_hook(home):
+    """Mirror the user's hook trust state (hash and enabled flag) into the account home.
+
+    Codex keys trust by hooks.json path, but the hash covers only the hook definition, so the
+    user's decisions can be re-keyed to the account's symlinked hooks.json.
+    """
+    try:
+        user_text = open(os.path.expanduser("~/.codex/config.toml")).read()
+    except OSError:
+        return
+    user_prefix = '[hooks.state."' + os.path.expanduser("~/.codex/hooks.json") + ":"
+    home_prefix = '[hooks.state."' + os.path.join(home, "hooks.json") + ":"
+    mirrored = []
+    for header, body in toml_blocks(user_text):
+        if header and header.startswith(user_prefix):
+            entries = [l for l in body if l.strip()]
+            mirrored.append((home_prefix + header[len(user_prefix):], entries))
+    cfg = os.path.join(home, "config.toml")
+    if os.path.islink(cfg):
+        # Writing would go through the link (possibly into the user's own config). Refuse.
+        print(f"orch-account-cr: warning: {cfg} is a symlink; hook trust state was not mirrored", file=sys.stderr)
+        return
+    current = open(cfg).read() if os.path.exists(cfg) else ""
+    kept = [(h, b) for h, b in toml_blocks(current) if not (h and h.startswith(home_prefix))]
+    if mirrored and not any(h == "[hooks.state]" for h, _ in kept):
+        kept.append(("[hooks.state]", [""]))
+    out = []
+    for header, body in kept:
+        if header:
+            out.append(header)
+        out.extend(body)
+        if header == "[hooks.state]":
+            for h, entries in mirrored:
+                out.append(h)
+                out.extend(entries)
+                out.append("")
+    text = "\n".join(out).rstrip("\n") + "\n"
+    if text == current:
+        return
+    tmp = cfg + ".orch-tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    if os.path.exists(cfg):
+        os.chmod(tmp, os.stat(cfg).st_mode & 0o777)
+    os.replace(tmp, cfg)  # atomic; stale home entries are dropped even when the user has none
+
+
+def prepare_home(provider, home):
+    """Give an account home the user's shared instructions, skills and orch hook (like cr does)."""
+    user = os.path.expanduser("~/.codex" if provider == "codex" else "~/.claude")
+    name = "AGENTS.md" if provider == "codex" else "CLAUDE.md"
+    try:
+        link(os.path.join(user, name), os.path.join(home, name))
+        skills = os.path.join(user, "skills")
+        if os.path.isdir(skills):
+            os.makedirs(os.path.join(home, "skills"), exist_ok=True)
+            for entry in os.listdir(skills):
+                if not entry.startswith("."):
+                    link(os.path.join(skills, entry), os.path.join(home, "skills", entry))
+        if provider == "codex":
+            link(os.path.join(user, "hooks.json"), os.path.join(home, "hooks.json"))
+            trust_codex_hook(home)
+        else:
+            # Claude reads hooks from settings.json; link it only when the account has none.
+            link(os.path.join(user, "settings.json"), os.path.join(home, "settings.json"))
+    except OSError as err:
+        print(f"orch-account-cr: warning: failed to prepare {home}: {err}", file=sys.stderr)
+
+
+def main(argv):
+    if len(argv) < 2:
+        print("Usage: orch-account-cr <kind> [excluded,labels]", file=sys.stderr)
+        return 2
+    provider = PROVIDERS.get(argv[1])
+    if provider is None:
+        print(f"orch-account-cr: {argv[1]} is not a cr account target", file=sys.stderr)
+        return 1
+    excluded = {x for x in (argv[2] if len(argv) > 2 else "").split(",") if x}
+    try:
+        with open(registry_path()) as f:
+            registry = json.load(f)
+    except (OSError, ValueError) as err:
+        print(f"orch-account-cr: cannot read registry: {err}", file=sys.stderr)
+        return 1
+    ignored = set(registry.get("ignored") or [])
+    candidates = []
+    for acc in registry.get("accounts", []):
+        if acc.get("provider") != provider or acc.get("state") != "ready":
+            continue
+        if f"{provider}:{acc.get('email', '').strip().lower()}" in ignored:
+            continue
+        five, week = remaining(acc.get("five_hour")), remaining(acc.get("weekly"))
+        if five <= 0 or week <= 0:
+            continue
+        home = acc.get("home") or ""
+        if home and not os.path.isdir(home):
+            continue
+        if label(acc) in excluded:
+            continue
+        candidates.append((min(five, week), week, acc))
+    if not candidates:
+        print(f"orch-account-cr: no available {provider} account", file=sys.stderr)
+        return 1
+    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    acc = candidates[0][2]
+    home = acc.get("home") or ""
+    if provider == "codex":
+        if home:
+            print(f"CODEX_HOME={home}")
+        if needs_no_daemon(home):
+            print("CR_CODEX_NO_DAEMON=1")
+        shared = os.path.join(home, "AGENTS.md") if home else None
+    else:
+        if home:
+            print(f"CLAUDE_CONFIG_DIR={home}")
+        shared = os.path.join(home, "CLAUDE.md") if home else None
+    if home:
+        prepare_home(provider, home)
+    print(f"LABEL={label(acc)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

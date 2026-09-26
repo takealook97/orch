@@ -1,0 +1,250 @@
+package main
+
+import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+var requiredSections = []string{"## Goal", "## Inputs", "## Scope", "## Permissions", "## Deliverables", "## Result report"}
+
+func validateContract(body string) error {
+	var missing []string
+	for _, s := range requiredSections {
+		if !strings.Contains(body, s) {
+			missing = append(missing, s)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("contract is missing required sections: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func contractTemplate(r *Run, name, role, key string) string {
+	return fmt.Sprintf(`# Contract: %[1]s
+- run: %[2]s · stage: %[3]s
+- model: %[4]s   (for the record; orch enforces the actual choice)
+
+## Goal
+<one or two sentences>
+
+## Inputs
+- Original request: %[5]s/request.md
+- Acceptance criteria: %[5]s/acceptance.md (items relevant to this contract: #)
+- References: <paths, URLs, earlier result files>
+
+## Non-goals
+- <what not to do>
+
+## Baseline
+- base commit: <hash or none>   · worktree: <path or none>
+- decision log: %[5]s/decisions.md (read and follow it)
+- Interface assumptions: <signatures and schemas shared with other pieces>
+
+## Scope
+- Owned files (glob): none
+- Changes outside owned files fail the contract (orch collect checks the diff)
+- Allowed evidence sources: <local paths, specific sites>. Do not search unrelated connectors
+
+## Permissions
+- Allowed: <test runs, local file writes ...>
+- Forbidden: deployment, external writes, git push, out-of-scope edits, delegation (no panes, subagents, or orch)
+
+## Deliverables
+- <files, diffs, documents, image paths>
+
+## Budget
+- Time: <minutes> · report partial and stop if the budget will be exceeded
+
+## Self-check
+- <commands to run, conditions to check>
+
+## Result report
+Write the following format to %[6]s. Add the status line only after the file is complete.
+
+`+"```markdown"+`
+# Result: %[1]s
+- status: done | blocked | partial
+- model_used: %[4]s · fallback: none
+- summary: <up to three lines>
+## Deliverables
+- <path and description>
+## Evidence
+- command: `+"`<cmd>`"+` → exit <code>, output excerpt or evidence/ path
+## Uncertainty
+- <what is uncertain and why>
+## Blockers
+- <needed decision, permission, or input>
+`+"```"+`
+`, name, r.ID, role, key, r.dir(), r.resultPath(name))
+}
+
+var statusLine = regexp.MustCompile(`(?m)^\s*-?\s*status:\s*(done|blocked|partial)\s*$`)
+
+// resultStatus reads the result file and returns done|blocked|partial, or "" if not final.
+func resultStatus(file string) string {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return ""
+	}
+	m := statusLine.FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
+}
+
+// contractField returns the value after "- <label>:" in the contract.
+func contractField(body, label string) string {
+	sc := bufio.NewScanner(strings.NewReader(body))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		line = strings.TrimPrefix(line, "- ")
+		if rest, ok := strings.CutPrefix(line, label); ok {
+			rest = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), ":"))
+			if i := strings.Index(rest, "   "); i >= 0 {
+				rest = rest[:i]
+			}
+			if i := strings.Index(rest, " · "); i >= 0 {
+				rest = rest[:i]
+			}
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+func ownedGlobs(body string) []string {
+	v := contractField(body, "Owned files (glob)")
+	if v == "" || v == "none" || strings.HasPrefix(v, "<") {
+		return nil
+	}
+	var out []string
+	for _, g := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
+		g = strings.Trim(g, "`")
+		if g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// globMatch matches slash paths with '*' (one segment) and '**' (any segments).
+func globMatch(pattern, name string) bool {
+	return matchSegs(strings.Split(pattern, "/"), strings.Split(name, "/"))
+}
+
+func matchSegs(p, n []string) bool {
+	for len(p) > 0 {
+		if p[0] == "**" {
+			for i := 0; i <= len(n); i++ {
+				if matchSegs(p[1:], n[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(n) == 0 {
+			return false
+		}
+		if ok, _ := path.Match(p[0], n[0]); !ok {
+			return false
+		}
+		p, n = p[1:], n[1:]
+	}
+	return len(n) == 0
+}
+
+// emptyTree is git's well-known empty tree; it stands in for HEAD before the first commit.
+const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+// changedFiles lists files changed in dir relative to base (or HEAD) plus untracked files.
+func changedFiles(dir, base string) ([]string, error) {
+	if base == "" || base == "none" || strings.HasPrefix(base, "<") {
+		base = "HEAD"
+		if exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
+			base = emptyTree
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	diff, err := exec.Command("git", "-C", dir, "diff", "--name-only", base).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff failed (%s): %w", dir, err)
+	}
+	for _, l := range strings.Split(string(diff), "\n") {
+		add(l)
+	}
+	untracked, err := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files failed (%s): %w", dir, err)
+	}
+	for _, l := range strings.Split(string(untracked), "\n") {
+		add(l)
+	}
+	return out, nil
+}
+
+// fileHash returns the content hash of a worktree file, or "deleted".
+func fileHash(dir, rel string) string {
+	data, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		return "deleted"
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// snapshot records the content hash of every already-changed file.
+func snapshot(dir string, files []string) map[string]string {
+	out := make(map[string]string, len(files))
+	for _, f := range files {
+		out[f] = fileHash(dir, f)
+	}
+	return out
+}
+
+// freshChanges keeps files that were not dirty at prompt time or whose content changed since.
+func freshChanges(dir string, changed []string, baseline map[string]string) []string {
+	var out []string
+	for _, f := range changed {
+		if h, ok := baseline[f]; ok && h == fileHash(dir, f) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// scopeViolations returns changed files that match none of the owned globs.
+func scopeViolations(changed, globs []string) []string {
+	var bad []string
+	for _, f := range changed {
+		ok := false
+		for _, g := range globs {
+			if globMatch(g, f) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			bad = append(bad, f)
+		}
+	}
+	return bad
+}

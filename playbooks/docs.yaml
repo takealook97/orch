@@ -1,0 +1,22 @@
+type: docs
+description: Doc writing. Gather sources -> write -> check against requirements and verify facts/consistency
+default_mode: light
+stages:
+  recon:
+    parallel: by_source
+    model: luna-m
+    purpose: explore
+    notes: Use flash(web) for web pages, long documents, and image sources
+  produce:
+    model: sonnet-m
+    purpose: docs
+    escalate_to: opus-m
+    escalate_when: ["deep_technical"]
+  verify:
+    start: after_produce
+    lanes:
+      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      critical: { model: other_family(author), required: false }
+  integrate:
+    owner: head
+retry_limit: 2

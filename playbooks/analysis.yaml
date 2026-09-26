@@ -1,0 +1,22 @@
+type: analysis
+description: Data analysis. Extract -> compute/interpret -> recompute and challenge the interpretation
+default_mode: full
+stages:
+  recon:
+    parallel: by_source
+    model: luna-h
+    purpose: extract
+  produce:
+    model: sol-m
+    purpose: analysis
+    escalate_to: opus-m
+    escalate_when: ["ambiguous_interpretation", "causal_claim"]
+  verify:
+    start: after_produce
+    lanes:
+      mechanical: { model: luna-h, required: true }
+      critical: { model: other_family(author), required: true }
+      neutral: { model: flash, required: false, withhold: [self_assessment] }
+  integrate:
+    owner: head
+retry_limit: 2

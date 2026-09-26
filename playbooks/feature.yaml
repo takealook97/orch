@@ -1,0 +1,33 @@
+type: feature
+description: Feature development. Recon by area -> (design) -> implement per worktree -> verify per shard -> integrate
+default_mode: full
+stages:
+  recon:
+    parallel: by_area
+    model: luna-m
+    purpose: explore
+    output: results/recon-<area>.md
+  design:
+    when: "ambiguous || cross_module"
+    model: opus-m
+    purpose: synthesis
+    notes: Lock interfaces and names in decisions.md first (parallel-write gate 3)
+  produce:
+    parallel: by_worktree
+    model: sol-m
+    purpose: impl
+    escalate_to: opus-m
+    escalate_when: ["failed_once", "cross_cutting"]
+    notes: Use sol-l(mech-impl) for mechanical shards; start with opus-m(hard-impl) for concurrency, security, or complex state
+  verify:
+    start: per_shard
+    lanes:
+      mechanical: { model: luna-h, required: true }
+      critical: { model: other_family(author), required: true }
+      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
+  integrate:
+    owner: head
+    mechanics: sol-m
+    notes: Merge worktrees one at a time; run build, typecheck, and the full test suite after each merge
+retry_limit: 2

@@ -1,0 +1,23 @@
+type: bugfix
+description: Bug fix. Secure repro and root-cause candidates first, then confirm the repro is gone and check for regressions after the fix
+default_mode: light
+stages:
+  recon:
+    parallel: by_hypothesis
+    model: luna-h
+    purpose: extract
+    notes: Repro command, logs, root-cause candidates. Use sol-m if candidates are entangled. Use opus-m(synthesis) if evidence conflicts
+  produce:
+    model: sol-m
+    purpose: impl
+    escalate_to: opus-m
+    escalate_when: ["failed_once", "multi_layer_cause", "flaky_repro"]
+  verify:
+    start: per_shard
+    lanes:
+      mechanical: { model: luna-h, required: true }
+      critical: { model: other_family(author), required: true }
+      adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
+  integrate:
+    owner: head
+retry_limit: 2

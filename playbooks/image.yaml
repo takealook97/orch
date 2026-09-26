@@ -1,0 +1,20 @@
+type: image
+description: Image generation. Analyze references -> generate with Codex image_generation -> check against requirements and review visual quality
+default_mode: light
+stages:
+  recon:
+    model: flash
+    purpose: web
+    notes: Summarize references, style, and constraints
+  produce:
+    model: sol-m
+    purpose: image
+    notes: Use Codex's built-in image_generation tool (D4). Specify the output path in the contract
+  verify:
+    start: after_produce
+    lanes:
+      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      critical: { model: other_family(author), required: true }
+  integrate:
+    owner: head
+retry_limit: 2

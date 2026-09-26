@@ -1,0 +1,20 @@
+type: review
+description: Design/architecture review. Survey code and docs -> synthesize judgment -> technical rebuttal and check against requirements
+default_mode: full
+stages:
+  recon:
+    parallel: by_area
+    model: luna-m
+    purpose: explore
+    notes: Use flash(web) for external docs and case studies
+  produce:
+    model: opus-m
+    purpose: synthesis
+  verify:
+    start: after_produce
+    lanes:
+      critical: { model: other_family(author), required: true }
+      neutral: { model: flash, required: true, withhold: [self_assessment] }
+  integrate:
+    owner: head
+retry_limit: 2
