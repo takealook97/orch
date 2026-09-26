@@ -135,6 +135,9 @@ func spawn(o spawnOpts) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err := modelArgs(m); err != nil {
+		return nil, err
+	}
 	if !nameRE.MatchString(o.Name) {
 		return nil, fmt.Errorf("name %q must match [a-z][a-z0-9_-]{0,31}", o.Name)
 	}
@@ -298,7 +301,12 @@ func spawn(o spawnOpts) (*Worker, error) {
 	if terr != nil {
 		fmt.Fprintln(os.Stderr, "orch: warning: folder pretrust failed (automatically approve the trust dialog if shown):", terr)
 	}
-	args := append([]string{"agent", "start", o.Name, "--kind", m.Kind, "--pane", pane, "--"}, append(launchArgs(m, noDaemon), trustArgs...)...)
+	launch, err := launchArgs(m, noDaemon)
+	if err != nil {
+		abortWorker(runID, o.Name, err)
+		return nil, err
+	}
+	args := append([]string{"agent", "start", o.Name, "--kind", m.Kind, "--pane", pane, "--"}, append(launch, trustArgs...)...)
 	_, startErr := herdrRun(args...)
 	debugf("agent start %s: err=%v", o.Name, startErr)
 	if startErr == nil {

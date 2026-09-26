@@ -2,19 +2,33 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 )
 
 // Model is one fixed model × effort entry. Heads choose by Key only; orch assembles the CLI arguments.
+// Keys and efforts are fixed; the underlying model id comes from an environment variable so a CLI
+// release can be picked up without a rebuild.
 type Model struct {
-	Key     string
-	Kind    string // herdr agent kind
-	Family  string
-	Cost    string
-	Summary string
-	Args    []string
+	Key      string
+	Kind     string // herdr agent kind
+	Family   string
+	Cost     string
+	Summary  string
+	ModelVar string // environment variable that overrides Default
+	Default  string // model id used when ModelVar is unset
+	Effort   string // empty when the CLI takes no effort flag
 }
+
+// Model id variables, one per underlying model. Keys sharing a model share its variable.
+const (
+	varLuna   = "ORCH_LUNA_MODEL"
+	varSol    = "ORCH_SOL_MODEL"
+	varOpus   = "ORCH_OPUS_MODEL"
+	varSonnet = "ORCH_SONNET_MODEL"
+	varFlash  = "ORCH_FLASH_MODEL"
+)
 
 const (
 	familyOpenAI    = "openai"
@@ -23,20 +37,42 @@ const (
 )
 
 var catalog = []Model{
-	{"luna-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction",
-		[]string{"--model", "gpt-6-luna", "-c", `model_reasoning_effort="medium"`}},
-	{"luna-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification",
-		[]string{"--model", "gpt-6-luna", "-c", `model_reasoning_effort="high"`}},
-	{"sol-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits",
-		[]string{"--model", "gpt-6-sol", "-c", `model_reasoning_effort="low"`}},
-	{"sol-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review",
-		[]string{"--model", "gpt-6-sol", "-c", `model_reasoning_effort="medium"`}},
-	{"opus-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification",
-		[]string{"--model", "opus", "--effort", "medium"}},
-	{"sonnet-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA",
-		[]string{"--model", "sonnet", "--effort", "medium"}},
-	{"flash", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks",
-		[]string{"--model", "gemini-3.8-flash-medium"}},
+	{"luna-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction", varLuna, "gpt-6-luna", "medium"},
+	{"luna-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification", varLuna, "gpt-6-luna", "high"},
+	{"sol-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", varSol, "gpt-6-sol", "low"},
+	{"sol-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", varSol, "gpt-6-sol", "medium"},
+	{"opus-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", varOpus, "opus", "medium"},
+	{"sonnet-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA", varSonnet, "sonnet", "medium"},
+	{"flash", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks", varFlash, "gemini-3.8-flash-medium", ""},
+}
+
+// modelID returns the model id for m, preferring its environment variable over the default.
+func modelID(m Model) (string, error) {
+	id := strings.TrimSpace(os.Getenv(m.ModelVar))
+	if id == "" {
+		return m.Default, nil
+	}
+	if strings.HasPrefix(id, "-") || strings.ContainsAny(id, " \t\n\"'") {
+		return "", fmt.Errorf("%s=%q is not a valid model id", m.ModelVar, id)
+	}
+	return id, nil
+}
+
+// modelArgs returns the CLI arguments that select m's model and effort.
+func modelArgs(m Model) ([]string, error) {
+	id, err := modelID(m)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"--model", id}
+	switch {
+	case m.Effort == "":
+	case m.Kind == "codex":
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", m.Effort))
+	default:
+		args = append(args, "--effort", m.Effort)
+	}
+	return args, nil
 }
 
 func modelByKey(key string) (Model, error) {
@@ -53,7 +89,11 @@ func modelByKey(key string) (Model, error) {
 }
 
 // launchArgs returns the native CLI arguments for a worker, including the bypass flag.
-func launchArgs(m Model, noDaemon bool) []string {
+func launchArgs(m Model, noDaemon bool) ([]string, error) {
+	margs, err := modelArgs(m)
+	if err != nil {
+		return nil, err
+	}
 	var args []string
 	switch m.Kind {
 	case "codex":
@@ -64,7 +104,7 @@ func launchArgs(m Model, noDaemon bool) []string {
 	case "claude", "agy":
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	return append(args, m.Args...)
+	return append(args, margs...), nil
 }
 
 // Roles (contract stages). Verification roles carry family constraints.

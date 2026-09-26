@@ -20,7 +20,7 @@ func TestCatalogFixed(t *testing.T) {
 	families := map[string]bool{}
 	for _, m := range catalog {
 		families[m.Family] = true
-		if !slices.Contains(m.Args, "--model") {
+		if args, err := modelArgs(m); err != nil || !slices.Contains(args, "--model") {
 			t.Errorf("%s: model not pinned", m.Key)
 		}
 	}
@@ -39,20 +39,51 @@ func TestCatalogFixed(t *testing.T) {
 	}
 }
 
+func joinArgs(t *testing.T, m Model, noDaemon bool) string {
+	t.Helper()
+	args, err := launchArgs(m, noDaemon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(args, " ")
+}
+
 func TestLaunchArgs(t *testing.T) {
+	for _, v := range []string{varLuna, varSol, varOpus, varSonnet, varFlash} {
+		t.Setenv(v, "")
+	}
 	m, _ := modelByKey("sol-m")
-	got := strings.Join(launchArgs(m, true), " ")
+	got := joinArgs(t, m, true)
 	want := `--dangerously-bypass-approvals-and-sandbox --no-daemon --model gpt-6-sol -c model_reasoning_effort="medium"`
 	if got != want {
 		t.Fatalf("got %q", got)
 	}
 	m, _ = modelByKey("opus-m")
-	if got := strings.Join(launchArgs(m, false), " "); got != "--dangerously-skip-permissions --model opus --effort medium" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model opus --effort medium" {
 		t.Fatalf("got %q", got)
 	}
 	m, _ = modelByKey("flash")
-	if got := strings.Join(launchArgs(m, false), " "); got != "--dangerously-skip-permissions --model gemini-3.8-flash-medium" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model gemini-3.8-flash-medium" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestModelOverride(t *testing.T) {
+	t.Setenv(varLuna, "gpt-7-luna")
+	t.Setenv(varOpus, "claude-opus-6")
+	m, _ := modelByKey("luna-h")
+	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --model gpt-7-luna -c model_reasoning_effort="high"` {
+		t.Fatalf("got %q", got)
+	}
+	m, _ = modelByKey("opus-m")
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-opus-6 --effort medium" {
+		t.Fatalf("got %q", got)
+	}
+	for _, bad := range []string{"--yolo", "gpt 7", `x"y`} {
+		t.Setenv(varSol, bad)
+		if _, err := modelArgs(key("sol-m")); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }
 

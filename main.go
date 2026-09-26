@@ -130,9 +130,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	case "models":
 		tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "key\tCLI\tfamily\tcost\targs\tstrengths")
+		fmt.Fprintln(tw, "key\tCLI\tfamily\tcost\targs\toverride\tstrengths")
 		for _, m := range catalog {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", m.Key, m.Kind, m.Family, m.Cost, strings.Join(m.Args, " "), m.Summary)
+			args, err := modelArgs(m)
+			shown := strings.Join(args, " ")
+			if err != nil {
+				shown = "invalid: " + err.Error()
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Key, m.Kind, m.Family, m.Cost, shown, m.ModelVar, m.Summary)
 		}
 		tw.Flush()
 		fmt.Fprintf(stdout, "\npurposes(fallback chain): %s\n", strings.Join(purposeNames(), " "))

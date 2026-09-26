@@ -67,6 +67,8 @@ By default `orch` passes the Head's login to workers. To split capacity, wire an
 | `opus-m` `sonnet-m` | claude (opus medium, sonnet medium) | Anthropic |
 | `flash` | agy (gemini-3.8-flash-medium) | Google |
 
+When a CLI ships a new model, point the keys at it without rebuilding: set `ORCH_LUNA_MODEL`, `ORCH_SOL_MODEL`, `ORCH_OPUS_MODEL`, `ORCH_SONNET_MODEL`, or `ORCH_FLASH_MODEL` in the Head's shell (for example `export ORCH_SOL_MODEL=gpt-7-sol`). Keys and efforts stay the same; `orch models` shows the resolved arguments.
+
 ## Layout
 
 ```
