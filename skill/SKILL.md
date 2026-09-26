@@ -5,11 +5,11 @@ description: Head's operating manual for multi-agent work through Herdr panes wi
 
 # orch operating manual (for the Head)
 
-Enforcement lives in the `orch` executor and its hooks. This document is the judgment guide. Full design doc: `~/IdeaProjects/orch/docs/design.md`.
+Enforcement lives in the `orch` executor and its hooks. This document is the judgment guide. Everything this skill needs ships in its own directory: the full design doc is `references/design.md`, and `references/decisions.md` records later decisions (it wins where the two differ).
 A worker (`ORCH_ROLE=worker`) does not use this document. It follows only its contract.
 
 Check whether you're inside Herdr first: `test "$HERDR_ENV" = 1`. If not, pane delegation is impossible; do the work directly and say so.
-In Codex the Herdr skill is named `hd`, in Claude it's `herdr`. The delegation path is `orch` in both.
+Delegate only through `orch`, in Claude and Codex alike. Don't drive Herdr panes directly, even if a Herdr skill is installed.
 
 ## 1. Modes and thresholds
 
@@ -155,12 +155,8 @@ Default critical-lane placement: author OpenAI -> `sonnet-m` (or `opus-m` if com
 
 ## 8. Accounts
 
-Default is `same` (the Head's login). If many same-family workers need to split capacity, use `--account hook` with `ORCH_ACCOUNT_CMD`. An adapter for the cr registry lives at `~/IdeaProjects/orch/scripts/orch-account-cr` (it only reads the registry, picks the account with the most remaining capacity, and aligns that account's home with global instructions, skill and hook links, and Codex hook trust state). On capacity exhaustion, fallback tries a different account with the same key first.
+Default is `same` (the Head's login). If many same-family workers need to split capacity, use `--account hook` with `ORCH_ACCOUNT_CMD`. An adapter for the cr registry ships with this skill at `scripts/orch-account-cr`; point `ORCH_ACCOUNT_CMD` at its absolute path (e.g. `~/.claude/skills/orch/scripts/orch-account-cr`) (it only reads the registry, picks the account with the most remaining capacity, and aligns that account's home with global instructions, skill and hook links, and Codex hook trust state). On capacity exhaustion, fallback tries a different account with the same key first.
 
-## 9. Effect measurement (P7)
-
-`python3 ~/IdeaProjects/orch/eval/run.py run`: measures cross-family vs. same-family review and parallel vs. single implementation in this environment, across 20 representative tasks. Results go to `eval/out/<timestamp>/report.md`. Run it before and after changing model placement or lane rules, and compare.
-
-## 10. Layout (enforced by orch)
+## 9. Layout (enforced by orch)
 
 The Head takes the full-height left third; workers stack top to bottom at equal height in the right two-thirds column. Every spawn uses `--no-focus`. **Don't steal the user's focus:** Herdr's `pane zoom` and `agent prompt` move the UI to the target tab, so don't call them directly (orch doesn't either). If a tab has a user pane, spawn stops (it never moves or closes it). If the layout breaks, use `orch layout`. If you need a pane for a plain command rather than delegation, prefix the command with `ORCH_RAW_HERDR=1` to get past the hook.

@@ -5,7 +5,7 @@ orch never depends on cr. This script only *reads* cr's registry.json and answer
 account protocol:  orch-account-cr <kind> <comma-separated excluded labels>
   stdout: KEY=VALUE lines for the worker pane, plus LABEL=<id>; exit 1 if no account fits.
 
-Enable:  export ORCH_ACCOUNT_CMD=~/IdeaProjects/orch/scripts/orch-account-cr
+Enable:  export ORCH_ACCOUNT_CMD=~/.claude/skills/orch/scripts/orch-account-cr
 Pick:    usable accounts (state ready, 5h and weekly remaining > 0), most headroom first.
 Labels are hashed so run.json never stores e-mail addresses.
 """

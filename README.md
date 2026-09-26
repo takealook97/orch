@@ -2,8 +2,8 @@
 
 `orch` is a multi-agent executor that runs on Herdr panes. The main session (the Head) hands subtasks to workers as contract files, then has a different model family verify the results.
 
-- Design doc: `docs/design.md`
-- Decisions and changes made during implementation: `docs/decisions.md`
+- Design doc: `skill/references/design.md`
+- Decisions and changes made during implementation: `skill/references/decisions.md`
 - Operating manual for the Head: `skill/SKILL.md` (skill name `orch`)
 
 ## Four layers
@@ -51,7 +51,7 @@ python3 eval/run.py run         # 20 tasks: cross- vs same-family review, parall
 
 ## Account (optional)
 
-By default `orch` passes the Head's login to workers. To split capacity, wire an adapter into `ORCH_ACCOUNT_CMD` and use `orch spawn --account hook`. An adapter for the cr registry, `scripts/orch-account-cr`, is included. It only reads the cr registry, and it aligns the chosen account's home with global instructions, skill and hook links, and Codex hook trust state (it never overwrites existing files).
+By default `orch` passes the Head's login to workers. To split capacity, wire an adapter into `ORCH_ACCOUNT_CMD` and use `orch spawn --account hook`. An adapter for the cr registry ships inside the skill at `skill/scripts/orch-account-cr`. It only reads the cr registry, and it aligns the chosen account's home with global instructions, skill and hook links, and Codex hook trust state (it never overwrites existing files).
 
 ## Model catalog
 

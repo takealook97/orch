@@ -1,6 +1,6 @@
 # Decision log and design-doc changes (2026-09-26)
 
-The original design doc is `docs/design.md`. Decisions made or changed during implementation are collected here. Where the two conflict, this document wins.
+The original design doc is `design.md` in this directory. Decisions made or changed during implementation are collected here. Where the two conflict, this document wins.
 
 ## Decisions (design doc S14)
 
@@ -31,7 +31,7 @@ The original design doc is `docs/design.md`. Decisions made or changed during im
    - A run whose Head has disappeared is cleaned up only via an explicit `gc --orphans`, or by picking it up with `resume`.
 5. **DAG execution is `orch dag check|run|status`** (design-doc S11.3's `cr orch run --dag`). It reads `dag.yaml` in the run directory. It spawns nodes whose inputs are ready, in order of longest critical path, and skips downstream nodes whose dependencies are not done. State is kept in `dag-state.json` so a run can resume after an interruption.
 6. **The neutral checklist is built with `orch checklist [--shuffle]`** (S10.3). It is generated from acceptance.md and supports order-shuffling for full+.
-7. **The account adapter `scripts/orch-account-cr` is optional.** It only reads the cr registry and answers in the `ORCH_ACCOUNT_CMD` format. It also prepares the chosen account's home.
+7. **The account adapter `scripts/orch-account-cr` (shipped inside the skill) is optional.** It only reads the cr registry and answers in the `ORCH_ACCOUNT_CMD` format. It also prepares the chosen account's home.
    - It symlinks the global instruction file, skill, and `hooks.json`.
    - It copies the user's Codex hook trust state (hash and `enabled` value) into that home. Confirmed that Codex's trust hash is path-independent.
 8. **Prompt delivery is confirmed via the conversation transcript.** A booting CLI can show a brief `working` state and still drop input. So delivery is only considered confirmed once the `[orch worker <name>]` marker appears on the worker's screen; if it doesn't appear within 20 seconds, it is resent once.
