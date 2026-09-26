@@ -2,6 +2,7 @@
 
 `orch` is a multi-agent executor that runs on Herdr panes. The main session (the Head) hands subtasks to workers as contract files, then has a different model family verify the results.
 
+- Setup guide: `docs/setup.md`
 - Design doc: `skill/references/design.md`
 - Decisions and changes made during implementation: `skill/references/decisions.md`
 - Operating manual for the Head: `skill/SKILL.md` (skill name `orch`)
@@ -16,6 +17,8 @@
 | (4) Playbooks | `playbooks/*.yaml` -> `~/.orch/playbooks` | Stages and lanes per task type |
 
 ## Install
+
+Full guide (prerequisites, verification, accounts, update, rollback): [`docs/setup.md`](docs/setup.md).
 
 ```bash
 make install     # check(vet, test, playbook check) -> link ~/.local/bin/orch -> orch install (backup, then install constitution/hook/skill/playbooks)
