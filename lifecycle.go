@@ -10,22 +10,6 @@ import (
 	"time"
 )
 
-var quotaMarkers = []string{
-	"you've hit your usage limit", "you have hit your usage limit", "usage limit reached",
-	"you've hit your limit", "you are out of usage", "quota exceeded", "rate limit exceeded",
-	"resource_exhausted", "resource has been exhausted", "credit balance is too low",
-}
-
-func quotaText(s string) bool {
-	s = strings.ToLower(s)
-	for _, m := range quotaMarkers {
-		if strings.Contains(s, m) {
-			return true
-		}
-	}
-	return false
-}
-
 type waitOutcome struct {
 	Name   string
 	Status string // done, blocked, partial, agent-blocked, quota, idle-no-result, timeout, fallback:<new>, failed
@@ -64,7 +48,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 		if err != nil {
 			return outcomes, err
 		}
-		readNow := time.Since(lastRead) > 15*time.Second
+		readNow := time.Since(lastRead) > timings.ScreenRead
 		if readNow {
 			lastRead = time.Now()
 			// A pane nobody recorded may come from a worker bypassing the guards. Report it;
@@ -126,7 +110,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 			if info.Status == "idle" || info.Status == "done" {
 				if idleSince[name].IsZero() {
 					idleSince[name] = time.Now()
-				} else if time.Since(idleSince[name]) > 45*time.Second {
+				} else if time.Since(idleSince[name]) > timings.IdleNoResult {
 					outcomes = append(outcomes, waitOutcome{name, "idle-no-result", "agent stopped without a result file. orch collect to inspect output"})
 					continue
 				}
@@ -145,7 +129,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 			}
 			break
 		}
-		time.Sleep(3 * time.Second)
+		time.Sleep(timings.WaitPoll)
 	}
 	return outcomes, nil
 }

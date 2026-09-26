@@ -389,7 +389,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 			}
 			st.Nodes[name].Status, st.Nodes[name].Worker, st.Nodes[name].Started = "running", w.Name, time.Now()
 			fmt.Fprintf(out, "%s\tstarted\t%s (%s)\n", name, w.Name, n.Model)
-			if err := collect(time.Second); err != nil {
+			if err := collect(timings.DagStartWait); err != nil {
 				return st, err
 			}
 		}
@@ -410,14 +410,14 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 				_ = saveDagState(r, st)
 				return st, fmt.Errorf("DAG timed out: no row became free")
 			}
-			time.Sleep(5 * time.Second)
+			time.Sleep(timings.DagPoll)
 			continue
 		}
 		if time.Now().After(deadline) {
 			_ = saveDagState(r, st)
 			return st, fmt.Errorf("DAG timed out with nodes running %s", strings.Join(running, ", "))
 		}
-		if err := collect(20 * time.Second); err != nil {
+		if err := collect(timings.DagWait); err != nil {
 			return st, err
 		}
 		_ = saveDagState(r, st)

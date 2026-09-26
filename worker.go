@@ -303,7 +303,7 @@ func spawn(o spawnOpts) (*Worker, error) {
 	debugf("agent start %s: err=%v", o.Name, startErr)
 	if startErr == nil {
 		// Some CLIs report idle while a folder-trust dialog is on screen (Codex in a new home).
-		settleTrust(o.Name, w.Cwd, 8*time.Second)
+		settleTrust(o.Name, w.Cwd, timings.TrustSettleStart)
 	}
 	if err := startErr; err != nil {
 		// A trust dialog can stall start until its timeout: clear it and wait for readiness.
@@ -312,12 +312,12 @@ func spawn(o spawnOpts) (*Worker, error) {
 		}
 		if !strings.Contains(err.Error(), "agent_not_ready") {
 			// One retry, as startup may race the shell prompt.
-			time.Sleep(2 * time.Second)
+			time.Sleep(timings.StartRetry)
 			if _, err2 := herdrRun(args...); err2 != nil {
 				abortWorker(runID, o.Name, err2)
 				return nil, fmt.Errorf("agent start failed (pane closed): %w", err2)
 			}
-		} else if err := waitReady(o.Name, w.Cwd, 60*time.Second); err != nil {
+		} else if err := waitReady(o.Name, w.Cwd, timings.ReadyTimeout); err != nil {
 			abortWorker(runID, o.Name, err)
 			return nil, fmt.Errorf("%w (pane closed)", err)
 		}
@@ -339,10 +339,6 @@ func abortWorker(runID, name string, cause error) {
 		fmt.Fprintln(os.Stderr, "orch: could not close failed worker pane:", cerr)
 	}
 }
-
-// The Head already works in its cwd with bypass permissions, so a worker's folder-trust
-// dialog is accepted only for that directory or below it. Anything else stays blocked.
-var trustDialog = regexp.MustCompile(`(?i)(do you trust|trust this folder|trust the files|trust this directory)`)
 
 // realPath resolves symlinks so scope checks compare real locations, not link names.
 func realPath(p string) (string, error) {
@@ -379,6 +375,8 @@ func paneShowsTrust(pane string) bool {
 }
 
 // acceptTrust answers a folder-trust dialog on screen, only where orch may pre-trust.
+// The Head already works in its cwd with bypass permissions, so a worker's folder-trust
+// dialog is accepted only for that directory or below it (trustDialog: heuristics.go).
 func acceptTrust(name, cwd string) bool {
 	if !trustable(cwd) {
 		debugf("trust %s: cwd %s is outside Head cwd", name, cwd)
@@ -390,9 +388,9 @@ func acceptTrust(name, cwd string) bool {
 		return false
 	}
 	debugf("trust %s: trust dialog approved", name)
-	if strings.Contains(text, "Yes, I trust") { // Claude: the default choice is "No, exit"
+	if strings.Contains(text, claudeTrustChoice) { // Claude: the default choice is "No, exit"
 		_, _ = herdrRun("agent", "send-keys", name, "down")
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(timings.KeyGap)
 	}
 	_, _ = herdrRun("agent", "send-keys", name, "enter") // Codex/agy: "Trust" is preselected
 	return true
@@ -403,10 +401,10 @@ func settleTrust(name, cwd string, within time.Duration) {
 	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
 		if acceptTrust(name, cwd) {
-			time.Sleep(2 * time.Second)
+			time.Sleep(timings.TrustAccepted)
 			return
 		}
-		time.Sleep(time.Second)
+		time.Sleep(timings.Poll)
 	}
 }
 
@@ -422,22 +420,22 @@ func waitReady(name, cwd string, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		info, err := agentGet(name)
 		if err == nil && (info.Status == "idle" || info.Status == "done") {
-			settleTrust(name, cwd, 3*time.Second)
+			settleTrust(name, cwd, timings.TrustSettleReady)
 			return nil
 		}
 		if err == nil && info.Status == "blocked" && !trusted {
 			trusted = acceptTrust(name, cwd)
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(timings.ReadyPoll)
 	}
 	return fmt.Errorf("agent %s is not ready (blocked or login required); inspect with orch read %s", name, name)
 }
 
 func promptMessage(r *Run, w *Worker) string {
-	return fmt.Sprintf("[orch worker %s] Read contract %s and work only within its scope and permissions. "+
+	return fmt.Sprintf("%s Read contract %s and work only within its scope and permissions. "+
 		"Write the result to %s in the contract Result report format. Add the status line only after the file is complete. "+
 		"Do not delegate: no panes, subagents, Agent/Workflow tools, or orch.",
-		w.Name, w.Contract, w.Result)
+		promptMarker(w.Name), w.Contract, w.Result)
 }
 
 func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error {
@@ -486,7 +484,7 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		return err
 	}
 	// A slow CLI may raise its folder-trust dialog after start; clear it before typing.
-	settleTrust(name, w.Cwd, 3*time.Second)
+	settleTrust(name, w.Cwd, timings.TrustSettlePrompt)
 	// Herdr's agent.prompt moves the UI to the agent's workspace and tab, which drags the
 	// user back to the Head. Type the one-line prompt into the pane and press Enter instead;
 	// neither pane.send_text nor agent.send_keys changes focus.
@@ -497,23 +495,23 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		if _, err := herdrRun("pane", "send-text", w.Pane, msg); err != nil {
 			return err
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(timings.KeyGap)
 		_, err := herdrRun("agent", "send-keys", name, "enter")
 		return err
 	}
 	if err := send(); err != nil {
 		return fmt.Errorf("prompt send failed: %w", err)
 	}
-	if !delivered(name, w.Cwd, w.Result, 20*time.Second) {
+	if !delivered(name, w.Cwd, w.Result, timings.Delivery) {
 		// An agent that is still booting can swallow input. Resend once, only when the
 		// marker is not in its transcript and it is not working on anything.
 		text, _ := agentRead(name, 400)
-		if !strings.Contains(text, "[orch worker "+name+"]") && !busy(name) && resultStatus(w.Result) == "" {
+		if !strings.Contains(text, promptMarker(name)) && !busy(name) && resultStatus(w.Result) == "" {
 			debugf("prompt %s: delivery check failed; resend once", name)
 			if err := send(); err != nil {
 				return fmt.Errorf("prompt resend failed: %w", err)
 			}
-			if !delivered(name, w.Cwd, w.Result, 20*time.Second) {
+			if !delivered(name, w.Cwd, w.Result, timings.Delivery) {
 				return fmt.Errorf("prompt was not delivered (%s). orch read %s to inspect", name, name)
 			}
 		}
@@ -536,7 +534,7 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 // A single "working" flash is not proof (a booting CLI can flash it and drop the input), and
 // a transcript check alone fails for CLIs that redraw the screen (Codex's alternate screen).
 func delivered(name, cwd, result string, within time.Duration) bool {
-	marker := "[orch worker " + name + "]"
+	marker := promptMarker(name)
 	deadline := time.Now().Add(within)
 	working := 0
 	for time.Now().Before(deadline) {
@@ -547,7 +545,7 @@ func delivered(name, cwd, result string, within time.Duration) bool {
 			return true
 		}
 		if info, err := agentGet(name); err == nil && info.Status == "working" {
-			if working++; working >= 3 {
+			if working++; working >= workingPollsForDelivery {
 				return true
 			}
 		} else {
@@ -556,7 +554,7 @@ func delivered(name, cwd, result string, within time.Duration) bool {
 		if text, err := agentRead(name, 400); err == nil && strings.Contains(text, marker) {
 			return true
 		}
-		time.Sleep(time.Second)
+		time.Sleep(timings.Poll)
 	}
 	return false
 }
