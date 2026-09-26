@@ -18,8 +18,13 @@ func TestCatalogFixed(t *testing.T) {
 		t.Fatalf("catalog has %d keys, want 7", len(catalog))
 	}
 	families := map[string]bool{}
+	vars := map[string]bool{}
 	for _, m := range catalog {
 		families[m.Family] = true
+		if vars[m.ModelVar] {
+			t.Errorf("%s: variable %s shared", m.Key, m.ModelVar)
+		}
+		vars[m.ModelVar] = true
 		if args, err := modelArgs(m); err != nil || !slices.Contains(args, "--model") {
 			t.Errorf("%s: model not pinned", m.Key)
 		}
@@ -49,8 +54,8 @@ func joinArgs(t *testing.T, m Model, noDaemon bool) string {
 }
 
 func TestLaunchArgs(t *testing.T) {
-	for _, v := range []string{varLuna, varSol, varOpus, varSonnet, varFlash} {
-		t.Setenv(v, "")
+	for _, m := range catalog {
+		t.Setenv(m.ModelVar, "")
 	}
 	m, _ := modelByKey("sol-m")
 	got := joinArgs(t, m, true)
@@ -69,18 +74,22 @@ func TestLaunchArgs(t *testing.T) {
 }
 
 func TestModelOverride(t *testing.T) {
-	t.Setenv(varLuna, "gpt-7-luna")
-	t.Setenv(varOpus, "claude-opus-6")
+	t.Setenv(varLunaH, "gpt-7-luna")
+	t.Setenv(varLunaM, "")
+	t.Setenv(varOpusM, "claude-opus-6")
 	m, _ := modelByKey("luna-h")
 	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --model gpt-7-luna -c model_reasoning_effort="high"` {
 		t.Fatalf("got %q", got)
+	}
+	if got := joinArgs(t, key("luna-m"), false); !strings.Contains(got, "--model gpt-6-luna ") {
+		t.Fatalf("luna-m followed luna-h override: %q", got)
 	}
 	m, _ = modelByKey("opus-m")
 	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-opus-6 --effort medium" {
 		t.Fatalf("got %q", got)
 	}
 	for _, bad := range []string{"--yolo", "gpt 7", `x"y`} {
-		t.Setenv(varSol, bad)
+		t.Setenv(varSolM, bad)
 		if _, err := modelArgs(key("sol-m")); err == nil {
 			t.Errorf("%q accepted", bad)
 		}

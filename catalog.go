@@ -8,7 +8,7 @@ import (
 )
 
 // Model is one fixed model × effort entry. Heads choose by Key only; orch assembles the CLI arguments.
-// Keys and efforts are fixed; the underlying model id comes from an environment variable so a CLI
+// Keys and efforts are fixed; each key's model id comes from its own environment variable so a CLI
 // release can be picked up without a rebuild.
 type Model struct {
 	Key      string
@@ -21,13 +21,16 @@ type Model struct {
 	Effort   string // empty when the CLI takes no effort flag
 }
 
-// Model id variables, one per underlying model. Keys sharing a model share its variable.
+// Model id variables, one per key: <MODEL>_<tier>_<effort initial>. The tier is the model's rank
+// in its vendor lineup, so the name survives a model rename. flash's effort is part of its model id.
 const (
-	varLuna   = "ORCH_LUNA_MODEL"
-	varSol    = "ORCH_SOL_MODEL"
-	varOpus   = "ORCH_OPUS_MODEL"
-	varSonnet = "ORCH_SONNET_MODEL"
-	varFlash  = "ORCH_FLASH_MODEL"
+	varLunaM   = "CODEX_MEDIUM_M"
+	varLunaH   = "CODEX_MEDIUM_H"
+	varSolL    = "CODEX_HIGH_L"
+	varSolM    = "CODEX_HIGH_M"
+	varOpusM   = "CLAUDE_HIGH_M"
+	varSonnetM = "CLAUDE_MEDIUM_M"
+	varFlash   = "GEMINI_MEDIUM_M"
 )
 
 const (
@@ -37,12 +40,12 @@ const (
 )
 
 var catalog = []Model{
-	{"luna-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction", varLuna, "gpt-6-luna", "medium"},
-	{"luna-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification", varLuna, "gpt-6-luna", "high"},
-	{"sol-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", varSol, "gpt-6-sol", "low"},
-	{"sol-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", varSol, "gpt-6-sol", "medium"},
-	{"opus-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", varOpus, "opus", "medium"},
-	{"sonnet-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA", varSonnet, "sonnet", "medium"},
+	{"luna-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction", varLunaM, "gpt-6-luna", "medium"},
+	{"luna-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification", varLunaH, "gpt-6-luna", "high"},
+	{"sol-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", varSolL, "gpt-6-sol", "low"},
+	{"sol-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", varSolM, "gpt-6-sol", "medium"},
+	{"opus-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", varOpusM, "opus", "medium"},
+	{"sonnet-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA", varSonnetM, "sonnet", "medium"},
 	{"flash", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks", varFlash, "gemini-3.8-flash-medium", ""},
 }
 

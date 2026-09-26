@@ -60,14 +60,17 @@ By default `orch` passes the Head's login to workers. To split capacity, wire an
 
 `orch models` shows the full list. The Head picks by key only; `orch` assembles the CLI arguments.
 
-| Key | CLI | Family |
-|---|---|---|
-| `luna-m` `luna-h` | codex (gpt-6-luna medium/high) | OpenAI |
-| `sol-l` `sol-m` | codex (gpt-6-sol low/medium) | OpenAI |
-| `opus-m` `sonnet-m` | claude (opus medium, sonnet medium) | Anthropic |
-| `flash` | agy (gemini-3.8-flash-medium) | Google |
+| Key | CLI | Family | Model variable | Default model |
+|---|---|---|---|---|
+| `luna-m` | codex, effort medium | OpenAI | `CODEX_MEDIUM_M` | `gpt-6-luna` |
+| `luna-h` | codex, effort high | OpenAI | `CODEX_MEDIUM_H` | `gpt-6-luna` |
+| `sol-l` | codex, effort low | OpenAI | `CODEX_HIGH_L` | `gpt-6-sol` |
+| `sol-m` | codex, effort medium | OpenAI | `CODEX_HIGH_M` | `gpt-6-sol` |
+| `opus-m` | claude, effort medium | Anthropic | `CLAUDE_HIGH_M` | `opus` |
+| `sonnet-m` | claude, effort medium | Anthropic | `CLAUDE_MEDIUM_M` | `sonnet` |
+| `flash` | agy | Google | `GEMINI_MEDIUM_M` | `gemini-3.8-flash-medium` |
 
-When a CLI ships a new model, point the keys at it without rebuilding: set `ORCH_LUNA_MODEL`, `ORCH_SOL_MODEL`, `ORCH_OPUS_MODEL`, `ORCH_SONNET_MODEL`, or `ORCH_FLASH_MODEL` in the Head's shell (for example `export ORCH_SOL_MODEL=gpt-7-sol`). Keys and efforts stay the same; `orch models` shows the resolved arguments.
+Variables follow `<MODEL>_<tier>_<effort initial>` (`H`/`M`/`L`), where the tier is the model's rank in its vendor lineup. When a CLI ships a new model, set the variable in the Head's shell (for example `export CODEX_HIGH_M=gpt-7-sol`); no rebuild is needed. Keys and efforts stay the same; `orch models` shows the resolved arguments.
 
 ## Layout
 

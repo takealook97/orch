@@ -105,7 +105,7 @@ Any other adapter works if it follows the same protocol: it is called as `<cmd> 
 | `ORCH_HOME` | you (optional) | state directory, default `~/.orch` (runs, locks, backups, playbooks) |
 | `ORCH_ACCOUNT_CMD` | you (optional) | account adapter for `--account hook` |
 | `ORCH_DEBUG=1` | you (optional) | verbose worker diagnostics on stderr |
-| `ORCH_LUNA_MODEL`, `ORCH_SOL_MODEL`, `ORCH_OPUS_MODEL`, `ORCH_SONNET_MODEL`, `ORCH_FLASH_MODEL` | you (optional) | model id passed to `--model` for that model's keys, read by `orch spawn` in the Head's shell. Defaults: `gpt-6-luna`, `gpt-6-sol`, `opus`, `sonnet`, `gemini-3.8-flash-medium`. Keys and efforts stay fixed; `orch models` shows the resolved arguments |
+| `CODEX_MEDIUM_M`, `CODEX_MEDIUM_H`, `CODEX_HIGH_L`, `CODEX_HIGH_M`, `CLAUDE_HIGH_M`, `CLAUDE_MEDIUM_M`, `GEMINI_MEDIUM_M` | you (optional) | model id passed to `--model` for one key, read by `orch spawn` in the Head's shell. See the model catalog in the README for the key mapping and defaults. Keys and efforts stay fixed; `orch models` shows the resolved arguments |
 | `ORCH_RAW_HERDR=1` | you, per command | lets one plain `herdr` command through the hook, for non-delegation panes such as builds or log tails. Close the pane when done |
 | `ORCH_ROLE`, `ORCH_RUN`, `ORCH_WORKER`, `ORCH_MODEL` | `orch spawn` | injected into worker panes. Never set these in the Head |
 
