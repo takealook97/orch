@@ -4,17 +4,17 @@ default_mode: full
 stages:
   recon:
     parallel: by_area
-    model: luna-m
+    model: codex-medium-m
     purpose: explore
-    notes: Use flash(web) for external docs and case studies
+    notes: Use gemini-medium-m(web) for external docs and case studies
   produce:
-    model: opus-m
+    model: claude-high-m
     purpose: synthesis
   verify:
     start: after_produce
     lanes:
       critical: { model: other_family(author), required: true }
-      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      neutral: { model: gemini-medium-m, required: true, withhold: [self_assessment] }
   integrate:
     owner: head
 retry_limit: 2

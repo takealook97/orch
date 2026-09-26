@@ -4,30 +4,30 @@ default_mode: full
 stages:
   recon:
     parallel: by_area
-    model: luna-m
+    model: codex-medium-m
     purpose: explore
     output: results/recon-<area>.md
   design:
     when: "ambiguous || cross_module"
-    model: opus-m
+    model: claude-high-m
     purpose: synthesis
     notes: Lock interfaces and names in decisions.md first (parallel-write gate 3)
   produce:
     parallel: by_worktree
-    model: sol-m
+    model: codex-high-m
     purpose: impl
-    escalate_to: opus-m
+    escalate_to: claude-high-m
     escalate_when: ["failed_once", "cross_cutting"]
-    notes: Use sol-l(mech-impl) for mechanical shards; start with opus-m(hard-impl) for concurrency, security, or complex state
+    notes: Use codex-high-l(mech-impl) for mechanical shards; start with claude-high-m(hard-impl) for concurrency, security, or complex state
   verify:
     start: per_shard
     lanes:
-      mechanical: { model: luna-h, required: true }
+      mechanical: { model: codex-medium-h, required: true }
       critical: { model: other_family(author), required: true }
-      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      neutral: { model: gemini-medium-m, required: true, withhold: [self_assessment] }
       adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
   integrate:
     owner: head
-    mechanics: sol-m
+    mechanics: codex-high-m
     notes: Merge worktrees one at a time; run build, typecheck, and the full test suite after each merge
 retry_limit: 2

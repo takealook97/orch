@@ -3,17 +3,17 @@ description: Image generation. Analyze references -> generate with Codex image_g
 default_mode: light
 stages:
   recon:
-    model: flash
+    model: gemini-medium-m
     purpose: web
     notes: Summarize references, style, and constraints
   produce:
-    model: sol-m
+    model: codex-high-m
     purpose: image
     notes: Use Codex's built-in image_generation tool (D4). Specify the output path in the contract
   verify:
     start: after_produce
     lanes:
-      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      neutral: { model: gemini-medium-m, required: true, withhold: [self_assessment] }
       critical: { model: other_family(author), required: true }
   integrate:
     owner: head

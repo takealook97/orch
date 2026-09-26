@@ -4,18 +4,18 @@ default_mode: light
 stages:
   recon:
     parallel: by_source
-    model: luna-m
+    model: codex-medium-m
     purpose: explore
-    notes: Use flash(web) for web pages, long documents, and image sources
+    notes: Use gemini-medium-m(web) for web pages, long documents, and image sources
   produce:
-    model: sonnet-m
+    model: claude-medium-m
     purpose: docs
-    escalate_to: opus-m
+    escalate_to: claude-high-m
     escalate_when: ["deep_technical"]
   verify:
     start: after_produce
     lanes:
-      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      neutral: { model: gemini-medium-m, required: true, withhold: [self_assessment] }
       critical: { model: other_family(author), required: false }
   integrate:
     owner: head

@@ -21,10 +21,10 @@ func TestCatalogFixed(t *testing.T) {
 	vars := map[string]bool{}
 	for _, m := range catalog {
 		families[m.Family] = true
-		if vars[m.ModelVar] {
-			t.Errorf("%s: variable %s shared", m.Key, m.ModelVar)
+		if vars[modelVar(m)] {
+			t.Errorf("%s: variable %s shared", m.Key, modelVar(m))
 		}
-		vars[m.ModelVar] = true
+		vars[modelVar(m)] = true
 		if args, err := modelArgs(m); err != nil || !slices.Contains(args, "--model") {
 			t.Errorf("%s: model not pinned", m.Key)
 		}
@@ -55,42 +55,42 @@ func joinArgs(t *testing.T, m Model, noDaemon bool) string {
 
 func TestLaunchArgs(t *testing.T) {
 	for _, m := range catalog {
-		t.Setenv(m.ModelVar, "")
+		t.Setenv(modelVar(m), "")
 	}
-	m, _ := modelByKey("sol-m")
+	m, _ := modelByKey("codex-high-m")
 	got := joinArgs(t, m, true)
 	want := `--dangerously-bypass-approvals-and-sandbox --no-daemon --model gpt-6-sol -c model_reasoning_effort="medium"`
 	if got != want {
 		t.Fatalf("got %q", got)
 	}
-	m, _ = modelByKey("opus-m")
+	m, _ = modelByKey("claude-high-m")
 	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model opus --effort medium" {
 		t.Fatalf("got %q", got)
 	}
-	m, _ = modelByKey("flash")
+	m, _ = modelByKey("gemini-medium-m")
 	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model gemini-3.8-flash-medium" {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestModelOverride(t *testing.T) {
-	t.Setenv(varLunaH, "gpt-7-luna")
-	t.Setenv(varLunaM, "")
-	t.Setenv(varOpusM, "claude-opus-6")
-	m, _ := modelByKey("luna-h")
-	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --model gpt-7-luna -c model_reasoning_effort="high"` {
+	t.Setenv("CODEX_MEDIUM_H", "gpt-7-mini")
+	t.Setenv("CODEX_MEDIUM_M", "")
+	t.Setenv("CLAUDE_HIGH_M", "claude-next")
+	m, _ := modelByKey("codex-medium-h")
+	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --model gpt-7-mini -c model_reasoning_effort="high"` {
 		t.Fatalf("got %q", got)
 	}
-	if got := joinArgs(t, key("luna-m"), false); !strings.Contains(got, "--model gpt-6-luna ") {
-		t.Fatalf("luna-m followed luna-h override: %q", got)
+	if got := joinArgs(t, key("codex-medium-m"), false); !strings.Contains(got, "--model gpt-6-luna ") {
+		t.Fatalf("codex-medium-m followed codex-medium-h override: %q", got)
 	}
-	m, _ = modelByKey("opus-m")
-	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-opus-6 --effort medium" {
+	m, _ = modelByKey("claude-high-m")
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-next --effort medium" {
 		t.Fatalf("got %q", got)
 	}
 	for _, bad := range []string{"--yolo", "gpt 7", `x"y`} {
-		t.Setenv(varSolM, bad)
-		if _, err := modelArgs(key("sol-m")); err == nil {
+		t.Setenv("CODEX_HIGH_M", bad)
+		if _, err := modelArgs(key("codex-high-m")); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
@@ -107,18 +107,18 @@ func TestLaneConstraints(t *testing.T) {
 		wantErr bool
 		warn    bool
 	}{
-		{roleCritical, "sonnet-m", []string{familyOpenAI}, nil, false, false},
-		{roleCritical, "sol-m", []string{familyOpenAI}, nil, true, false},
-		{roleCritical, "opus-m", []string{familyOpenAI, familyAnthropic}, nil, true, false},
-		{roleCritical, "flash", nil, nil, true, false}, // needs --reviews
-		{roleNeutral, "flash", []string{familyOpenAI}, nil, false, false},
-		{roleNeutral, "sonnet-m", []string{familyOpenAI}, nil, false, true},
-		{roleNeutral, "flash", []string{familyGoogle}, nil, true, false},
-		{roleAdversarial, "flash", []string{familyOpenAI}, nil, true, false},
-		{roleAdversarial, "opus-m", []string{familyOpenAI}, []string{familyAnthropic}, false, true},
-		{roleAdversarial, "sol-m", []string{familyAnthropic}, []string{familyOpenAI}, false, true},
-		{roleMech, "luna-h", nil, nil, false, false},
-		{roleProduce, "flash", nil, nil, false, false},
+		{roleCritical, "claude-medium-m", []string{familyOpenAI}, nil, false, false},
+		{roleCritical, "codex-high-m", []string{familyOpenAI}, nil, true, false},
+		{roleCritical, "claude-high-m", []string{familyOpenAI, familyAnthropic}, nil, true, false},
+		{roleCritical, "gemini-medium-m", nil, nil, true, false}, // needs --reviews
+		{roleNeutral, "gemini-medium-m", []string{familyOpenAI}, nil, false, false},
+		{roleNeutral, "claude-medium-m", []string{familyOpenAI}, nil, false, true},
+		{roleNeutral, "gemini-medium-m", []string{familyGoogle}, nil, true, false},
+		{roleAdversarial, "gemini-medium-m", []string{familyOpenAI}, nil, true, false},
+		{roleAdversarial, "claude-high-m", []string{familyOpenAI}, []string{familyAnthropic}, false, true},
+		{roleAdversarial, "codex-high-m", []string{familyAnthropic}, []string{familyOpenAI}, false, true},
+		{roleMech, "codex-medium-h", nil, nil, false, false},
+		{roleProduce, "gemini-medium-m", nil, nil, false, false},
 	}
 	for _, c := range cases {
 		w, err := checkLane(c.role, key(c.key), c.authors, c.critics)
@@ -132,22 +132,22 @@ func TestLaneConstraints(t *testing.T) {
 }
 
 func TestFallbackRespectsFamily(t *testing.T) {
-	// Critical review of an Anthropic author: sonnet-m/opus-m are skipped.
-	m, ok := nextFallback("verify-critical", "sol-m", roleCritical, []string{familyAnthropic}, nil, []string{"sol-m"})
-	if !ok || m.Key != "luna-h" {
+	// Critical review of an Anthropic author: claude-medium-m/claude-high-m are skipped.
+	m, ok := nextFallback("verify-critical", "codex-high-m", roleCritical, []string{familyAnthropic}, nil, []string{"codex-high-m"})
+	if !ok || m.Key != "codex-medium-h" {
 		t.Fatalf("got %v %v", m.Key, ok)
 	}
-	// Implementation chain follows the user example sol-m → opus-m → sonnet-m.
-	m, _ = nextFallback("impl", "sol-m", roleProduce, nil, nil, []string{"sol-m"})
-	if m.Key != "opus-m" {
+	// Implementation chain follows the user example codex-high-m → claude-high-m → claude-medium-m.
+	m, _ = nextFallback("impl", "codex-high-m", roleProduce, nil, nil, []string{"codex-high-m"})
+	if m.Key != "claude-high-m" {
 		t.Fatalf("impl fallback = %s", m.Key)
 	}
-	m, _ = nextFallback("impl", "opus-m", roleProduce, nil, nil, []string{"sol-m", "opus-m"})
-	if m.Key != "sonnet-m" {
+	m, _ = nextFallback("impl", "claude-high-m", roleProduce, nil, nil, []string{"codex-high-m", "claude-high-m"})
+	if m.Key != "claude-medium-m" {
 		t.Fatalf("impl fallback 2 = %s", m.Key)
 	}
-	// Adversarial never falls back to flash.
-	if _, ok := nextFallback("verify-adversarial", "sonnet-m", roleAdversarial, []string{familyOpenAI}, nil, []string{"opus-m", "sonnet-m"}); ok {
+	// Adversarial never falls back to gemini-medium-m.
+	if _, ok := nextFallback("verify-adversarial", "claude-medium-m", roleAdversarial, []string{familyOpenAI}, nil, []string{"claude-high-m", "claude-medium-m"}); ok {
 		t.Fatal("adversarial fell back to something invalid")
 	}
 }
@@ -177,7 +177,7 @@ func TestGlob(t *testing.T) {
 
 func TestContractTemplateRoundTrip(t *testing.T) {
 	r := &Run{ID: "x"}
-	body := contractTemplate(r, "impl-a", roleProduce, "sol-m")
+	body := contractTemplate(r, "impl-a", roleProduce, "codex-high-m")
 	if err := validateContract(body); err != nil {
 		t.Fatal(err)
 	}
@@ -288,10 +288,10 @@ func TestHookDecisions(t *testing.T) {
 		{"head agent outside herdr", hookJSON("Agent", map[string]any{}), "", false, false},
 		{"head raw split", hookJSON("Bash", map[string]any{"command": "herdr pane split --current"}), "", true, true},
 		{"head raw split escape", hookJSON("Bash", map[string]any{"command": "ORCH_RAW_HERDR=1 herdr pane split --current"}), "", true, false},
-		{"head orch spawn", hookJSON("Bash", map[string]any{"command": "orch spawn --model opus-m"}), "", true, false},
+		{"head orch spawn", hookJSON("Bash", map[string]any{"command": "orch spawn --model claude-high-m"}), "", true, false},
 		{"head herdr read", hookJSON("Bash", map[string]any{"command": "herdr pane list"}), "", true, false},
 		{"worker agent", hookJSON("Agent", map[string]any{}), "worker", false, true},
-		{"worker orch spawn", hookJSON("Bash", map[string]any{"command": "cd x && orch spawn --model opus-m"}), "worker", true, true},
+		{"worker orch spawn", hookJSON("Bash", map[string]any{"command": "cd x && orch spawn --model claude-high-m"}), "worker", true, true},
 		{"worker codex exec", hookJSON("exec_command", map[string]any{"cmd": []any{"codex", "exec", "hi"}}), "worker", true, true},
 		{"worker test run", hookJSON("Bash", map[string]any{"command": "go test ./..."}), "worker", true, false},
 		{"worker grep orch", hookJSON("Bash", map[string]any{"command": "grep -r 'orch spawn' docs"}), "worker", true, false},
@@ -299,7 +299,7 @@ func TestHookDecisions(t *testing.T) {
 		{"head chained split", hookJSON("Bash", map[string]any{"command": "cd x && herdr pane split --pane a"}), "", true, true},
 		{"head subshell split", hookJSON("Bash", map[string]any{"command": "P=$(herdr pane split --pane a)"}), "", true, true},
 		{"head env split", hookJSON("Bash", map[string]any{"command": "FOO=1 herdr agent start x"}), "", true, true},
-		{"worker abs orch", hookJSON("Bash", map[string]any{"command": "/Users/x/.local/bin/orch spawn --model opus-m"}), "worker", true, true},
+		{"worker abs orch", hookJSON("Bash", map[string]any{"command": "/Users/x/.local/bin/orch spawn --model claude-high-m"}), "worker", true, true},
 		{"codex namespaced spawn", hookJSON("collaboration.spawn_agent", map[string]any{}), "worker", false, true},
 		{"json string args", hookInput{ToolName: "run_command", ToolInput: json.RawMessage(`"{\"CommandLine\":\"herdr pane split --help\"}"`)}, "worker", false, true},
 		{"agy args with prose fields", hookInput{ToolCall: &struct {
@@ -409,8 +409,8 @@ func TestPlaybooksValid(t *testing.T) {
 
 func TestPlaybookRejectsBadKey(t *testing.T) {
 	p := Playbook{Type: "x", DefaultMode: "full", RetryLimit: 2, Stages: map[string]Stage{
-		"integrate": {Mechanics: "sol"},
-		"verify":    {Lanes: map[string]Lane{"adversarial": {Model: "flash"}, "critical": {Model: "sonnet-m"}}},
+		"integrate": {Mechanics: "codex"},
+		"verify":    {Lanes: map[string]Lane{"adversarial": {Model: "gemini-medium-m"}, "critical": {Model: "claude-medium-m"}}},
 	}}
 	errs := validatePlaybook(p)
 	if len(errs) != 3 {
@@ -454,7 +454,7 @@ func TestRunStateAndResolve(t *testing.T) {
 
 func TestSpawnRefusesWorker(t *testing.T) {
 	t.Setenv("ORCH_ROLE", "worker")
-	if _, err := spawn(spawnOpts{Key: "opus-m", Name: "x", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "worker") {
+	if _, err := spawn(spawnOpts{Key: "claude-high-m", Name: "x", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "worker") {
 		t.Fatalf("err = %v", err)
 	}
 	t.Setenv("ORCH_ROLE", "")
@@ -492,7 +492,7 @@ func TestCloseRefusesOtherHeadsRun(t *testing.T) {
 
 func TestFallbackContractRewrite(t *testing.T) {
 	r := &Run{ID: "x"}
-	body := contractTemplate(r, "fb", roleRecon, "luna-m")
+	body := contractTemplate(r, "fb", roleRecon, "codex-medium-m")
 	note := "\n## Fallback handoff\n- previous partial result: " + r.resultPath("fb") + "\n"
 	got := fallbackContract(r, body, "fb", "fb-f1", note)
 	if !strings.Contains(got, "# Contract: fb-f1") || !strings.Contains(got, "# Result: fb-f1\n") {
@@ -627,7 +627,7 @@ func TestSpawnRefusesOtherHeadsRun(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	r, _ := createRun("x", "light", "", "")
 	t.Setenv("HERDR_PANE_ID", "w1:p9")
-	_, err := spawn(spawnOpts{Run: r.ID, Key: "sol-m", Name: "x", Role: roleProduce})
+	_, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "x", Role: roleProduce})
 	if err == nil || !strings.Contains(err.Error(), "another Head") {
 		t.Fatalf("err = %v", err)
 	}
@@ -665,8 +665,8 @@ func TestFallbackLineageIsBounded(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	r, _ := createRun("x", "light", "", "")
 	_ = withRun(r.ID, func(r *Run) error {
-		r.Workers = append(r.Workers, &Worker{Name: "a", Key: "luna-m", Purpose: "explore", Contract: "c.md",
-			Tried: []string{"luna-m", "luna-h", "flash"}, TriedAccounts: []string{"A", "B", "C"}})
+		r.Workers = append(r.Workers, &Worker{Name: "a", Key: "codex-medium-m", Purpose: "explore", Contract: "c.md",
+			Tried: []string{"codex-medium-m", "codex-medium-h", "gemini-medium-m"}, TriedAccounts: []string{"A", "B", "C"}})
 		return nil
 	})
 	if _, err := doFallback(r.ID, "a", "quota exhausted"); err == nil || !strings.Contains(err.Error(), "fallback limit") {
@@ -835,7 +835,7 @@ func TestTrustScopeRejectsSymlinkEscape(t *testing.T) {
 }
 
 func TestHookBlocksOrchForWorkers(t *testing.T) {
-	for _, cmd := range []string{"orch spawn --model opus-m", "orch close --all", "/x/bin/orch resume --run r"} {
+	for _, cmd := range []string{"orch spawn --model claude-high-m", "orch close --all", "/x/bin/orch resume --run r"} {
 		if decide(hookJSON("Bash", map[string]any{"command": cmd}), "worker", true) == "" {
 			t.Errorf("worker allowed: %s", cmd)
 		}

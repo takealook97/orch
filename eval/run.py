@@ -7,10 +7,10 @@
 
 Experiments
   review:   each seeded-bug module is reviewed twice. The nominal author is an OpenAI model;
-            same-family reviewer = sol-m (OpenAI), cross-family reviewer = sonnet (Anthropic).
+            same-family reviewer = codex-high-m (OpenAI), cross-family reviewer = claude-medium-m (Anthropic).
             Detected = a reported BUG_LINES entry within ±1 of a planted bug line.
-  parallel: three independent functions per task. single = one sol-l worker writes all three;
-            parallel = three sol-l workers, one function each. Judged by hidden unit tests.
+  parallel: three independent functions per task. single = one codex-high-l worker writes all three;
+            parallel = three codex-high-l workers, one function each. Judged by hidden unit tests.
 Everything runs as one orch DAG, so row caps, fallback and pane cleanup are orch's own.
 """
 import datetime
@@ -28,7 +28,7 @@ import tasks  # noqa: E402
 import reference  # noqa: E402
 
 ORCH = shutil.which("orch") or os.path.expanduser("~/.local/bin/orch")
-REVIEWERS = {"same": "sol-m", "cross": "sonnet"}
+REVIEWERS = {"same": "codex-high-m", "cross": "claude-medium-m"}
 BUG_LINES_RE = re.compile(r"BUG_LINES:\s*([0-9,\s]*)")
 
 
@@ -164,7 +164,7 @@ def build(root, only, limit, created):
                 for k, funcs in enumerate(parts):
                     name = f"pp-{p['id']}-{variant[0]}{k}"
                     files = ", ".join(f"{f['name']}.py" for f in funcs)
-                    c = new_contract(run_id, name, "sol-l")
+                    c = new_contract(run_id, name, "codex-high-l")
                     fill_contract(
                         c,
                         goal=f"Implement the {', '.join(f['name'] for f in funcs)} functions in SPEC.md. One function per file: {files}.",
@@ -175,7 +175,7 @@ def build(root, only, limit, created):
                         base=base,
                         check="- Run specification examples with python3 -c",
                     )
-                    nodes.append({"name": name, "model": "sol-l", "role": "recon", "purpose": "mech-impl", "cwd": ws})
+                    nodes.append({"name": name, "model": "codex-high-l", "role": "recon", "purpose": "mech-impl", "cwd": ws})
                 meta["parallel"].append({"task": p["id"], "variant": variant, "workspace": ws,
                                          "nodes": [f"pp-{p['id']}-{variant[0]}{k}" for k in range(len(parts))],
                                          "funcs": [f["name"] for f in p["funcs"]]})
@@ -260,7 +260,7 @@ def report(root):
     out = [f"# P7 regression evaluation results", "", f"- Time: {datetime.datetime.now():%Y-%m-%d %H:%M}",
            f"- run: `{meta['run']}` · workspace: `{root}`", ""]
     if rows_r:
-        out += ["## Review: same family (sol-m) versus different family (sonnet), assumed OpenAI author", "",
+        out += ["## Review: same family (codex-high-m) versus different family (claude-medium-m), assumed OpenAI author", "",
                 "| Task | same family detected | different family detected | same family false-positive lines | different family false-positive lines |", "|---|---|---|---|---|"]
         by = {}
         for r in rows_r:
@@ -276,7 +276,7 @@ def report(root):
                        f"total false-positive lines {sum(len(r['extra']) for r in rs)}, no result {sum(r['reported'] is None for r in rs)}")
         out.append("")
     if rows_p:
-        out += ["## Implementation: single worker versus three parallel workers (sol-l)", "",
+        out += ["## Implementation: single worker versus three parallel workers (codex-high-l)", "",
                 "| Task | variant | hidden tests | wall time (s) | total worker time (s) | node status |", "|---|---|---|---|---|---|"]
         for r in rows_p:
             out.append(f"| {r['task']} | {r['variant']} | {r['passed']}/{r['total']} | "
@@ -294,7 +294,7 @@ def report(root):
     out += ["## Interpretation notes", "",
             "- The sample is small (12 review pairs, 8 implementation pairs). Treat results as directional and use repeated measurements to assess variance.",
             "- The review author is hypothetical (seeded bugs). This does not measure self-preference bias on code actually written by an OpenAI model.",
-            "- Reviewer strength (sol-m medium versus sonnet medium) is confounded with family effects.",
+            "- Reviewer strength (codex-high-m medium versus claude-medium-m medium) is confounded with family effects.",
             "- Parallel wall time may include waiting due to row limits. Total worker time approximates cost.", ""]
     text = "\n".join(out)
     path = os.path.join(root, "report.md")

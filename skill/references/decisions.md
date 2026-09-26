@@ -9,7 +9,7 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 | D1 | Opus uses `--effort medium` (or low); Sonnet uses `--effort medium` | Design-doc recommendation; Opus effort: medium or low only, never high |
 | D2 | Head rules apply globally, but are enforced only inside Herdr (`HERDR_ENV=1`) | `orch` does not work without Herdr |
 | D3 | Inside Herdr, all built-in Agent/Workflow/subagents are blocked (no exceptions) | User's choice |
-| D4 | Image generation uses Codex `image_generation` (`sol-m`, purpose `image`) | It is a stable feature, and `~/.codex/generated_images` shows real usage traces |
+| D4 | Image generation uses Codex `image_generation` (`codex-high-m`, purpose `image`) | It is a stable feature, and `~/.codex/generated_images` shows real usage traces |
 | D5 | The right column's row count is terminal height / 8, capped at 6 rows. Over that, spawn is refused and queued | Design-doc recommendation |
 | D6 | The run directory is `~/.orch/runs/<id>` | Keeps the repo clean |
 | D7 | The constitution source lives in one place, `constitution/orch-block.md`, and `orch install` inserts it between markers in all three files | The three files carry different content alongside it |
@@ -40,7 +40,7 @@ The original design doc is `design.md` in this directory. Decisions made or chan
    - The verification lane in light mode is one critical lane for code, or one neutral lane for docs/UI (per S8.3).
    - `decisions.md` goes in the run directory.
    - `orch doctor` is now defined.
-   - The playbook's `mechanics: sol` was not a catalog key, so it was changed to `sol-m`.
+   - The playbook's `mechanics` value was not a catalog key, so it was changed to `codex-high-m`.
 
 ## CLI facts confirmed during implementation
 

@@ -94,8 +94,8 @@ func validatePlaybook(p Playbook) []string {
 			if !validModelRef(lane.Model) {
 				bad("lane %s.model %q is not a catalog key", lname, lane.Model)
 			}
-			if lname == "adversarial" && lane.Model == "flash" {
-				bad("flash cannot be used for an adversarial lane")
+			if lname == "adversarial" && lane.Model == "gemini-medium-m" {
+				bad("gemini-medium-m cannot be used for an adversarial lane")
 			}
 			if lname == "critical" && lane.Model != "" && !strings.HasPrefix(lane.Model, "other_family") {
 				bad("critical lane must use other_family(author)")

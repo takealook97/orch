@@ -1,27 +1,27 @@
 type: refactor
-description: Refactoring. Survey the blast radius -> opus-m for the core, sol-l in parallel for mechanical shards -> verify behavior stays identical
+description: Refactoring. Survey the blast radius -> claude-high-m for the core, codex-high-l in parallel for mechanical shards -> verify behavior stays identical
 default_mode: full
 stages:
   recon:
     parallel: by_area
-    model: luna-m
+    model: codex-medium-m
     purpose: explore
   design:
-    model: opus-m
+    model: claude-high-m
     purpose: synthesis
   produce:
     parallel: by_worktree
-    model: opus-m
+    model: claude-high-m
     purpose: hard-impl
-    mechanics: sol-l
-    notes: Use opus-m for core changes; use sol-l per shard (mech-impl) for applying repetitive patterns
+    mechanics: codex-high-l
+    notes: Use claude-high-m for core changes; use codex-high-l per shard (mech-impl) for applying repetitive patterns
   verify:
     start: per_shard
     lanes:
-      mechanical: { model: luna-h, required: true }
+      mechanical: { model: codex-medium-h, required: true }
       critical: { model: other_family(author), required: true }
       adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
   integrate:
     owner: head
-    mechanics: sol-m
+    mechanics: codex-high-m
 retry_limit: 2

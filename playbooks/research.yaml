@@ -4,20 +4,20 @@ default_mode: full
 stages:
   recon:
     parallel: by_subquestion
-    model: flash
+    model: gemini-medium-m
     purpose: web
     output: results/recon-<question>.md
-    notes: Run local code/data recon in parallel with luna-h(extract). Every claim needs a source URL/path and a quote
+    notes: Run local code/data recon in parallel with codex-medium-h(extract). Every claim needs a source URL/path and a quote
   produce:
-    model: sonnet-m
+    model: claude-medium-m
     purpose: docs
-    escalate_to: opus-m
+    escalate_to: claude-high-m
     escalate_when: ["conflicting_sources"]
     notes: Every claim gets a source number. Mark anything unconfirmed as "unknown"
   verify:
     start: after_produce
     lanes:
-      neutral: { model: flash, required: true, withhold: [self_assessment] }
+      neutral: { model: gemini-medium-m, required: true, withhold: [self_assessment] }
       critical: { model: other_family(author), required: true }
   integrate:
     owner: head

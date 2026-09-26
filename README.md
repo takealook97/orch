@@ -32,11 +32,11 @@ orch doctor
 ```bash
 orch run new --text "<original request>" --mode full --playbook feature
 # write ~/.orch/runs/<id>/acceptance.md, decisions.md
-orch contract new impl --role produce --model sol-m      # fill in the template
-orch spawn --model sol-m --name impl --role produce --purpose impl
+orch contract new impl --role produce --model codex-high-m      # fill in the template
+orch spawn --model codex-high-m --name impl --role produce --purpose impl
 orch prompt impl
 orch wait impl                 # judged by the status line in the result file -> finished panes close immediately
-orch spawn --model sonnet-m --name crit --role verify-critical --reviews impl
+orch spawn --model claude-medium-m --name crit --role verify-critical --reviews impl
 orch prompt crit && orch wait crit
 orch run end                   # close all remaining panes and confirm removal
 ```
@@ -62,15 +62,15 @@ By default `orch` passes the Head's login to workers. To split capacity, wire an
 
 | Key | CLI | Family | Model variable | Default model |
 |---|---|---|---|---|
-| `luna-m` | codex, effort medium | OpenAI | `CODEX_MEDIUM_M` | `gpt-6-luna` |
-| `luna-h` | codex, effort high | OpenAI | `CODEX_MEDIUM_H` | `gpt-6-luna` |
-| `sol-l` | codex, effort low | OpenAI | `CODEX_HIGH_L` | `gpt-6-sol` |
-| `sol-m` | codex, effort medium | OpenAI | `CODEX_HIGH_M` | `gpt-6-sol` |
-| `opus-m` | claude, effort medium | Anthropic | `CLAUDE_HIGH_M` | `opus` |
-| `sonnet-m` | claude, effort medium | Anthropic | `CLAUDE_MEDIUM_M` | `sonnet` |
-| `flash` | agy | Google | `GEMINI_MEDIUM_M` | `gemini-3.8-flash-medium` |
+| `codex-medium-m` | codex, effort medium | OpenAI | `CODEX_MEDIUM_M` | `gpt-6-luna` |
+| `codex-medium-h` | codex, effort high | OpenAI | `CODEX_MEDIUM_H` | `gpt-6-luna` |
+| `codex-high-l` | codex, effort low | OpenAI | `CODEX_HIGH_L` | `gpt-6-sol` |
+| `codex-high-m` | codex, effort medium | OpenAI | `CODEX_HIGH_M` | `gpt-6-sol` |
+| `claude-high-m` | claude, effort medium | Anthropic | `CLAUDE_HIGH_M` | `opus` |
+| `claude-medium-m` | claude, effort medium | Anthropic | `CLAUDE_MEDIUM_M` | `sonnet` |
+| `gemini-medium-m` | agy | Google | `GEMINI_MEDIUM_M` | `gemini-3.8-flash-medium` |
 
-Variables follow `<MODEL>_<tier>_<effort initial>` (`H`/`M`/`L`), where the tier is the model's rank in its vendor lineup. When a CLI ships a new model, set the variable in the Head's shell (for example `export CODEX_HIGH_M=gpt-7-sol`); no rebuild is needed. Keys and efforts stay the same; `orch models` shows the resolved arguments.
+Keys follow `<cli>-<tier>-<effort initial>` (`h`/`m`/`l`), where the tier is the model's rank in its vendor lineup, and each key's variable is the key upper-cased with underscores. When a CLI ships a new model, set the variable in the Head's shell (for example `export CODEX_HIGH_M=gpt-7`); no rebuild is needed. Keys and efforts stay the same; `orch models` shows the resolved arguments.
 
 ## Layout
 

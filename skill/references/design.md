@@ -9,11 +9,11 @@
 
 - **The main session is always a separate, standing Head (commander).** It owns judgment, decomposition, assignment, integration, confidence, and the final answer. The scope of work Head does directly is set by the direct-mode threshold in §8 and the delegation break-even point.
 - **Subtasks split into stages (recon/triage -> design -> produce -> verify -> integrate), and work inside each stage must be able to run fully in parallel.**
-- **Models are fixed at 5, and model x effort keys are fixed at 7.** Codex `gpt-6-luna` (medium/high), Codex `gpt-6-sol` (low/medium), Claude Opus, Claude Sonnet, Gemini 3.8 Flash medium (agy). No model owns a fixed role; each contract picks a key from the **purpose-based assignment table (§9)**.
+- **Models are fixed at 5, and model x effort keys are fixed at 7.** Codex medium tier (medium/high effort), Codex high tier (low/medium), Claude high tier, Claude medium tier, Gemini medium tier (agy). Model ids come from per-key environment variables (`CODEX_MEDIUM_M` ... `GEMINI_MEDIUM_M`). No model owns a fixed role; each contract picks a key from the **purpose-based assignment table (§9)**.
 - **The default is the lightest mode.** The pipeline only kicks in once a threshold (§8) is crossed. Delegation is reserved for subtasks that clear the break-even point.
 - **Work that gets delegated defaults to parallel.** Read-heavy work — recon, review, verification — always runs in parallel. Write work only runs in parallel when the owned files don't overlap and the interface is already fixed (the parallel-write gate). Stage boundaries overlap at the shard level too (§11, evidence in §17).
 - **On failure, follow the fallback chain tied to the purpose.** First, a different account on the same model; then, once accounts are exhausted, the next key in the purpose's fallback order (§9.4).
-- **Verification splits into a critical lane and a neutral lane.** The neutral lane is Gemini Flash filling out a requirements checklist; the critical lane is a different model family from the author hunting for defects.
+- **Verification splits into a critical lane and a neutral lane.** The neutral lane is `gemini-medium-m` filling out a requirements checklist; the critical lane is a different model family from the author hunting for defects.
 - **Rules don't live in a single skill.** They split across four layers:
   1. Constitution: short rules that are always loaded
   2. Executor `orch`: enforces model pinning, pane lifecycle, and account selection in code
@@ -30,7 +30,7 @@
 | Item | State |
 |---|---|
 | `orch` skill | There are separate copies for Claude and Codex, and **they already differ.** Only the Codex copy has an "evidence-source restriction" line, and the model-selection wording differs |
-| Allowed models | Both skills (luna allows only high, sol allows only medium), the "orch task gate" in `~/.codex/AGENTS.md`, and the Deepeet rule in `~/.claude/CLAUDE.md` all **allow only 4 models.** Adding Gemini would violate the rule |
+| Allowed models | Both skills (the Codex medium tier allows only high effort, the high tier only medium), the "orch task gate" in `~/.codex/AGENTS.md`, and the Deepeet rule in `~/.claude/CLAUDE.md` all **allow only 4 models.** Adding Gemini would violate the rule |
 | Scope of application | Codex's `AGENTS.md` says "orch is required for every task"; Claude only applies it to the Deepeet workspace. Asymmetric |
 | cr | `cr` is a dashboard invoked with no arguments, and only supports `status`, `doctor`, `--serve`. Running a specific account is only possible via `runPreferred()` inside the dashboard. **There is no non-interactive account-selection interface** |
 | cr account environment | `providerEnv()` injects `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `CR_CODEX_NO_DAEMON`. `ensureSharedAgentConfig()` symlinks the global `AGENTS.md`/`CLAUDE.md` and skills into each account's home |
@@ -90,10 +90,9 @@
 │ model catalog (fixed) . account selection (cr registry) . pane placement              │
 │ ORCH_ROLE=worker injection . contract/result files . cleanup (trap) . state restore   │
 └───────────────────────────────────────────────────────────────────────────────────────┘
-       │           │           │           │           │
-       v           v           v           v           v
-    luna-h       sol-m      opus-m    sonnet-m       flash
-   (codex)      (codex)     (claude)    (claude)      (agy)
+          │                │               │                │                 │
+          v                v               v                v                 v
+   codex-medium-h    codex-high-m    claude-high-m    claude-medium-m    gemini-medium-m
 
         Herdr panes, stacked top-to-bottom in the right two-thirds column, --no-focus
 ```
@@ -132,7 +131,7 @@
 ```
 
 ### 4.3 Existing rules to clean up
-- In the "orch task gate" in `~/.codex/AGENTS.md` and the "Deepeet orch task rules" in `~/.claude/CLAUDE.md`, **replace "only 4 models are allowed" with "the 7 keys in orch's catalog."** `luna-m` and `sol-l` join the allow list at the same time.
+- In the "orch task gate" in `~/.codex/AGENTS.md` and the "Deepeet orch task rules" in `~/.claude/CLAUDE.md`, **replace "only 4 models are allowed" with "the 7 keys in orch's catalog."** `codex-medium-m` and `codex-high-l` join the allow list at the same time.
 - Decide whether to widen the Claude-side scope from Deepeet-only to global (see decision log, §14).
 - The example command (`herdr pane split --current ...`) in the existing "Herdr autonomous operation" section conflicts with orch's skill rule "never split the main pane with `--current`." Replace it with `orch`.
 
@@ -165,17 +164,17 @@ Each model x effort combination gets its own key. Head picks only by key.
 
 | Key | CLI (`--kind`) | Args | Family | Relative cost | Character |
 |---|---|---|---|---|---|
-| `luna-m` | codex | `--model gpt-6-luna -c model_reasoning_effort="medium"` | OpenAI | lowest | fast exploration, bulk classification, simple extraction |
-| `luna-h` | codex | `--model gpt-6-luna -c model_reasoning_effort="high"` | OpenAI | low | precise, narrow work: evidence extraction, log/test analysis, narrow verification |
-| `sol-l` | codex | `--model gpt-6-sol -c model_reasoning_effort="low"` | OpenAI | medium | fast implementation of a fully specified task, mechanical integration, bulk repetitive edits |
-| `sol-m` | codex | `--model gpt-6-sol -c model_reasoning_effort="medium"` | OpenAI | medium+ | general implementation, debugging, verification that needs tool execution, technical review |
-| `opus-m` | claude | `--model opus --effort medium` (see D1; medium or low only, never high) | Anthropic | highest | hard implementation, ambiguous design, changes that cross multiple areas, hard debugging, deep review |
-| `sonnet-m` | claude | `--model sonnet --effort <D1>` | Anthropic | medium | independent implementation, alternative approaches, docs/writing, code review, scenario QA |
-| `flash` | agy | `--model gemini-3.8-flash-medium` | Google | low | requirements checklist, broad document/web/multimodal reading, user-perspective QA |
+| `codex-medium-m` | codex | `--model $CODEX_MEDIUM_M -c model_reasoning_effort="medium"` | OpenAI | lowest | fast exploration, bulk classification, simple extraction |
+| `codex-medium-h` | codex | `--model $CODEX_MEDIUM_H -c model_reasoning_effort="high"` | OpenAI | low | precise, narrow work: evidence extraction, log/test analysis, narrow verification |
+| `codex-high-l` | codex | `--model $CODEX_HIGH_L -c model_reasoning_effort="low"` | OpenAI | medium | fast implementation of a fully specified task, mechanical integration, bulk repetitive edits |
+| `codex-high-m` | codex | `--model $CODEX_HIGH_M -c model_reasoning_effort="medium"` | OpenAI | medium+ | general implementation, debugging, verification that needs tool execution, technical review |
+| `claude-high-m` | claude | `--model $CLAUDE_HIGH_M --effort medium` (see D1; medium or low only, never high) | Anthropic | highest | hard implementation, ambiguous design, changes that cross multiple areas, hard debugging, deep review |
+| `claude-medium-m` | claude | `--model $CLAUDE_MEDIUM_M --effort <D1>` | Anthropic | medium | independent implementation, alternative approaches, docs/writing, code review, scenario QA |
+| `gemini-medium-m` | agy | `--model $GEMINI_MEDIUM_M` | Google | low | requirements checklist, broad document/web/multimodal reading, user-perspective QA |
 
-**Opus effort: medium or low only; never high.**
+**Claude high tier effort: medium or low only; never high.**
 
-- `sol-h` and `flash-high/low` are not in the catalog. Grow it only by adding a new key when one is actually needed.
+- `codex-high-h` and `gemini-high-*`/`gemini-low-*` are not in the catalog. Grow it only by adding a new key when one is actually needed.
 - Common flags: Codex `--dangerously-bypass-approvals-and-sandbox` (+ conditional `--no-daemon`), Claude `--dangerously-skip-permissions`, agy `--dangerously-skip-permissions`. Reuse cr's `launchArgs()`.
 - **`spawn` refuses any model outside the catalog.** Head never writes a model string directly.
 - agy is not managed by cr's account registry. It runs without account selection; only its login state is checked, in `orch doctor`.
@@ -385,7 +384,7 @@ Write it to ~/.orch/runs/<id>/results/<name>.md in the format below.
 
 **Picking the one verification lane for light mode**
 - Code with existing tests -> Head runs the tests directly + **one critical lane** (a different family)
-- Docs, writing, user-facing output -> **one neutral lane** (`flash`)
+- Docs, writing, user-facing output -> **one neutral lane** (`gemini-medium-m`)
 - Both apply -> the critical lane takes priority
 
 ### 8.4 Delegation break-even point (per individual subtask)
@@ -423,9 +422,9 @@ Head decides whether to delegate a subtask or do it directly using the following
 | Request | Metrics | Mode |
 |---|---|---|
 | "Rename this function" (2 files) | E small, F 2, P 1, no H | direct |
-| "Add install steps to the README" | E small, user-facing doc | direct. If it's long, light (sonnet-m writes + flash neutral) |
+| "Add install steps to the README" | E small, user-facing doc | direct. If it's long, light (claude-medium-m writes + gemini-medium-m neutral) |
 | "Fix the login failure bug" | auth = H | full+ |
-| "Add an `orch status` subcommand to cr" | F 2-3, one module, U pinnable | light (sol-m implements + Head tests + sonnet-m critical) |
+| "Add an `orch status` subcommand to cr" | F 2-3, one module, U pinnable | light (codex-high-m implements + Head tests + claude-medium-m critical) |
 | "Fully implement `orch` in cr" | F > 5, P >= 3 | full |
 | "Research multi-agent setups built on Herdr" | many subquestions, sources need checking | full (parallel research + synthesis + neutral/critical) |
 | "What does this error message mean?" | a question | direct |
@@ -443,10 +442,10 @@ Head decides whether to delegate a subtask or do it directly using the following
    - Technical difficulty: local, or does it cross multiple areas
    - Input shape: code and logs, or web/long documents/images
    - Cost of being wrong: how expensive is a mistake
-3. **Pick the cheapest key that satisfies the contract** — but don't stall on a hard task by retrying it repeatedly with a weak model. If the difficulty is visible up front, go straight to `opus-m`.
-4. **Effort is chosen separately from the model.** Even within `luna`, bulk classification gets `luna-m` and precise extraction gets `luna-h`. Even within `sol`, a fully specified mechanical implementation gets `sol-l`, and one that mixes in judgment gets `sol-m`.
-5. **No model has a fixed title.** `flash` also takes recon or produce work when the purpose fits — it just can never be the **sole verifier.**
-6. Don't save Opus for planning or arbitration only. Use it directly on hard implementation.
+3. **Pick the cheapest key that satisfies the contract** — but don't stall on a hard task by retrying it repeatedly with a weak model. If the difficulty is visible up front, go straight to `claude-high-m`.
+4. **Effort is chosen separately from the model.** Even within the Codex medium tier, bulk classification gets `codex-medium-m` and precise extraction gets `codex-medium-h`. Even within the Codex high tier, a fully specified mechanical implementation gets `codex-high-l`, and one that mixes in judgment gets `codex-high-m`.
+5. **No model has a fixed title.** `gemini-medium-m` also takes recon or produce work when the purpose fits — it just can never be the **sole verifier.**
+6. Don't save `claude-high-m` for planning or arbitration only. Use it directly on hard implementation.
 7. **The verification-family constraint (§9.3) outranks both assignment and fallback.**
 
 ### 9.2 Assignment table by purpose
@@ -457,81 +456,81 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Find files, symbols, call sites (broad) | `luna-m` | Repo is large and naming is irregular -> `luna-h` | Speed matters, little judgment needed |
-| Evidence extraction (exact quotes, line numbers, values) | `luna-h` | — | Precision matters |
-| Log, stack-trace, test-failure analysis | `luna-h` | Multiple tangled root-cause candidates -> `sol-m` | Precise judgment over narrow input |
-| Bulk classification, tagging, list cleanup (dozens of items or more) | `luna-m` per shard | Classification criteria are ambiguous -> `sonnet-m` | Cheap, fast model, parallelized across shards |
-| Web research, long documents, PDFs, comparing multiple sources | `flash` per topic | Technically deep source interpretation -> `opus-m` | Strong on broad and multimodal input, and cheap |
-| Reading images, screenshots, video, design files | `flash` | Fine-grained judgment matters -> `sonnet-m` | Multimodal |
-| Data extraction, aggregation (SQL, CSV, scripts) | `luna-h` | Schema interpretation needed -> `sol-m` | Tool execution + precision |
-| Reconciling conflicting evidence, forming root-cause hypotheses | `opus-m` | — | Needs interpretation and synthesis |
-| Requirements decomposition, acceptance-criteria drafts | Head | Unfamiliar domain -> ask `opus-m` for a draft | Head's own territory |
+| Find files, symbols, call sites (broad) | `codex-medium-m` | Repo is large and naming is irregular -> `codex-medium-h` | Speed matters, little judgment needed |
+| Evidence extraction (exact quotes, line numbers, values) | `codex-medium-h` | — | Precision matters |
+| Log, stack-trace, test-failure analysis | `codex-medium-h` | Multiple tangled root-cause candidates -> `codex-high-m` | Precise judgment over narrow input |
+| Bulk classification, tagging, list cleanup (dozens of items or more) | `codex-medium-m` per shard | Classification criteria are ambiguous -> `claude-medium-m` | Cheap, fast model, parallelized across shards |
+| Web research, long documents, PDFs, comparing multiple sources | `gemini-medium-m` per topic | Technically deep source interpretation -> `claude-high-m` | Strong on broad and multimodal input, and cheap |
+| Reading images, screenshots, video, design files | `gemini-medium-m` | Fine-grained judgment matters -> `claude-medium-m` | Multimodal |
+| Data extraction, aggregation (SQL, CSV, scripts) | `codex-medium-h` | Schema interpretation needed -> `codex-high-m` | Tool execution + precision |
+| Reconciling conflicting evidence, forming root-cause hypotheses | `claude-high-m` | — | Needs interpretation and synthesis |
+| Requirements decomposition, acceptance-criteria drafts | Head | Unfamiliar domain -> ask `claude-high-m` for a draft | Head's own territory |
 
 #### B. Design
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Ambiguous architecture, design that crosses multiple areas | `opus-m` | — | Deep synthesis |
-| Alternative design (for comparison) | `sonnet-m` | If the primary design is Anthropic's -> `sol-m` | A different perspective, a different family if possible |
-| Interface, schema, data-model drafts | `sol-m` | Impact is wide -> `opus-m` | Clear technical judgment |
+| Ambiguous architecture, design that crosses multiple areas | `claude-high-m` | — | Deep synthesis |
+| Alternative design (for comparison) | `claude-medium-m` | If the primary design is Anthropic's -> `codex-high-m` | A different perspective, a different family if possible |
+| Interface, schema, data-model drafts | `codex-high-m` | Impact is wide -> `claude-high-m` | Clear technical judgment |
 
 #### C. Produce: code
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Fully specified mechanical implementation (renames, applying a repeated pattern, boilerplate) | `sol-l` | Scope is very narrow, 1-2 files -> `luna-h` | Almost no judgment involved |
-| General feature implementation, bug fixes | `sol-m` | — | Default implementer |
-| Hard implementation (concurrency, performance, security, complex state) | `opus-m` | — | Assign it from the start. Never try a weak model first |
-| Changes across multiple modules, large refactors | `opus-m` (design + core) + `sol-m`/`sol-l` per shard | — | Core judgment goes to opus, mechanical shards run in parallel on sol |
-| Hard debugging (unstable repro, cause spans multiple layers) | `opus-m` | Repro is reliable and the cause is local -> `sol-m` | — |
-| Alternative implementation (for comparison) | `sonnet-m` | If the primary implementation is Anthropic's -> `sol-m` | A different family |
-| Writing test code | `sol-m` | Scenario design is the focus -> `sonnet-m` | — |
-| Merging, conflict resolution, mechanical integration | `sol-m` | Conflicts are semantic -> `opus-m` | — |
+| Fully specified mechanical implementation (renames, applying a repeated pattern, boilerplate) | `codex-high-l` | Scope is very narrow, 1-2 files -> `codex-medium-h` | Almost no judgment involved |
+| General feature implementation, bug fixes | `codex-high-m` | — | Default implementer |
+| Hard implementation (concurrency, performance, security, complex state) | `claude-high-m` | — | Assign it from the start. Never try a weak model first |
+| Changes across multiple modules, large refactors | `claude-high-m` (design + core) + `codex-high-m`/`codex-high-l` per shard | — | Core judgment goes to `claude-high-m`, mechanical shards run in parallel on the Codex high tier |
+| Hard debugging (unstable repro, cause spans multiple layers) | `claude-high-m` | Repro is reliable and the cause is local -> `codex-high-m` | — |
+| Alternative implementation (for comparison) | `claude-medium-m` | If the primary implementation is Anthropic's -> `codex-high-m` | A different family |
+| Writing test code | `codex-high-m` | Scenario design is the focus -> `claude-medium-m` | — |
+| Merging, conflict resolution, mechanical integration | `codex-high-m` | Conflicts are semantic -> `claude-high-m` | — |
 
 #### D. Produce: writing, analysis, other
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Docs, reports, manuals | `sonnet-m` | Technically deep content -> `opus-m` | Writing quality |
-| Research synthesis report | `sonnet-m` | Sources conflict -> `opus-m` | — |
-| Short summaries, changelogs, boilerplate documents | `luna-h` | — | Cheap and good enough |
-| Data analysis (calculations, statistics) | `sol-m` | Interpretation is ambiguous, causal judgment needed -> `opus-m` | Tool execution + judgment |
+| Docs, reports, manuals | `claude-medium-m` | Technically deep content -> `claude-high-m` | Writing quality |
+| Research synthesis report | `claude-medium-m` | Sources conflict -> `claude-high-m` | — |
+| Short summaries, changelogs, boilerplate documents | `codex-medium-h` | — | Cheap and good enough |
+| Data analysis (calculations, statistics) | `codex-high-m` | Interpretation is ambiguous, causal judgment needed -> `claude-high-m` | Tool execution + judgment |
 | Image generation | Decide after D4 | — | Needs confirming which generation tool is supported |
-| Translation, format conversion | `luna-m` | Heavy on technical terminology -> `sonnet-m` | — |
+| Translation, format conversion | `codex-medium-m` | Heavy on technical terminology -> `claude-medium-m` | — |
 
 #### E. Verification
 
 | Lane / purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Mechanical: rerun tests, builds, lint | `luna-h` | Environment setup is complex -> `sol-m` | Run it and record it exactly |
-| Mechanical: run repro scenarios, recompute | `luna-h` | — | — |
-| Mechanical: inspect rendered output, produced files | `flash` | — | Multimodal |
-| Critical: general code review | Author is OpenAI -> `sonnet-m` · Anthropic -> `sol-m` · Google -> `sol-m` | — | A different family |
-| Critical: complex change or one crossing multiple areas | Author is OpenAI/Google -> `opus-m` · Anthropic -> `sol-m` | — | Depth + a different family |
-| Critical: confirm one narrow, explicit claim | `luna-h` (author isn't OpenAI) | Author is OpenAI -> `sonnet-m` | — |
-| Critical: fact/source rebuttal (research) | `opus-m` | opus wrote the synthesis -> `sol-m` | — |
-| Neutral: requirements checklist | `flash` | — | A different family, checklist-style work |
-| Adversarial: attacking a specific target | Per §9.3: a family different from both the author and the critical reviewer. Default `opus-m`; if the author is Anthropic, `sol-m` | — | Depth first. Never `flash` |
+| Mechanical: rerun tests, builds, lint | `codex-medium-h` | Environment setup is complex -> `codex-high-m` | Run it and record it exactly |
+| Mechanical: run repro scenarios, recompute | `codex-medium-h` | — | — |
+| Mechanical: inspect rendered output, produced files | `gemini-medium-m` | — | Multimodal |
+| Critical: general code review | Author is OpenAI -> `claude-medium-m` · Anthropic -> `codex-high-m` · Google -> `codex-high-m` | — | A different family |
+| Critical: complex change or one crossing multiple areas | Author is OpenAI/Google -> `claude-high-m` · Anthropic -> `codex-high-m` | — | Depth + a different family |
+| Critical: confirm one narrow, explicit claim | `codex-medium-h` (author isn't OpenAI) | Author is OpenAI -> `claude-medium-m` | — |
+| Critical: fact/source rebuttal (research) | `claude-high-m` | `claude-high-m` wrote the synthesis -> `codex-high-m` | — |
+| Neutral: requirements checklist | `gemini-medium-m` | — | A different family, checklist-style work |
+| Adversarial: attacking a specific target | Per §9.3: a family different from both the author and the critical reviewer. Default `claude-high-m`; if the author is Anthropic, `codex-high-m` | — | Depth first. Never `gemini-medium-m` |
 
 #### F. Primary use per key, at a glance
 
 | Key | Main use | Avoid for |
 |---|---|---|
-| `luna-m` | Broad exploration, bulk classification, translation/conversion | Work needing judgment, critical review |
-| `luna-h` | Precise extraction, log/test analysis, mechanical verification, narrow implementation, short boilerplate docs | Implementation crossing multiple areas, design |
-| `sol-l` | Fully specified mechanical implementation, bulk repetitive edits | Ambiguous requirements, debugging |
-| `sol-m` | General implementation, debugging, integration, interface design, reviewing Anthropic's work | — |
-| `opus-m` | Hard implementation and debugging, ambiguous design, evidence synthesis, deep review, adversarial verification | Simple exploration, bulk repetitive work |
-| `sonnet-m` | Docs/writing, alternative implementation/design, reviewing OpenAI's work, scenario QA | Precise extraction |
-| `flash` | Neutral verification, web/document/multimodal research, checking rendered output | Being the sole verifier, adversarial verification, hard implementation |
+| `codex-medium-m` | Broad exploration, bulk classification, translation/conversion | Work needing judgment, critical review |
+| `codex-medium-h` | Precise extraction, log/test analysis, mechanical verification, narrow implementation, short boilerplate docs | Implementation crossing multiple areas, design |
+| `codex-high-l` | Fully specified mechanical implementation, bulk repetitive edits | Ambiguous requirements, debugging |
+| `codex-high-m` | General implementation, debugging, integration, interface design, reviewing Anthropic's work | — |
+| `claude-high-m` | Hard implementation and debugging, ambiguous design, evidence synthesis, deep review, adversarial verification | Simple exploration, bulk repetitive work |
+| `claude-medium-m` | Docs/writing, alternative implementation/design, reviewing OpenAI's work, scenario QA | Precise extraction |
+| `gemini-medium-m` | Neutral verification, web/document/multimodal research, checking rendered output | Being the sole verifier, adversarial verification, hard implementation |
 
 ### 9.3 Verification-family constraint
-There are exactly three families: OpenAI (`luna-*`, `sol-*`), Anthropic (`opus-m`, `sonnet-m`), Google (`flash`).
+There are exactly three families: OpenAI (`codex-*`), Anthropic (`claude-high-m`, `claude-medium-m`), Google (`gemini-medium-m`).
 - **Required**: the critical lane must be a different family from the author.
 - **Recommended**: the adversarial lane should differ from both the author and the critical reviewer.
-- If satisfying the recommended condition would force `flash` into the adversarial lane, **drop the recommended condition.** Assign a session that differs from the author but may share a family with the critical reviewer — depth matters more there than family diversity.
-- Never let the neutral lane's `flash` session double as another lane's `flash` session.
-- If the author spans multiple families (e.g., opus for the core, sol for shards), **judge author family per shard.**
+- If satisfying the recommended condition would force `gemini-medium-m` into the adversarial lane, **drop the recommended condition.** Assign a session that differs from the author but may share a family with the critical reviewer — depth matters more there than family diversity.
+- Never let the neutral lane's `gemini-medium-m` session double as another lane's `gemini-medium-m` session.
+- If the author spans multiple families (e.g., `claude-high-m` for the core, `codex-high-*` for shards), **judge author family per shard.**
 
 ### 9.4 Fallback (tied to purpose)
 
@@ -554,21 +553,21 @@ There are exactly three families: OpenAI (`luna-*`, `sol-*`), Anthropic (`opus-m
 
 | Purpose | Primary | Fallback 1 | Fallback 2 | Note |
 |---|---|---|---|---|
-| Broad exploration, bulk classification | `luna-m` | `luna-h` | `flash` | Escalate within the same family first |
-| Precise extraction, log/test analysis | `luna-h` | `sol-m` | `sonnet-m` | |
-| Web/document/multimodal research | `flash` | `sonnet-m` | `opus-m` | |
-| Evidence synthesis, hypothesis forming | `opus-m` | `sol-m` | `sonnet-m` | |
-| Mechanical implementation | `sol-l` | `sol-m` | `sonnet-m` | |
-| General implementation, bug fixes | `sol-m` | `opus-m` | `sonnet-m` | user-specified example |
-| Hard implementation, hard debugging | `opus-m` | `sol-m` | `sonnet-m` | |
-| Alternative implementation/design | `sonnet-m` | `opus-m` | `sol-m` | If falling back would defeat the point of "alternative" (a different family), prefer `sol-m` |
-| Docs/writing, research synthesis | `sonnet-m` | `opus-m` | `sol-m` | |
-| Data analysis | `sol-m` | `opus-m` | `sonnet-m` | |
-| Integration, merging | `sol-m` | `opus-m` | Head does it directly | |
-| Mechanical verification | `luna-h` | `sol-m` | `sonnet-m` | the author's own session is forbidden |
-| Critical review | assignment table E | swap within the same **different family** (`sonnet-m`<->`opus-m`, and `sol-m`<->`luna-h` rather than `sol-m`<->`opus-m`) | whatever's left in a family different from the author | **The family constraint wins.** Never fall back into the author's family |
-| Neutral verification | `flash` | `sonnet-m` (or `sol-m` if the author is Anthropic) | any other different family | Keep the output format (the checklist). Mark it "flash substitute" in the report |
-| Adversarial verification | assignment table E | a session in a different family from both the author and the critical reviewer | — | Never fall back to `flash` |
+| Broad exploration, bulk classification | `codex-medium-m` | `codex-medium-h` | `gemini-medium-m` | Escalate within the same family first |
+| Precise extraction, log/test analysis | `codex-medium-h` | `codex-high-m` | `claude-medium-m` | |
+| Web/document/multimodal research | `gemini-medium-m` | `claude-medium-m` | `claude-high-m` | |
+| Evidence synthesis, hypothesis forming | `claude-high-m` | `codex-high-m` | `claude-medium-m` | |
+| Mechanical implementation | `codex-high-l` | `codex-high-m` | `claude-medium-m` | |
+| General implementation, bug fixes | `codex-high-m` | `claude-high-m` | `claude-medium-m` | user-specified example |
+| Hard implementation, hard debugging | `claude-high-m` | `codex-high-m` | `claude-medium-m` | |
+| Alternative implementation/design | `claude-medium-m` | `claude-high-m` | `codex-high-m` | If falling back would defeat the point of "alternative" (a different family), prefer `codex-high-m` |
+| Docs/writing, research synthesis | `claude-medium-m` | `claude-high-m` | `codex-high-m` | |
+| Data analysis | `codex-high-m` | `claude-high-m` | `claude-medium-m` | |
+| Integration, merging | `codex-high-m` | `claude-high-m` | Head does it directly | |
+| Mechanical verification | `codex-medium-h` | `codex-high-m` | `claude-medium-m` | the author's own session is forbidden |
+| Critical review | assignment table E | swap within the same **different family** (`claude-medium-m`<->`claude-high-m`, and `codex-high-m`<->`codex-medium-h` rather than `codex-high-m`<->`claude-high-m`) | whatever's left in a family different from the author | **The family constraint wins.** Never fall back into the author's family |
+| Neutral verification | `gemini-medium-m` | `claude-medium-m` (or `codex-high-m` if the author is Anthropic) | any other different family | Keep the output format (the checklist). Mark it "gemini-medium-m substitute" in the report |
+| Adversarial verification | assignment table E | a session in a different family from both the author and the critical reviewer | — | Never fall back to `gemini-medium-m` |
 
 #### If the whole fallback chain is blocked
 - Mark that shard `blocked` and **keep the other shards moving.** Don't stop everything.
@@ -594,9 +593,9 @@ There are exactly three families: OpenAI (`luna-*`, `sol-*`), Anthropic (`opus-m
 
 | Lane | Character | Who | Input | Output |
 |---|---|---|---|---|
-| **Mechanical** | fact-checking | `luna-h` (not the author) or Head directly | the deliverable, list of commands to run | commands, inputs, exit codes, output excerpts, list of failures |
+| **Mechanical** | fact-checking | `codex-medium-h` (not the author) or Head directly | the deliverable, list of commands to run | commands, inputs, exit codes, output excerpts, list of failures |
 | **Critical** | find defects | a different family from the author | original request, acceptance criteria, the diff/deliverable, mechanical results | list of defects (location, repro scenario, severity) |
-| **Neutral** | check against requirements | `flash` | original request, acceptance criteria, the deliverable, evidence of actual behavior. **Never given the author's self-assessment** | requirements checklist |
+| **Neutral** | check against requirements | `gemini-medium-m` | original request, acceptance criteria, the deliverable, evidence of actual behavior. **Never given the author's self-assessment** | requirements checklist |
 | **Adversarial** | try to break it | see §9.3 | a specific attack target (concurrency, data loss, security, fact/source, accessibility, or operational failure) | a counterexample, or evidence the attack failed |
 
 ### 10.3 Neutral lane output format (fixed)
@@ -638,7 +637,7 @@ required = must run · optional = run if useful · two = two of them
   - **Unfounded concern**: contradicted by the evidence
   - **Resolved**
 - Confirmed defects go back to an implementer (the original author or another worker), and **only the affected lanes** rerun.
-- **The retry cap is 2.** If a defect survives two rounds, escalate the model (e.g., `sol-m` -> `opus-m`, `luna-h` -> `sol-m`) or report to the user.
+- **The retry cap is 2.** If a defect survives two rounds, escalate the model (e.g., `codex-high-m` -> `claude-high-m`, `codex-medium-h` -> `codex-high-m`) or report to the user.
 - **Neither a neutral-lane pass nor a technical reviewer's pass alone is enough to accept the work.**
 - **Don't apply a review finding just because it was raised.** Only a finding that's reproduced or proven by a test becomes a confirmed defect. Cross-family review has an asymmetric effect — folding in an unfounded finding from a weaker reviewer can make a stronger author's result worse (§17 C4). Reviewers have no veto.
 - State plausible risks in the final report. Don't hide them.
@@ -672,7 +671,7 @@ If it doesn't pass, one writer proceeds at a time. Recon and verification prep s
 | **Concurrent lanes** | Run all four verification lanes as soon as their inputs are ready | mechanical, critical, and neutral at once |
 | **Contract-first** | Fix an interface or schema first, then implement both sides at once | fix an API spec -> build the server, client, and tests together |
 | **Speculative parallel** | Start work likely to be needed before it's confirmed needed | check 2-3 root-cause hypotheses at once, investigate a settled part before the design is finalized |
-| **Alternative race** | Two families attempt a hard implementation at once; keep the better one. Doubles cost, so reserve it for full+, and only when the first attempt failed or approaches genuinely diverge | in full+, `opus-m` and `sol-m` implement the same shard |
+| **Alternative race** | Two families attempt a hard implementation at once; keep the better one. Doubles cost, so reserve it for full+, and only when the first attempt failed or approaches genuinely diverge | in full+, `claude-high-m` and `codex-high-m` implement the same shard |
 | **Verification prep ahead of time** | Prepare acceptance criteria, test scenarios, and checklist templates while produce is still running | fix the neutral lane's checklist items in advance |
 
 ### 11.3 Dependency management
@@ -691,14 +690,14 @@ If it doesn't pass, one writer proceeds at a time. Recon and verification prep s
 
 ```
 time ->
-recon        [luna-m:A][luna-h:logs][flash:docs]                ← start together
-design            [opus-m: fix the interface]                     ← waits only on recon A
-verify-prep       [flash: checklist template][luna-h: test scenarios]  ← alongside design
-produce                 [sol-m:1 wt1][sol-l:2 wt2][opus-m:3 wt3][sonnet-m:docs]
-verify                        [luna-h mech:1][sonnet-m critical:1][flash neutral:1]  ← as soon as shard 1 finishes
-                                    [luna-h mech:2][sonnet-m critical:2][flash neutral:2]
-                                         [luna-h mech:3][sol-m critical:3][flash neutral:3]
-integrate                                                    [sol-m merge][luna-h full tests][flash full checklist]
+recon        [codex-medium-m:A][codex-medium-h:logs][gemini-medium-m:docs]                ← start together
+design            [claude-high-m: fix the interface]                     ← waits only on recon A
+verify-prep       [gemini-medium-m: checklist template][codex-medium-h: test scenarios]  ← alongside design
+produce                 [codex-high-m:1 wt1][codex-high-l:2 wt2][claude-high-m:3 wt3][claude-medium-m:docs]
+verify                        [codex-medium-h mech:1][claude-medium-m critical:1][gemini-medium-m neutral:1]  ← as soon as shard 1 finishes
+                                    [codex-medium-h mech:2][claude-medium-m critical:2][gemini-medium-m neutral:2]
+                                         [codex-medium-h mech:3][codex-high-m critical:3][gemini-medium-m neutral:3]
+integrate                                                    [codex-high-m merge][codex-medium-h full tests][gemini-medium-m full checklist]
 verdict                                                                         [Head]
 ```
 
@@ -712,14 +711,14 @@ Playbooks live at `~/.orch/playbooks/<type>.yaml`. Head picks a type, adjusts it
 
 | Type | Default mode | Recon | Produce | Verify |
 |---|---|---|---|---|
-| Feature development | full | `luna-m` per area | `sol-m` (or `opus-m` if hard; mechanical shards go to `sol-l`) per worktree | mechanical `luna-h` + critical (different family) + neutral `flash` |
-| Bug fix | light -> full | `luna-h` (repro, logs, candidate causes) | `sol-m` (`opus-m` if the cause spans multiple layers) | mechanical (repro is gone + regression test) + critical |
-| Investigation/research | full | `flash` (broad) + `luna-h` (code, data) in parallel | `sonnet-m` synthesizes | neutral `flash` (source cross-check, a different session) + critical `opus-m` (fact rebuttal) |
-| Documentation | light | `luna-m`/`flash` gather material | `sonnet-m` | neutral `flash` + critical `sol-m` (facts, consistency) |
-| Analysis | full | `luna-h` (data extraction) | `sol-m`/`opus-m` | mechanical `luna-h` (recompute) + critical (different family) |
-| Image generation | light | `flash` (references, style analysis) | whichever CLI has generation tooling (D4) | neutral `flash` (requirements check) + critical `sonnet-m` (visual quality) |
-| Refactoring | full | `luna-m` (impact scope) | `opus-m` (core) + `sol-l` per mechanical shard | mechanical (full tests, same behavior) + critical `opus-m` |
-| Design/architecture review | full | `luna-m` + `flash` | `opus-m` | critical `sol-m` + neutral `flash` |
+| Feature development | full | `codex-medium-m` per area | `codex-high-m` (or `claude-high-m` if hard; mechanical shards go to `codex-high-l`) per worktree | mechanical `codex-medium-h` + critical (different family) + neutral `gemini-medium-m` |
+| Bug fix | light -> full | `codex-medium-h` (repro, logs, candidate causes) | `codex-high-m` (`claude-high-m` if the cause spans multiple layers) | mechanical (repro is gone + regression test) + critical |
+| Investigation/research | full | `gemini-medium-m` (broad) + `codex-medium-h` (code, data) in parallel | `claude-medium-m` synthesizes | neutral `gemini-medium-m` (source cross-check, a different session) + critical `claude-high-m` (fact rebuttal) |
+| Documentation | light | `codex-medium-m`/`gemini-medium-m` gather material | `claude-medium-m` | neutral `gemini-medium-m` + critical `codex-high-m` (facts, consistency) |
+| Analysis | full | `codex-medium-h` (data extraction) | `codex-high-m`/`claude-high-m` | mechanical `codex-medium-h` (recompute) + critical (different family) |
+| Image generation | light | `gemini-medium-m` (references, style analysis) | whichever CLI has generation tooling (D4) | neutral `gemini-medium-m` (requirements check) + critical `claude-medium-m` (visual quality) |
+| Refactoring | full | `codex-medium-m` (impact scope) | `claude-high-m` (core) + `codex-high-l` per mechanical shard | mechanical (full tests, same behavior) + critical `claude-high-m` |
+| Design/architecture review | full | `codex-medium-m` + `gemini-medium-m` | `claude-high-m` | critical `codex-high-m` + neutral `gemini-medium-m` |
 | Simple question, single-file edit | direct | — | Head | Head directly, if needed |
 
 ### 12.2 Playbook example (`feature.yaml`)
@@ -730,36 +729,36 @@ default_mode: full
 stages:
   recon:
     parallel: by_area
-    model: luna-m
+    model: codex-medium-m
     output: results/recon-<area>.md
   design:
     when: "ambiguous || cross_module"
-    model: opus-m
+    model: claude-high-m
   produce:
     parallel: by_worktree
-    model: sol-m
-    escalate_to: opus-m
+    model: codex-high-m
+    escalate_to: claude-high-m
     escalate_when: ["failed_once", "cross_cutting"]
   verify:
     start: per_shard          # start as soon as a shard finishes
     lanes:
-      mechanical: { model: luna-h, required: true }
+      mechanical: { model: codex-medium-h, required: true }
       critical:   { model: other_family(author), required: true }
-      neutral:    { model: flash, required: true, withhold: [self_assessment] }
+      neutral:    { model: gemini-medium-m, required: true, withhold: [self_assessment] }
       adversarial:{ model: other_family(author, critical), when: "mode == full+" }
   integrate:
     owner: head
-    mechanics: sol
+    mechanics: codex-high-m
 retry_limit: 2
 ```
 
 ### 12.3 Example research flow
 1. Head splits the question into 3-6 subquestions and lists what `acceptance.md` needs answered.
-2. Recon (parallel): `flash` per subquestion (web, documents), `luna-h` for local code and data. Every result must carry **a source URL or path plus a quote.**
-3. Produce: `sonnet-m` writes the synthesis report. Every claim gets a source number.
+2. Recon (parallel): `gemini-medium-m` per subquestion (web, documents), `codex-medium-h` for local code and data. Every result must carry **a source URL or path plus a quote.**
+3. Produce: `claude-medium-m` writes the synthesis report. Every claim gets a source number.
 4. Verify (parallel):
-   - Neutral `flash` (a session that didn't do the recon): item-by-item satisfaction and claim-to-source cross-check
-   - Critical `opus-m`: try to rebut the core claims, check source credibility
+   - Neutral `gemini-medium-m` (a session that didn't do the recon): item-by-item satisfaction and claim-to-source cross-check
+   - Critical `claude-high-m`: try to rebut the core claims, check source credibility
 5. Head judges and reports. Leave anything unconfirmed as "unknown."
 
 ---
@@ -781,7 +780,7 @@ retry_limit: 2
 
 | # | Item | Options | Recommendation |
 |---|---|---|---|
-| D1 | Claude effort default | Opus: medium/low (never high) · Sonnet: medium/high | Opus `medium`. Sonnet `medium`; consider `high` when Sonnet takes the critical-review lane. **Opus effort: medium or low only; never high.** |
+| D1 | Claude effort default | high tier: medium/low (never high) · medium tier: medium/high | high tier `medium`. medium tier `medium`; consider `high` when it takes the critical-review lane. **Claude high tier effort: medium or low only; never high.** |
 | D2 | Scope of orch application on the Claude side | Deepeet-only / global | Global. Adjust with the mode (direct/light/full) |
 | D3 | Built-in Agent exception | block everywhere / allow read-only Explore only | Block everywhere at first. Allow Explore only if that proves too restrictive |
 | D4 | Who handles image generation | Codex's image tool / agy's (Gemini) image tool / external | Decide after checking each CLI's image-generation support. Also decide whether to add it to the catalog |
@@ -817,7 +816,7 @@ retry_limit: 2
 | Silently falling back to the CLI's default model | model selection only happens through a catalog key; cr assembles the actual args |
 | Orphaned panes | recorded the instant they spawn, closed per run, cleaned by `gc` |
 | Capacity exhaustion mid-task | contracts are self-contained by design, reassigned to the next account |
-| Flash getting swayed by the author's own claims | never given the self-assessment, fixed output format, never accepted alone |
+| `gemini-medium-m` getting swayed by the author's own claims | never given the self-assessment, fixed output format, never accepted alone |
 | Verification cost and time growing | controlled by mode, per-shard pipelined verification, cheapest suitable model |
 | The three constitution files drifting apart | generated from one shared block, compared by `orch doctor` |
 | The temptation to judge by model vote | Head classifies against primary evidence, with rationale recorded in `findings.md` |

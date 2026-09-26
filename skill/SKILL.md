@@ -33,7 +33,7 @@ Estimate within 30 seconds of receiving the request.
 
 H: auth/permissions/secrets/encryption / data deletion, migration, schema, backup / money, payment, billing, usage calculation / core concurrency structures / production config, deploy pipeline, externally published output / the user asks for "thorough, complete verification".
 
-light's single verification lane: if it's code and tests exist, the Head runs the tests directly plus **1 critical lane** (a different family). If it's docs or user-facing output, **1 neutral lane** (`flash`). If both apply, use critical.
+light's single verification lane: if it's code and tests exist, the Head runs the tests directly plus **1 critical lane** (a different family). If it's docs or user-facing output, **1 neutral lane** (`gemini-medium-m`). If both apply, use critical.
 
 **Delegation break-even point** (for one subtask): direct execution would take 5+ minutes or 10+ tool calls · running it concurrently shortens the critical path · an independent perspective is required (verification) · it would heavily pollute the Head's context (large logs, long documents). If none apply, do it directly. Do not split into pieces under 5 minutes. The fixed cost of delegation is 10-30 seconds of pane startup, plus writing the contract, plus the worker rebuilding context, plus judging the result.
 
@@ -46,12 +46,12 @@ Work coming from `/goal` or another command follows the same rule. A command set
 ```bash
 orch run new --text "<original request verbatim>" --mode full --playbook feature   # prints the run id, ~/.orch/runs/<id>/
 # fill in acceptance.md (numbered acceptance criteria) and decisions.md (naming, interface, format decisions)
-orch contract new impl-api --role produce --model sol-m      # contract template -> fill it in
-orch spawn --model sol-m --name impl-api --role produce --purpose impl --worktree ../wt-api
+orch contract new impl-api --role produce --model codex-high-m      # contract template -> fill it in
+orch spawn --model codex-high-m --name impl-api --role produce --purpose impl --worktree ../wt-api
 orch prompt impl-api                                          # send only the contract path and result path
 orch wait impl-api                                            # judged by the status line in the result file; auto-falls back on capacity exhaustion
 orch collect impl-api                                         # checks results + owned-file scope (a violation is a failure)
-orch spawn --model sonnet-m --name crit-api --role verify-critical --reviews impl-api
+orch spawn --model claude-medium-m --name crit-api --role verify-critical --reviews impl-api
 ...
 orch run end                                                  # close every pane and confirm removal
 ```
@@ -61,11 +61,11 @@ orch run end                                                  # close every pane
 
   ```yaml
   nodes:
-    - {name: recon-api, model: luna-m, role: recon, purpose: explore}
-    - {name: impl-api, model: sol-m, role: produce, purpose: impl, needs: [recon-api], worktree: ../wt-api}
-    - {name: mech-api, model: luna-h, role: verify-mech, needs: [impl-api]}
-    - {name: crit-api, model: sonnet-m, role: verify-critical, reviews: [impl-api], needs: [mech-api]}
-    - {name: neu-api, model: flash, role: verify-neutral, reviews: [impl-api], needs: [mech-api]}
+    - {name: recon-api, model: codex-medium-m, role: recon, purpose: explore}
+    - {name: impl-api, model: codex-high-m, role: produce, purpose: impl, needs: [recon-api], worktree: ../wt-api}
+    - {name: mech-api, model: codex-medium-h, role: verify-mech, needs: [impl-api]}
+    - {name: crit-api, model: claude-medium-m, role: verify-critical, reviews: [impl-api], needs: [mech-api]}
+    - {name: neu-api, model: gemini-medium-m, role: verify-neutral, reviews: [impl-api], needs: [mech-api]}
   ```
   Contracts default to `contracts/<name>.md`. `reviews` also implies `needs`. Output the Head wrote is `author_family: [head]`.
 - If the right column is full (terminal height / 8, max 6 rows), spawn is refused. Nodes are spawned in critical-path order as rows free up.
@@ -86,29 +86,29 @@ Fill in the template `orch contract new` produces. If a required section (Goal, 
 
 ## 4. Model placement (by purpose, chosen per contract)
 
-`orch models` shows the catalog. Families: OpenAI (`luna-*` `sol-*`), Anthropic (`opus-m` `sonnet-m`), Google (`flash`).
-Pick the **cheapest key** that satisfies the contract, but reach for `opus-m` right away if the difficulty is visible upfront. Don't stall by retrying with a weaker model.
+`orch models` shows the catalog. Families: OpenAI (`codex-*`), Anthropic (`claude-high-m` `claude-medium-m`), Google (`gemini-medium-m`).
+Pick the **cheapest key** that satisfies the contract, but reach for `claude-high-m` right away if the difficulty is visible upfront. Don't stall by retrying with a weaker model.
 
 | Purpose | Primary | Conditional alternative | `--purpose` |
 |---|---|---|---|
-| Broad file/symbol search, bulk classification, translation | `luna-m` | irregular naming -> `luna-h`; ambiguous classification criteria -> `sonnet-m` | explore |
-| Evidence extraction, log/test-failure analysis, data extraction | `luna-h` | tangled root-cause candidates or schema interpretation -> `sol-m` | extract |
-| Web, long documents, PDFs, reading images/screenshots | `flash` | deep technical interpretation -> `opus-m`; visual detail -> `sonnet-m` | web |
-| Synthesizing conflicting evidence, root-cause hypotheses, ambiguous design | `opus-m` | -- | synthesis |
-| Drafting interfaces/schemas | `sol-m` | wide blast radius -> `opus-m` | impl |
-| Mechanical implementation with a complete spec | `sol-l` | very narrow, 1-2 files -> `luna-h` | mech-impl |
-| General feature implementation, bug fixes, test code | `sol-m` | -- | impl |
-| Hard implementation/debugging (concurrency, performance, security, complex state, flaky repro) | `opus-m` | reliable repro, localized cause -> `sol-m` | hard-impl |
-| Alternative implementation/design (for comparison) | `sonnet-m` | primary is Anthropic -> `sol-m` | alt |
-| Docs, reports, research synthesis | `sonnet-m` | deep technical content or conflicting sources -> `opus-m` | docs |
-| Short summaries, changelogs | `luna-h` | -- | extract |
-| Data analysis | `sol-m` | ambiguous interpretation or causal judgment -> `opus-m` | analysis |
-| Merge/integration mechanics | `sol-m` | semantic conflicts -> `opus-m` | integrate |
-| Image generation | `sol-m` (Codex image_generation) | -- | image |
+| Broad file/symbol search, bulk classification, translation | `codex-medium-m` | irregular naming -> `codex-medium-h`; ambiguous classification criteria -> `claude-medium-m` | explore |
+| Evidence extraction, log/test-failure analysis, data extraction | `codex-medium-h` | tangled root-cause candidates or schema interpretation -> `codex-high-m` | extract |
+| Web, long documents, PDFs, reading images/screenshots | `gemini-medium-m` | deep technical interpretation -> `claude-high-m`; visual detail -> `claude-medium-m` | web |
+| Synthesizing conflicting evidence, root-cause hypotheses, ambiguous design | `claude-high-m` | -- | synthesis |
+| Drafting interfaces/schemas | `codex-high-m` | wide blast radius -> `claude-high-m` | impl |
+| Mechanical implementation with a complete spec | `codex-high-l` | very narrow, 1-2 files -> `codex-medium-h` | mech-impl |
+| General feature implementation, bug fixes, test code | `codex-high-m` | -- | impl |
+| Hard implementation/debugging (concurrency, performance, security, complex state, flaky repro) | `claude-high-m` | reliable repro, localized cause -> `codex-high-m` | hard-impl |
+| Alternative implementation/design (for comparison) | `claude-medium-m` | primary is Anthropic -> `codex-high-m` | alt |
+| Docs, reports, research synthesis | `claude-medium-m` | deep technical content or conflicting sources -> `claude-high-m` | docs |
+| Short summaries, changelogs | `codex-medium-h` | -- | extract |
+| Data analysis | `codex-high-m` | ambiguous interpretation or causal judgment -> `claude-high-m` | analysis |
+| Merge/integration mechanics | `codex-high-m` | semantic conflicts -> `claude-high-m` | integrate |
+| Image generation | `codex-high-m` (Codex image_generation) | -- | image |
 
-Effort is chosen separately from the model (bulk classification: `luna-m`; precise extraction: `luna-h`; fully specified: `sol-l`; mixed judgment: `sol-m`). Opus effort: medium or low only, never high. No model has a fixed role, but `flash` can never be the sole verifier.
+Effort is chosen separately from the model (bulk classification: `codex-medium-m`; precise extraction: `codex-medium-h`; fully specified: `codex-high-l`; mixed judgment: `codex-high-m`). `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
 
-**Fallback**: if `orch wait` detects capacity exhaustion in the output, it first tries a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`sol-m` -> `opus-m`, `luna-h` -> `sol-m`).
+**Fallback**: if `orch wait` detects capacity exhaustion in the output, it first tries a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`codex-high-m` -> `claude-high-m`, `codex-medium-h` -> `codex-high-m`).
 
 ## 5. Verification lanes
 
@@ -116,12 +116,12 @@ Plan verification at the same time you assign the production work. An author's o
 
 | Lane | `--role` | Who | Input | Output |
 |---|---|---|---|---|
-| Mechanical | verify-mech | `luna-h` (not the author) or the Head directly | Deliverables, commands to run | Commands, exit codes, output excerpts, failure list |
+| Mechanical | verify-mech | `codex-medium-h` (not the author) or the Head directly | Deliverables, commands to run | Commands, exit codes, output excerpts, failure list |
 | Critical | verify-critical | A **different family** from the author (enforced via `--reviews`) | Original request, acceptance criteria, diff, mechanical results | Defect list (location, repro, severity) |
-| Neutral | verify-neutral | `flash` (never given the author's self-assessment) | Original request, acceptance criteria, deliverables, evidence of actual behavior | Requirements checklist |
-| Adversarial | verify-adversarial | A different family from the author, `flash` forbidden. Default `opus-m`; `sol-m` if the author is Anthropic | One concrete attack target | A counterexample or grounds for refuting it |
+| Neutral | verify-neutral | `gemini-medium-m` (never given the author's self-assessment) | Original request, acceptance criteria, deliverables, evidence of actual behavior | Requirements checklist |
+| Adversarial | verify-adversarial | A different family from the author, `gemini-medium-m` forbidden. Default `claude-high-m`; `codex-high-m` if the author is Anthropic | One concrete attack target | A counterexample or grounds for refuting it |
 
-Default critical-lane placement: author OpenAI -> `sonnet-m` (or `opus-m` if complex) · Anthropic -> `sol-m` · Google -> `sol-m` (or `opus-m` if complex). Confirming a single narrow claim: `luna-h` (or `sonnet-m` if the author is OpenAI).
+Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-m` · Google -> `codex-high-m` (or `claude-high-m` if complex). Confirming a single narrow claim: `codex-medium-h` (or `claude-medium-m` if the author is OpenAI).
 
 | Mode | Mechanical | Critical | Neutral | Adversarial |
 |---|---|---|---|---|
@@ -151,7 +151,7 @@ Default critical-lane placement: author OpenAI -> `sonnet-m` (or `opus-m` if com
 - On completion (success, failure, cancellation, or early exit), call `orch run end`. Tell the user the removal confirmation. Report any leftover worktree along with the reason.
 - **Close only panes you spawned.** `orch` closes only pane IDs recorded in its run, and refuses another Head's run. Never close a user's pane or another session's pane.
 - If a previous session crashed and its Head is gone, pick up that run with `orch resume --run <id>` to clean it up, or use `orch gc --orphans`.
-- The final report states the mode, the keys used (including fallbacks and escalations, marked as e.g. "flash substitution"), confirmed defects and their resolution, remaining plausible risks, and unknowns.
+- The final report states the mode, the keys used (including fallbacks and escalations, marked as e.g. "gemini-medium-m substitution"), confirmed defects and their resolution, remaining plausible risks, and unknowns.
 
 ## 8. Accounts
 

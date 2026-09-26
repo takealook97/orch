@@ -18,19 +18,19 @@ func dagRunFixture(t *testing.T, yamlText string, contracts ...string) *Run {
 	}
 	os.WriteFile(filepath.Join(r.dir(), "dag.yaml"), []byte(yamlText), 0600)
 	for _, c := range contracts {
-		os.WriteFile(r.contractPath(c), []byte(contractTemplate(r, c, roleProduce, "sol-m")), 0600)
+		os.WriteFile(r.contractPath(c), []byte(contractTemplate(r, c, roleProduce, "codex-high-m")), 0600)
 	}
 	return r
 }
 
 const goodDag = `nodes:
-  - {name: recon, model: luna-m, role: recon, purpose: explore}
-  - {name: impl-a, model: sol-m, role: produce, purpose: impl, needs: [recon]}
-  - {name: impl-b, model: opus-m, role: produce, purpose: hard-impl, needs: [recon]}
-  - {name: mech-a, model: luna-h, role: verify-mech, needs: [impl-a]}
-  - {name: crit-a, model: sonnet-m, role: verify-critical, reviews: [impl-a], needs: [mech-a]}
-  - {name: crit-b, model: sol-m, role: verify-critical, reviews: [impl-b]}
-  - {name: docs, model: sonnet-m, role: produce, purpose: docs}
+  - {name: recon, model: codex-medium-m, role: recon, purpose: explore}
+  - {name: impl-a, model: codex-high-m, role: produce, purpose: impl, needs: [recon]}
+  - {name: impl-b, model: claude-high-m, role: produce, purpose: hard-impl, needs: [recon]}
+  - {name: mech-a, model: codex-medium-h, role: verify-mech, needs: [impl-a]}
+  - {name: crit-a, model: claude-medium-m, role: verify-critical, reviews: [impl-a], needs: [mech-a]}
+  - {name: crit-b, model: codex-high-m, role: verify-critical, reviews: [impl-b]}
+  - {name: docs, model: claude-medium-m, role: produce, purpose: docs}
 `
 
 func TestDagValidateGood(t *testing.T) {
@@ -51,17 +51,17 @@ func TestDagValidateGood(t *testing.T) {
 func TestDagValidateRejects(t *testing.T) {
 	bad := `nodes:
   - {name: a, model: gpt-5, role: produce, needs: [c]}
-  - {name: b, model: sol-m, role: produce, needs: [a]}
-  - {name: c, model: sol-m, role: produce, needs: [b]}
-  - {name: crit, model: luna-h, role: verify-critical, reviews: [b]}
-  - {name: adv, model: flash, role: verify-adversarial, reviews: [b]}
-  - {name: neu, model: flash, role: verify-neutral}
-  - {name: nocontract, model: sol-m, role: produce, contract: contracts/missing.md}
+  - {name: b, model: codex-high-m, role: produce, needs: [a]}
+  - {name: c, model: codex-high-m, role: produce, needs: [b]}
+  - {name: crit, model: codex-medium-h, role: verify-critical, reviews: [b]}
+  - {name: adv, model: gemini-medium-m, role: verify-adversarial, reviews: [b]}
+  - {name: neu, model: gemini-medium-m, role: verify-neutral}
+  - {name: nocontract, model: codex-high-m, role: produce, contract: contracts/missing.md}
 `
 	r := dagRunFixture(t, bad, "a", "b", "c", "crit", "adv", "neu")
 	d, _ := loadDag(r)
 	errs := strings.Join(validateDag(r, d), "\n")
-	for _, want := range []string{"not in catalog", "dependency cycle", "critical lane must use a different family", "do not use flash", "reviews or author_family", "contract missing"} {
+	for _, want := range []string{"not in catalog", "dependency cycle", "critical lane must use a different family", "do not use gemini-medium-m", "reviews or author_family", "contract missing"} {
 		if !strings.Contains(errs, want) {
 			t.Errorf("missing %q in:\n%s", want, errs)
 		}
@@ -122,9 +122,9 @@ func TestDagCheckResolvesAuthorFamily(t *testing.T) {
 		return []byte(`{"result":{"pane":{"agent":"claude"}}}`), nil
 	}
 	y := `nodes:
-  - {name: same, model: sonnet-m, role: verify-critical, author_family: [head]}
-  - {name: typo, model: sol-m, role: verify-critical, author_family: [bogus]}
-  - {name: ok, model: sol-m, role: verify-critical, author_family: [head]}
+  - {name: same, model: claude-medium-m, role: verify-critical, author_family: [head]}
+  - {name: typo, model: codex-high-m, role: verify-critical, author_family: [bogus]}
+  - {name: ok, model: codex-high-m, role: verify-critical, author_family: [head]}
 `
 	r := dagRunFixture(t, y, "same", "typo", "ok")
 	d, _ := loadDag(r)

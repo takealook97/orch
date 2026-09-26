@@ -4,19 +4,19 @@ default_mode: full
 stages:
   recon:
     parallel: by_source
-    model: luna-h
+    model: codex-medium-h
     purpose: extract
   produce:
-    model: sol-m
+    model: codex-high-m
     purpose: analysis
-    escalate_to: opus-m
+    escalate_to: claude-high-m
     escalate_when: ["ambiguous_interpretation", "causal_claim"]
   verify:
     start: after_produce
     lanes:
-      mechanical: { model: luna-h, required: true }
+      mechanical: { model: codex-medium-h, required: true }
       critical: { model: other_family(author), required: true }
-      neutral: { model: flash, required: false, withhold: [self_assessment] }
+      neutral: { model: gemini-medium-m, required: false, withhold: [self_assessment] }
   integrate:
     owner: head
 retry_limit: 2

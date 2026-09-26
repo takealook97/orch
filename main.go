@@ -137,7 +137,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			if err != nil {
 				shown = "invalid: " + err.Error()
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Key, m.Kind, m.Family, m.Cost, shown, m.ModelVar, m.Summary)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Key, m.Kind, m.Family, m.Cost, shown, modelVar(m), m.Summary)
 		}
 		tw.Flush()
 		fmt.Fprintf(stdout, "\npurposes(fallback chain): %s\n", strings.Join(purposeNames(), " "))

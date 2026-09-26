@@ -10,9 +10,9 @@ This guide takes a machine from nothing to a working `orch` Head. It covers prer
 | Go 1.27+ | builds the `orch` binary | `go version` |
 | Herdr (tested with 0.8.2) | every worker runs in a Herdr pane | `command -v herdr` |
 | `git` | contract scope checks and changed-file detection | `git --version` |
-| `codex` CLI, logged in | runs `luna-m` `luna-h` `sol-l` `sol-m` | `command -v codex` |
-| `claude` CLI, logged in | runs `opus-m` `sonnet-m` | `command -v claude` |
-| `agy` CLI, logged in | runs `flash` | `command -v agy` |
+| `codex` CLI, logged in | runs `codex-medium-m` `codex-medium-h` `codex-high-l` `codex-high-m` | `command -v codex` |
+| `claude` CLI, logged in | runs `claude-high-m` `claude-medium-m` | `command -v claude` |
+| `agy` CLI, logged in | runs `gemini-medium-m` | `command -v agy` |
 | `python3` (optional) | only for the cr account adapter and the eval harness | `python3 --version` |
 | `~/.local/bin` on `PATH` | `orch` is linked there | `echo $PATH` |
 
@@ -75,8 +75,8 @@ Smoke test from a Head pane:
 ```bash
 orch models                                   # the 7 catalog keys
 orch run new --text "smoke test" --mode light
-orch contract new probe --role recon --model luna-m
-orch spawn --model luna-m --name probe --role recon --purpose explore
+orch contract new probe --role recon --model codex-medium-m
+orch spawn --model codex-medium-m --name probe --role recon --purpose explore
 orch prompt probe && orch wait probe
 orch run end                                  # closes every pane this run opened
 ```
@@ -93,7 +93,7 @@ orch doctor    # "account hook" should show the path
 ```
 
 - Registry location: `$CR_HOME/registry.json`, default `~/.local/share/cr/registry.json`.
-- It covers `codex` and `claude` accounts. `agy` (`flash`) always uses the Head's login.
+- It covers `codex` and `claude` accounts. `agy` (`gemini-medium-m`) always uses the Head's login.
 - It picks the ready account with the most 5-hour and weekly headroom, and links the global instructions, skills, and the orch hook into that account's home without overwriting existing files.
 
 Any other adapter works if it follows the same protocol: it is called as `<cmd> <kind> <comma-separated excluded labels>`, prints `KEY=VALUE` lines (environment for the worker pane) plus `LABEL=<id>`, and exits 1 when no account fits.

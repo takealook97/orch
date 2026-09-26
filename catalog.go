@@ -8,30 +8,18 @@ import (
 )
 
 // Model is one fixed model × effort entry. Heads choose by Key only; orch assembles the CLI arguments.
-// Keys and efforts are fixed; each key's model id comes from its own environment variable so a CLI
-// release can be picked up without a rebuild.
+// Keys are <CLI>-<tier>-<effort initial>, where the tier is the model's rank in its vendor lineup,
+// so a key survives a model rename. Keys and efforts are fixed; each key's model id comes from its
+// own environment variable (see modelVar) so a CLI release can be picked up without a rebuild.
 type Model struct {
-	Key      string
-	Kind     string // herdr agent kind
-	Family   string
-	Cost     string
-	Summary  string
-	ModelVar string // environment variable that overrides Default
-	Default  string // model id used when ModelVar is unset
-	Effort   string // empty when the CLI takes no effort flag
+	Key     string
+	Kind    string // herdr agent kind
+	Family  string
+	Cost    string
+	Summary string
+	Default string // model id used when modelVar(m) is unset
+	Effort  string // empty when the CLI takes no effort flag (gemini carries it in the model id)
 }
-
-// Model id variables, one per key: <MODEL>_<tier>_<effort initial>. The tier is the model's rank
-// in its vendor lineup, so the name survives a model rename. flash's effort is part of its model id.
-const (
-	varLunaM   = "CODEX_MEDIUM_M"
-	varLunaH   = "CODEX_MEDIUM_H"
-	varSolL    = "CODEX_HIGH_L"
-	varSolM    = "CODEX_HIGH_M"
-	varOpusM   = "CLAUDE_HIGH_M"
-	varSonnetM = "CLAUDE_MEDIUM_M"
-	varFlash   = "GEMINI_MEDIUM_M"
-)
 
 const (
 	familyOpenAI    = "openai"
@@ -40,23 +28,27 @@ const (
 )
 
 var catalog = []Model{
-	{"luna-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction", varLunaM, "gpt-6-luna", "medium"},
-	{"luna-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification", varLunaH, "gpt-6-luna", "high"},
-	{"sol-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", varSolL, "gpt-6-sol", "low"},
-	{"sol-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", varSolM, "gpt-6-sol", "medium"},
-	{"opus-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", varOpusM, "opus", "medium"},
-	{"sonnet-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA", varSonnetM, "sonnet", "medium"},
-	{"flash", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks", varFlash, "gemini-3.8-flash-medium", ""},
+	{"codex-medium-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction", "gpt-6-luna", "medium"},
+	{"codex-medium-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification", "gpt-6-luna", "high"},
+	{"codex-high-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", "gpt-6-sol", "low"},
+	{"codex-high-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", "gpt-6-sol", "medium"},
+	{"claude-high-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", "opus", "medium"},
+	{"claude-medium-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA", "sonnet", "medium"},
+	{"gemini-medium-m", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks", "gemini-3.8-flash-medium", ""},
 }
+
+// modelVar is the environment variable that overrides m's model id: the key upper-cased with
+// underscores (codex-high-m -> CODEX_HIGH_M).
+func modelVar(m Model) string { return strings.ToUpper(strings.ReplaceAll(m.Key, "-", "_")) }
 
 // modelID returns the model id for m, preferring its environment variable over the default.
 func modelID(m Model) (string, error) {
-	id := strings.TrimSpace(os.Getenv(m.ModelVar))
+	id := strings.TrimSpace(os.Getenv(modelVar(m)))
 	if id == "" {
 		return m.Default, nil
 	}
 	if strings.HasPrefix(id, "-") || strings.ContainsAny(id, " \t\n\"'") {
-		return "", fmt.Errorf("%s=%q is not a valid model id", m.ModelVar, id)
+		return "", fmt.Errorf("%s=%q is not a valid model id", modelVar(m), id)
 	}
 	return id, nil
 }
@@ -128,23 +120,23 @@ func isVerifyRole(role string) bool { return strings.HasPrefix(role, "verify-") 
 
 // Fallback chains by purpose (design §9.4). The first entry is the primary key.
 var chains = map[string][]string{
-	"explore":     {"luna-m", "luna-h", "flash"},
-	"extract":     {"luna-h", "sol-m", "sonnet-m"},
-	"web":         {"flash", "sonnet-m", "opus-m"},
-	"synthesis":   {"opus-m", "sol-m", "sonnet-m"},
-	"mech-impl":   {"sol-l", "sol-m", "sonnet-m"},
-	"impl":        {"sol-m", "opus-m", "sonnet-m"},
-	"hard-impl":   {"opus-m", "sol-m", "sonnet-m"},
-	"alt":         {"sonnet-m", "sol-m", "opus-m"},
-	"docs":        {"sonnet-m", "opus-m", "sol-m"},
-	"analysis":    {"sol-m", "opus-m", "sonnet-m"},
-	"integrate":   {"sol-m", "opus-m"},
-	"image":       {"sol-m"},
-	"verify-mech": {"luna-h", "sol-m", "sonnet-m"},
+	"explore":     {"codex-medium-m", "codex-medium-h", "gemini-medium-m"},
+	"extract":     {"codex-medium-h", "codex-high-m", "claude-medium-m"},
+	"web":         {"gemini-medium-m", "claude-medium-m", "claude-high-m"},
+	"synthesis":   {"claude-high-m", "codex-high-m", "claude-medium-m"},
+	"mech-impl":   {"codex-high-l", "codex-high-m", "claude-medium-m"},
+	"impl":        {"codex-high-m", "claude-high-m", "claude-medium-m"},
+	"hard-impl":   {"claude-high-m", "codex-high-m", "claude-medium-m"},
+	"alt":         {"claude-medium-m", "codex-high-m", "claude-high-m"},
+	"docs":        {"claude-medium-m", "claude-high-m", "codex-high-m"},
+	"analysis":    {"codex-high-m", "claude-high-m", "claude-medium-m"},
+	"integrate":   {"codex-high-m", "claude-high-m"},
+	"image":       {"codex-high-m"},
+	"verify-mech": {"codex-medium-h", "codex-high-m", "claude-medium-m"},
 	// Verification chains are filtered by family constraints at spawn time.
-	"verify-critical":    {"sonnet-m", "opus-m", "sol-m", "luna-h"},
-	"verify-neutral":     {"flash", "sonnet-m", "sol-m"},
-	"verify-adversarial": {"opus-m", "sol-m", "sonnet-m"},
+	"verify-critical":    {"claude-medium-m", "claude-high-m", "codex-high-m", "codex-medium-h"},
+	"verify-neutral":     {"gemini-medium-m", "claude-medium-m", "codex-high-m"},
+	"verify-adversarial": {"claude-high-m", "codex-high-m", "claude-medium-m"},
 }
 
 func purposeNames() []string {
@@ -175,12 +167,12 @@ func checkLane(role string, m Model, authors, critics []string) (warnings []stri
 		if slices.Contains(authors, m.Family) {
 			return nil, fmt.Errorf("neutral lane must use a different family from the author: %s(%s)", m.Key, m.Family)
 		}
-		if m.Key != "flash" {
-			warnings = append(warnings, fmt.Sprintf("%s takes the neutral lane instead of flash. Mark it as 'flash substitute' in the final report", m.Key))
+		if m.Key != "gemini-medium-m" {
+			warnings = append(warnings, fmt.Sprintf("%s takes the neutral lane instead of gemini-medium-m. Mark it as 'gemini-medium-m substitute' in the final report", m.Key))
 		}
 	case roleAdversarial:
-		if m.Key == "flash" {
-			return nil, fmt.Errorf("do not use flash for an adversarial lane")
+		if m.Key == "gemini-medium-m" {
+			return nil, fmt.Errorf("do not use gemini-medium-m for an adversarial lane")
 		}
 		if slices.Contains(authors, m.Family) {
 			return nil, fmt.Errorf("adversarial lane must use a different family from the author: %s(%s)", m.Key, m.Family)
