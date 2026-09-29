@@ -141,6 +141,9 @@ func spawn(o spawnOpts) (*Worker, error) {
 	if !nameRE.MatchString(o.Name) {
 		return nil, fmt.Errorf("name %q must match [a-z][a-z0-9_-]{0,31}", o.Name)
 	}
+	if strings.HasPrefix(o.Name, "task-") {
+		return nil, fmt.Errorf("name %q is reserved for one-off tasks", o.Name)
+	}
 	if !slices.Contains(roles, o.Role) {
 		return nil, fmt.Errorf("unknown --role %q (%s)", o.Role, strings.Join(roles, "|"))
 	}
@@ -273,8 +276,8 @@ func spawn(o spawnOpts) (*Worker, error) {
 		}
 		// Record the pane before anything else can fail.
 		if err := withRun(r.ID, func(r *Run) error {
-			if old := r.worker(o.Name); old != nil {
-				old.Name = old.Name + "~" + old.Started.Format("150405")
+			if err := retireName(r, o.Name); err != nil {
+				return err
 			}
 			r.Workers = append(r.Workers, w)
 			r.event("spawn %s key=%s role=%s pane=%s account=%s", w.Name, w.Key, w.Role, w.Pane, w.Account)
@@ -330,6 +333,8 @@ func spawn(o spawnOpts) (*Worker, error) {
 			return nil, fmt.Errorf("%w (pane closed)", err)
 		}
 	}
+	// Finished panes close even if the Head never runs its wait (one reaper per run).
+	ensureReaper(runID)
 	return w, nil
 }
 
@@ -575,4 +580,31 @@ func busy(name string) bool {
 
 func isGitDir(dir string) bool {
 	return exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() == nil
+}
+
+// retireName frees a worker name for a new spawn: the previous worker of that name becomes
+// <name>~<HHMMSS>, and its result file moves along so the new worker never inherits a
+// status line it did not write.
+func retireName(r *Run, name string) error {
+	suffix := time.Now().Format("150405")
+	old := r.worker(name)
+	if old != nil {
+		suffix = old.Started.Format("150405")
+	}
+	src := r.resultPath(name)
+	dst := r.resultPath(name + "~" + suffix)
+	if _, err := os.Stat(src); err == nil {
+		if err := os.Rename(src, dst); err != nil {
+			return fmt.Errorf("move previous result of %s: %w", name, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if old != nil {
+		old.Name = name + "~" + suffix
+		if old.Result == src {
+			old.Result = dst
+		}
+	}
+	return nil
 }

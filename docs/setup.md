@@ -81,6 +81,13 @@ orch prompt probe && orch wait probe
 orch run end                                  # closes every pane this run opened
 ```
 
+One-off tasks need no run and no pane (they also work outside Herdr):
+
+```bash
+orch test "go version"                        # no model: exit 0, no failures
+orch ask --model codex-medium-m "what does this repository build?"
+```
+
 ## 4. Accounts (optional)
 
 By default every worker uses the Head's login (`--account same`). To spread load across several accounts, point `ORCH_ACCOUNT_CMD` at an adapter and spawn with `--account hook`.
@@ -107,7 +114,7 @@ Any other adapter works if it follows the same protocol: it is called as `<cmd> 
 | `ORCH_DEBUG=1` | you (optional) | verbose worker diagnostics on stderr |
 | `CODEX_MEDIUM_M`, `CODEX_MEDIUM_H`, `CODEX_HIGH_L`, `CODEX_HIGH_M`, `CLAUDE_HIGH_M`, `CLAUDE_MEDIUM_M`, `GEMINI_MEDIUM_M` | you (optional) | model id passed to `--model` for one key, read by `orch spawn` in the Head's shell. See the model catalog in the README for the key mapping and defaults. Keys and efforts stay fixed; `orch models` shows the resolved arguments |
 | `ORCH_RAW_HERDR=1` | you, per command | lets one plain `herdr` command through the hook, for non-delegation panes such as builds or log tails. Close the pane when done |
-| `ORCH_ROLE`, `ORCH_RUN`, `ORCH_WORKER`, `ORCH_MODEL` | `orch spawn` | injected into worker panes. Never set these in the Head |
+| `ORCH_ROLE`, `ORCH_RUN`, `ORCH_WORKER`, `ORCH_MODEL` | `orch spawn`, `orch ask`, `orch do` | injected into worker panes and one-off task processes. Never set these in the Head |
 
 ## 6. Update
 
@@ -145,10 +152,12 @@ Close any open runs first with `orch run end` or `orch gc --orphans`.
 |---|---|---|
 | `orch doctor`: "Herdr session" fails | running outside Herdr | start the Head inside a Herdr pane |
 | constitution "differs from source" | repo updated, install not rerun | `make install` |
-| Head's `Agent`/`Workflow` calls are blocked | the hook is working as intended inside Herdr | delegate with `orch spawn` |
+| Head's `Agent`/`Workflow` calls are blocked | the hook is working as intended inside Herdr | use `orch ask` (read-only) or `orch do` (writes) for a one-off task, `orch spawn` for long or parallel work |
 | a plain `herdr pane` command is blocked | same hook | prefix it with `ORCH_RAW_HERDR=1` |
 | Codex worker ignores the hook | hook not trusted | Codex `/hooks` -> trust `orch hook codex` |
 | worker stalls on a folder-trust prompt | first run in a new folder | `orch` pre-trusts worker folders; if one still stalls, `orch read <name>` to see it, then `orch close <name>` and respawn |
+| `orch wait` fails with "detached orch processes cannot manage panes" | it was started with `&`, `nohup`, or `setsid`, so it failed the Head identity check | run it in the foreground or with the harness's background-task feature. Finished panes still close through the run's reaper |
+| A finished worker's pane stays open | the run's reaper is not running (check `~/.orch/runs/<id>/reaper.log`) | `orch collect <name>` or `orch close <name>`; the next `orch spawn` restarts the reaper |
 | `orch spawn` stops with a user-pane message | the tab has a pane `orch` did not open | spawn from a tab with only the Head, or close your pane |
 | layout drifted after manual resizing | panes resized by hand | `orch layout` |
 | panes left behind after a crash | Head exited abnormally | `orch gc --orphans` |

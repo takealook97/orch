@@ -2,7 +2,7 @@
 """P7 regression eval harness for orch. Must run in a Herdr Head pane (it drives `orch`).
 
   python3 eval/run.py selfcheck          # verify fixtures (bug lines, hidden tests vs reference)
-  python3 eval/run.py run [--only review|parallel] [--limit N]
+  python3 eval/run.py run [--only review|parallel|delegate] [--limit N]
   python3 eval/run.py report <dir>       # re-render a report from a finished eval directory
 
 Experiments
@@ -11,7 +11,17 @@ Experiments
             Detected = a reported BUG_LINES entry within ±1 of a planted bug line.
   parallel: three independent functions per task. single = one codex-high-l worker writes all three;
             parallel = three codex-high-l workers, one function each. Judged by hidden unit tests.
-Everything runs as one orch DAG, so row caps, fallback and pane cleanup are orch's own.
+Review and parallel experiments run as one orch DAG, so row caps, fallback and pane cleanup are orch's own.
+
+  delegate: A proxies the top-tier Head with claude-high-m via orch ask/do and charges
+            all reported usage to Head. B sends read-only/research tasks to
+            codex-medium-h, writing tasks to codex-high-l or codex-high-m via ask/do.
+            B charges worker usage separately; Head tokens are estimated from
+            instruction and printed orch JSON report characters / 4 plus a short
+            review turn. A's usage and B's Head estimate are context-growth proxies.
+            Weighted total uses one relative per-key cost table in delegate.py;
+            these are planning assumptions, not provider prices. Hidden judges
+            score both arms, with failed B judgments marked for Head rework.
 """
 import datetime
 import json
@@ -26,6 +36,7 @@ import textwrap
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tasks  # noqa: E402
 import reference  # noqa: E402
+import delegate  # noqa: E402
 
 ORCH = shutil.which("orch") or os.path.expanduser("~/.local/bin/orch")
 REVIEWERS = {"same": "codex-high-m", "cross": "claude-medium-m"}
@@ -124,6 +135,7 @@ def selfcheck():
                 if not good:
                     print(f"parallel {p['id']}.{f['name']}{args!r}: expected {expected!r}, reference {got!r}")
                     ok = False
+    ok = delegate.selfcheck() and ok
     print("selfcheck", "passed" if ok else "failed", f"(review {len(tasks.REVIEW)}, parallel {len(tasks.PARALLEL)})")
     return ok
 
@@ -305,6 +317,25 @@ def report(root):
     return path, text
 
 
+def run_delegate(root, limit):
+    """Run independent A/B fixtures through pane-free orch calls; persist each result."""
+    selected = tasks.DELEGATE[:limit]
+    meta = {"experiment": "delegate", "delegate": [], "tasks": [t["id"] for t in selected]}
+    meta_path = os.path.join(root, "meta.json")
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    for task in selected:
+        for arm in ("A", "B"):
+            ws = os.path.join(root, "delegate", task["id"], arm)
+            git_workspace(ws, task["files"])
+            row = delegate.invoke(task, ws, arm, ORCH)
+            meta["delegate"].append(row)
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
+            print(f"delegate {task['id']} {arm}: {row['quality_passed']}/{row['quality_total']} ({row['status']})", flush=True)
+    return delegate.render(root, meta)
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("selfcheck", "run", "report"):
         print(__doc__)
@@ -312,10 +343,15 @@ def main(argv):
     if argv[1] == "selfcheck":
         return 0 if selfcheck() else 1
     if argv[1] == "report":
-        path, text = report(argv[2])
+        root = argv[2]
+        meta = json.load(open(os.path.join(root, "meta.json")))
+        path, text = delegate.render(root, meta) if meta.get("experiment") == "delegate" else report(root)
         print(text)
         return 0
     only = argv[argv.index("--only") + 1] if "--only" in argv else None
+    if only not in (None, "review", "parallel", "delegate"):
+        print(f"unknown experiment: {only}", file=sys.stderr)
+        return 2
     limit = int(argv[argv.index("--limit") + 1]) if "--limit" in argv else None
     if not selfcheck():
         return 1
@@ -323,6 +359,11 @@ def main(argv):
     # Head's cwd, which is the only place orch answers them automatically.
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out", f"{datetime.datetime.now():%Y%m%d-%H%M%S}")
     os.makedirs(root)
+    if only == "delegate":
+        path, text = run_delegate(root, limit)
+        print(text)
+        print(f"report: {path}")
+        return 0
     # Whatever happens (build failure, Ctrl-C, SIGTERM), a created run is ended on the way out.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     created = []

@@ -120,7 +120,7 @@ func decide(in hookInput, role string, inHerdr bool) string {
 	}
 	switch {
 	case subagentTools.MatchString(tool):
-		return "Inside Herdr, Head delegates through orch instead of built-in subagents: orch run new → orch contract new → orch spawn --model <key> → orch prompt → orch wait → orch collect → orch close. In direct mode, work directly."
+		return "Inside Herdr, use orch ask for one-off read-only tasks, orch do for one-off writing tasks, and orch spawn for long, parallel, or verification work."
 	case paneCreate.MatchString(cmd):
 		return "Create worker panes only with orch spawn (fixed model, layout, ORCH_ROLE injection). For a necessary non-delegation command pane, prefix the command with ORCH_RAW_HERDR=1."
 	}

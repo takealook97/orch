@@ -166,11 +166,23 @@ func matchSegs(p, n []string) bool {
 // emptyTree is git's well-known empty tree; it stands in for HEAD before the first commit.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-// changedFiles lists files changed in dir relative to base (or HEAD) plus untracked files.
+// repoRoot returns the top level of the git repository containing dir, or dir itself.
+func repoRoot(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return dir
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// changedFiles lists files changed in dir's repository relative to base (or HEAD) plus
+// untracked files. Paths are relative to the repository root, whatever subdirectory dir is,
+// and renames count as a deletion plus an addition so both sides are checked.
 func changedFiles(dir, base string) ([]string, error) {
+	root := repoRoot(dir)
 	if base == "" || base == "none" || strings.HasPrefix(base, "<") {
 		base = "HEAD"
-		if exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
+		if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
 			base = emptyTree
 		}
 	}
@@ -183,14 +195,14 @@ func changedFiles(dir, base string) ([]string, error) {
 			out = append(out, s)
 		}
 	}
-	diff, err := exec.Command("git", "-C", dir, "diff", "--name-only", base).Output()
+	diff, err := exec.Command("git", "-C", root, "diff", "--no-renames", "--name-only", base).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff failed (%s): %w", dir, err)
 	}
 	for _, l := range strings.Split(string(diff), "\n") {
 		add(l)
 	}
-	untracked, err := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+	untracked, err := exec.Command("git", "-C", root, "ls-files", "--others", "--exclude-standard").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git ls-files failed (%s): %w", dir, err)
 	}
@@ -200,30 +212,62 @@ func changedFiles(dir, base string) ([]string, error) {
 	return out, nil
 }
 
-// fileHash returns the content hash of a worktree file, or "deleted".
-func fileHash(dir, rel string) string {
-	data, err := os.ReadFile(filepath.Join(dir, rel))
+// rootGlobs turns owned globs written relative to cwd into globs relative to the repository
+// root, the form changedFiles reports.
+func rootGlobs(cwd string, globs []string) []string {
+	root, err := filepath.EvalSymlinks(repoRoot(cwd))
+	if err != nil {
+		return globs
+	}
+	real, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return globs
+	}
+	rel, err := filepath.Rel(root, real)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return globs
+	}
+	out := make([]string, len(globs))
+	for i, g := range globs {
+		out[i] = filepath.ToSlash(rel) + "/" + strings.TrimPrefix(g, "./")
+	}
+	return out
+}
+
+// fileHash returns the hash of a file's mode and content (path relative to the repository
+// root), or "deleted", so a chmod counts as a change too.
+func fileHash(root, rel string) string {
+	p := filepath.Join(root, rel)
+	fi, err := os.Stat(p)
 	if err != nil {
 		return "deleted"
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return "deleted"
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\n", fi.Mode())
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // snapshot records the content hash of every already-changed file.
 func snapshot(dir string, files []string) map[string]string {
+	root := repoRoot(dir)
 	out := make(map[string]string, len(files))
 	for _, f := range files {
-		out[f] = fileHash(dir, f)
+		out[f] = fileHash(root, f)
 	}
 	return out
 }
 
 // freshChanges keeps files that were not dirty at prompt time or whose content changed since.
 func freshChanges(dir string, changed []string, baseline map[string]string) []string {
+	root := repoRoot(dir)
 	var out []string
 	for _, f := range changed {
-		if h, ok := baseline[f]; ok && h == fileHash(dir, f) {
+		if h, ok := baseline[f]; ok && h == fileHash(root, f) {
 			continue
 		}
 		out = append(out, f)
