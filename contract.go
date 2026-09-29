@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -185,30 +186,42 @@ func hasBaseCommit(dir, base string) bool {
 
 var contractPaths = regexp.MustCompile("`(/[^`]+)`|\"(/[^\"]+)\"|'(/[^']+)'|(/[^\\s`\"'(),;\\[\\]]+)")
 
-// scopeRepository tries cwd, contract paths, then child repositories through
+// scopeRepository prefers a unique repository named by an absolute contract
+// path, then falls back to a unique repository in cwd and its children through
 // depth two. Git discovers both normal repositories and linked worktrees.
 func scopeRepository(cwd, body string) (string, error) {
 	base := contractField(body, "base commit")
 	root := repoRoot(cwd)
-	if !explicitBase(base) || hasBaseCommit(root, base) {
+	if !explicitBase(base) {
 		return root, nil
 	}
-	seen := map[string]bool{root: true}
-	try := func(dir string) string {
-		if !isGitDir(dir) {
-			return ""
+	collect := func(dirs []string) []string {
+		seen := map[string]bool{}
+		var candidates []string
+		try := func(dir string) {
+			if !isGitDir(dir) {
+				return
+			}
+			r := repoRoot(dir)
+			if resolved, err := filepath.EvalSymlinks(r); err == nil {
+				r = resolved
+			}
+			if seen[r] {
+				return
+			}
+			seen[r] = true
+			if hasBaseCommit(r, base) {
+				candidates = append(candidates, r)
+			}
 		}
-		r := repoRoot(dir)
-		if seen[r] {
-			return ""
+		for _, dir := range dirs {
+			try(dir)
 		}
-		seen[r] = true
-		if hasBaseCommit(r, base) {
-			return r
-		}
-		return ""
+		sort.Strings(candidates)
+		return candidates
 	}
 	// File and glob paths are trimmed back to an existing directory.
+	var explicitDirs []string
 	for _, match := range contractPaths.FindAllStringSubmatch(body, -1) {
 		var token string
 		for _, part := range match[1:] {
@@ -223,35 +236,33 @@ func scopeRepository(cwd, body string) (string, error) {
 		}
 		for dir := token; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 			if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-				if r := try(dir); r != "" {
-					return r, nil
-				}
+				explicitDirs = append(explicitDirs, dir)
 				break
 			}
 		}
 	}
-	var search func(string, int) string
-	search = func(dir string, depth int) string {
-		if depth > 0 {
-			if r := try(dir); r != "" {
-				return r
-			}
-		}
+	if candidates := collect(explicitDirs); len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	var search func(string, int, *[]string)
+	search = func(dir string, depth int, dirs *[]string) {
+		*dirs = append(*dirs, dir)
 		if depth == 2 {
-			return ""
+			return
 		}
 		entries, _ := os.ReadDir(dir)
 		for _, entry := range entries {
 			if entry.IsDir() && entry.Name() != ".git" {
-				if r := search(filepath.Join(dir, entry.Name()), depth+1); r != "" {
-					return r
-				}
+				search(filepath.Join(dir, entry.Name()), depth+1, dirs)
 			}
 		}
-		return ""
 	}
-	if r := search(cwd, 0); r != "" {
-		return r, nil
+	var dirs []string
+	search(cwd, 0, &dirs)
+	if candidates := collect(dirs); len(candidates) == 1 {
+		return candidates[0], nil
+	} else if len(candidates) > 1 {
+		return "", fmt.Errorf("multiple repositories containing base commit %s found under %s: %s; 계약 Baseline 에 작업 저장소 절대 경로를 적어라", base, cwd, strings.Join(candidates, ", "))
 	}
 	return "", fmt.Errorf("no repository containing base commit %s found for %s (contract paths and children through depth 2 checked)", base, cwd)
 }

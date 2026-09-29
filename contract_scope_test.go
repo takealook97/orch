@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -79,9 +80,11 @@ func TestScopeRepositoryPathsAndDepth(t *testing.T) {
 	if root, err := scopeRepository(cwd, "- base commit: "+spacedBase+"\n- worktree: `"+spaced+"`"); err != nil || root != repoRoot(spaced) {
 		t.Fatalf("quoted explicit path: %s %v", root, err)
 	}
-	// Cwd wins when it contains the base, regardless of other contract paths.
-	if root, err := scopeRepository(child, "- base commit: "+base+"\n- worktree: "+spaced); err != nil || root != repoRoot(child) {
-		t.Fatalf("cwd priority: %s %v", root, err)
+	// A unique contract path wins before cwd discovery.
+	priority := filepath.Join(t.TempDir(), "priority")
+	git(t, child, "worktree", "add", "--detach", priority, base)
+	if root, err := scopeRepository(child, "- base commit: "+base+"\n- worktree: "+priority); err != nil || root != repoRoot(priority) {
+		t.Fatalf("explicit path priority: %s %v", root, err)
 	}
 	if _, err := scopeRepository(cwd, "- base commit: "+strings.Repeat("f", 40)); err == nil {
 		t.Fatal("missing commit accepted")
@@ -99,6 +102,33 @@ func TestScopeRepositoryPathsAndDepth(t *testing.T) {
 	git(t, child, "worktree", "add", "--detach", linked, base)
 	if root, err := scopeRepository(discovery, "- base commit: "+base); err != nil || root != repoRoot(linked) {
 		t.Fatalf("discovered linked worktree: %s %v", root, err)
+	}
+}
+
+func TestScopeRepositoryRejectsAmbiguousSiblingRepositories(t *testing.T) {
+	cwd := t.TempDir()
+	first := filepath.Join(cwd, "repo-a")
+	base := scopeRepo(t, first)
+	second := filepath.Join(cwd, "repo-b")
+	if out, err := exec.Command("git", "clone", "-q", first, second).CombinedOutput(); err != nil {
+		t.Fatalf("clone sibling fixture: %v %s", err, out)
+	}
+	if got := strings.TrimSpace(git(t, second, "rev-parse", "HEAD")); got != base {
+		t.Fatalf("fixture commits differ: first=%s second=%s", base, got)
+	}
+	root, err := scopeRepository(cwd, "- base commit: "+base)
+	if err == nil || root != "" {
+		t.Fatalf("ambiguous repositories accepted: root=%s err=%v", root, err)
+	}
+	for _, want := range []string{repoRoot(first), repoRoot(second), "계약 Baseline 에 작업 저장소 절대 경로를 적어라"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ambiguity error %q missing %q", err, want)
+		}
+	}
+	// A single explicit absolute path resolves the otherwise ambiguous pair.
+	root, err = scopeRepository(cwd, "- base commit: "+base+"\n- worktree: `"+second+"`")
+	if err != nil || root != repoRoot(second) {
+		t.Fatalf("explicit absolute path did not resolve ambiguity: root=%s err=%v", root, err)
 	}
 }
 
