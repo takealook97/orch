@@ -1,10 +1,142 @@
-"""P7 regression eval set (design §15 P7): 20 representative tasks.
+"""P7 regression eval set, plus 18 Head-direct/delegation fixtures.
 
 review   (12): seeded-bug Python modules. Same-family vs cross-family reviewers must report the
                planted defect; detection is judged by the reported line numbers (BUG_LINES).
 parallel  (8): three independent functions per task. One worker vs three parallel workers;
                judged by hidden unit tests and wall time.
 """
+
+# Each delegate fixture starts from `files`; `solution` is used only by selfcheck.
+# Code checks are independent Python expressions evaluated after importing target.
+# Research checks apply to the returned answer; document checks apply to the draft.
+DELEGATE = [
+    {
+        "id": "lookup-config", "type": "research", "mode": "ask",
+        "files": {"config.txt": "timeout_ms=4500\nretries=3\nregion=ap-northeast-2\n"},
+        "prompt": "Read config.txt. State timeout_ms, retries, and region in one short answer.",
+        "solution": "timeout_ms=4500; retries=3; region=ap-northeast-2",
+        "checks": ["timeout_ms=4500", "retries=3", "region=ap-northeast-2"],
+    },
+    {
+        "id": "lookup-api", "type": "research", "mode": "ask",
+        "files": {"API.md": "POST /v1/jobs creates a job.\nGET /v1/jobs/{id} reads one.\nDELETE /v1/jobs/{id} cancels one.\n"},
+        "prompt": "Read API.md. Give the create, read, and cancel method/path pairs.",
+        "solution": "POST /v1/jobs; GET /v1/jobs/{id}; DELETE /v1/jobs/{id}",
+        "checks": ["post /v1/jobs", "get /v1/jobs/{id}", "delete /v1/jobs/{id}"],
+    },
+    {
+        "id": "lookup-release", "type": "research", "mode": "ask",
+        "files": {"CHANGELOG.md": "v2.4: added CSV export.\nv2.5: fixed timezone parsing.\nv2.6: removed legacy XML import.\n"},
+        "prompt": "Read CHANGELOG.md. State what changed in versions 2.4, 2.5, and 2.6.",
+        "solution": "2.4 CSV export; 2.5 timezone parsing; 2.6 legacy XML import removed",
+        "checks": ["2.4", "csv export", "2.5", "timezone parsing", "2.6", "xml import", "removed"],
+    },
+    {
+        "id": "impl-slug", "type": "implementation", "mode": "do",
+        "files": {"target.py": "def slug(text):\n    raise NotImplementedError\n"},
+        "prompt": "Implement slug(text) in target.py: lowercase ASCII text, replace every run of non-alphanumeric characters with one hyphen, strip edge hyphens.",
+        "solution": {"target.py": "import re\n\ndef slug(text):\n    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')\n"},
+        "checks": ["target.slug('Hello, World!') == 'hello-world'", "target.slug(' A__B ') == 'a-b'", "target.slug('---') == ''"],
+    },
+    {
+        "id": "impl-clamp", "type": "implementation", "mode": "do",
+        "files": {"target.py": "def clamp(value, low, high):\n    raise NotImplementedError\n"},
+        "prompt": "Implement clamp(value, low, high) in target.py. Raise ValueError when low > high; otherwise restrict value to the inclusive interval.",
+        "solution": {"target.py": "def clamp(value, low, high):\n    if low > high:\n        raise ValueError('bounds')\n    return min(high, max(low, value))\n"},
+        "checks": ["target.clamp(5, 0, 3) == 3", "target.clamp(-2, 0, 3) == 0", "target.clamp(2, 0, 3) == 2", "_raises(target.clamp, ValueError, 1, 3, 2)"],
+    },
+    {
+        "id": "impl-flatten", "type": "implementation", "mode": "do",
+        "files": {"target.py": "def flatten(rows):\n    raise NotImplementedError\n"},
+        "prompt": "Implement flatten(rows) in target.py. Concatenate one level of iterables in order; preserve duplicates and accept empty rows.",
+        "solution": {"target.py": "def flatten(rows):\n    return [item for row in rows for item in row]\n"},
+        "checks": ["target.flatten([[1, 2], [], [2]]) == [1, 2, 2]", "target.flatten([]) == []", "target.flatten([('a',), ('b', 'c')]) == ['a', 'b', 'c']"],
+    },
+    {
+        "id": "test-even", "type": "test_fix", "mode": "do",
+        "files": {"target.py": "def is_even(n):\n    return n % 2 == 1\n", "test_target.py": ""},
+        "prompt": "Fix is_even in target.py and write unittest tests in test_target.py covering zero, negative even, and odd values.",
+        "solution": {"target.py": "def is_even(n):\n    return n % 2 == 0\n", "test_target.py": "import unittest\nfrom target import is_even\n\nclass Tests(unittest.TestCase):\n    def test_zero(self): self.assertTrue(is_even(0))\n    def test_negative(self): self.assertTrue(is_even(-2))\n    def test_odd(self): self.assertFalse(is_even(3))\n"},
+        "checks": ["target.is_even(0) is True", "target.is_even(-2) is True", "target.is_even(3) is False", "_tests_pass()", "_test_count() >= 3", "_tests_reject_bug()"],
+    },
+    {
+        "id": "test-space", "type": "test_fix", "mode": "do",
+        "files": {"target.py": "def normalize_spaces(s):\n    return s.strip()\n", "test_target.py": ""},
+        "prompt": "Fix normalize_spaces to collapse all whitespace runs to one space and trim edges. Add unittest tests for tabs, newlines, and empty input.",
+        "solution": {"target.py": "def normalize_spaces(s):\n    return ' '.join(s.split())\n", "test_target.py": "import unittest\nfrom target import normalize_spaces\n\nclass Tests(unittest.TestCase):\n    def test_tabs(self): self.assertEqual(normalize_spaces(' a\\tb '), 'a b')\n    def test_newlines(self): self.assertEqual(normalize_spaces('a\\nb'), 'a b')\n    def test_empty(self): self.assertEqual(normalize_spaces('  '), '')\n"},
+        "checks": ["target.normalize_spaces(' a\\tb ') == 'a b'", "target.normalize_spaces('a\\nb') == 'a b'", "target.normalize_spaces('  ') == ''", "_tests_pass()", "_test_count() >= 3", "_tests_reject_bug()"],
+    },
+    {
+        "id": "test-divide", "type": "test_fix", "mode": "do",
+        "files": {"target.py": "def safe_divide(a, b):\n    return a / b\n", "test_target.py": ""},
+        "prompt": "Fix safe_divide to return None when divisor is zero, otherwise true division. Add unittest tests for zero, negative, and fractional results.",
+        "solution": {"target.py": "def safe_divide(a, b):\n    return None if b == 0 else a / b\n", "test_target.py": "import unittest\nfrom target import safe_divide\n\nclass Tests(unittest.TestCase):\n    def test_zero(self): self.assertIsNone(safe_divide(1, 0))\n    def test_negative(self): self.assertEqual(safe_divide(-4, 2), -2)\n    def test_fraction(self): self.assertEqual(safe_divide(1, 2), 0.5)\n"},
+        "checks": ["target.safe_divide(1, 0) is None", "target.safe_divide(-4, 2) == -2", "target.safe_divide(1, 2) == 0.5", "_tests_pass()", "_test_count() >= 3", "_tests_reject_bug()"],
+    },
+    {
+        "id": "build-colon", "type": "build_fix", "mode": "do",
+        "files": {"target.py": "def double(n)\n    return n * 2\n"},
+        "prompt": "Fix target.py so it imports and double(n) returns n * 2.",
+        "solution": {"target.py": "def double(n):\n    return n * 2\n"},
+        "checks": ["target.double(0) == 0", "target.double(-3) == -6", "target.double(2.5) == 5"],
+    },
+    {
+        "id": "build-name", "type": "build_fix", "mode": "do",
+        "files": {"target.py": "def total(values):\n    return sum(items)\n"},
+        "prompt": "Fix target.py's name error. total(values) must sum values, including empty input.",
+        "solution": {"target.py": "def total(values):\n    return sum(values)\n"},
+        "checks": ["target.total([]) == 0", "target.total([2, 3, -1]) == 4", "target.total((1.5, 2.5)) == 4"],
+    },
+    {
+        "id": "build-type", "type": "build_fix", "mode": "do",
+        "files": {"target.py": "def join_ids(ids: list[int]) -> str:\n    return ','.join(ids)\n"},
+        "prompt": "Fix target.py's type error. join_ids accepts integers and returns comma-separated decimal strings, including an empty list.",
+        "solution": {"target.py": "def join_ids(ids: list[int]) -> str:\n    return ','.join(str(i) for i in ids)\n"},
+        "checks": ["target.join_ids([1, -2, 3]) == '1,-2,3'", "target.join_ids([]) == ''", "target.join_ids([0]) == '0'"],
+    },
+    {
+        "id": "refactor-score", "type": "refactor", "mode": "do",
+        "files": {"target.py": "def score_old(points):\n    return sum(points)\n"},
+        "prompt": "Rename score_old to total_score in target.py, preserving behavior. Remove the old name.",
+        "solution": {"target.py": "def total_score(points):\n    return sum(points)\n"},
+        "checks": ["target.total_score([2, -1, 4]) == 5", "not hasattr(target, 'score_old')"],
+    },
+    {
+        "id": "refactor-label", "type": "refactor", "mode": "do",
+        "files": {"target.py": "def label_old(name):\n    return '[' + name.strip() + ']'\n"},
+        "prompt": "Rename label_old to format_label in target.py, preserving behavior. Remove the old name.",
+        "solution": {"target.py": "def format_label(name):\n    return '[' + name.strip() + ']'\n"},
+        "checks": ["target.format_label(' a ') == '[a]'", "not hasattr(target, 'label_old')"],
+    },
+    {
+        "id": "refactor-count", "type": "refactor", "mode": "do",
+        "files": {"target.py": "def count_old(items):\n    return len(items)\n"},
+        "prompt": "Rename count_old to item_count in target.py, preserving behavior. Remove the old name.",
+        "solution": {"target.py": "def item_count(items):\n    return len(items)\n"},
+        "checks": ["target.item_count([]) == 0", "target.item_count([1, 2]) == 2", "not hasattr(target, 'count_old')"],
+    },
+    {
+        "id": "doc-backup", "type": "doc_draft", "mode": "do",
+        "files": {"NOTES.md": "Backup tool: `backup --source SRC --dest DST`. Restore tool: `restore --source SRC --dest DST`. Verify with `verify --dest DST`.\n", "GUIDE.md": ""},
+        "prompt": "Draft GUIDE.md from NOTES.md. Include the exact backup, restore, and verify commands.",
+        "solution": {"GUIDE.md": "# Backup guide\n\nRun `backup --source SRC --dest DST`. Restore with `restore --source SRC --dest DST`. Check with `verify --dest DST`.\n"},
+        "checks": ["backup --source src --dest dst", "restore --source src --dest dst", "verify --dest dst"],
+    },
+    {
+        "id": "doc-release", "type": "doc_draft", "mode": "do",
+        "files": {"NOTES.md": "Release steps: run `make check`; create tag `v2.0`; publish artifact with `upload dist/app.tar.gz`.\n", "GUIDE.md": ""},
+        "prompt": "Draft GUIDE.md from NOTES.md. Include all three release steps and exact commands.",
+        "solution": {"GUIDE.md": "# Release\n\nRun `make check`, create tag `v2.0`, then `upload dist/app.tar.gz`.\n"},
+        "checks": ["make check", "v2.0", "upload dist/app.tar.gz"],
+    },
+    {
+        "id": "doc-oncall", "type": "doc_draft", "mode": "do",
+        "files": {"NOTES.md": "On-call: inspect `health /ready`, examine `logs --since 10m`, then escalate to `#infra` if errors persist.\n", "GUIDE.md": ""},
+        "prompt": "Draft GUIDE.md from NOTES.md. Include the health, logs, and escalation steps.",
+        "solution": {"GUIDE.md": "# On-call\n\nCheck `health /ready`, inspect `logs --since 10m`, and escalate to `#infra` if errors persist.\n"},
+        "checks": ["health /ready", "logs --since 10m", "#infra"],
+    },
+]
 
 REVIEW = [
     {

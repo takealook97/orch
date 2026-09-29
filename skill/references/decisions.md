@@ -16,6 +16,9 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 | D8 | The skill has one source, `skill/SKILL.md`, and `~/.claude/skills/orch` and `~/.codex/skills/orch` point to it via symlink. The name is `orch` | The two copies had already drifted apart |
 | D9 | No per-command integration is built; only the shared principle (skill S1) is kept. If a command instructs a subagent, it is redirected through `orch` | "the research command" was not a specific command |
 | D10 | All three CLIs use a PreToolUse hook, and `orch spawn` also self-checks (refuses if `ORCH_ROLE=worker`) | Confirmed hook support in all three CLIs |
+| D11 | Delegation is judged by cost, not time: execution that needs no top-tier judgment goes to a cheaper key regardless of length; the 5-minute floor applies only to parallel splits | The Head runs on the top-tier model, so its usage and context are the scarce resource (see "Cost-based delegation" below) |
+| D12 | `orch ask` / `orch do` run a catalog key's CLI non-interactively without a pane (`claude -p`, `codex exec`, `agy -p`); `orch test` runs a command with no model and returns only a summary | Removes the fixed cost (spawn, contract, prompt, wait, collect) that made short delegation look unprofitable |
+| D13 | D3 stays: built-in subagents remain blocked inside Herdr. The cheap path is `orch ask`/`orch do`, which keeps the model catalog and `ORCH_ROLE=worker` injection | Model pinning is kept while a light path exists |
 
 ## Changes from the design doc
 
@@ -42,6 +45,24 @@ The original design doc is `design.md` in this directory. Decisions made or chan
    - `orch doctor` is now defined.
    - The playbook's `mechanics` value was not a catalog key, so it was changed to `codex-high-m`.
 
+## Cost-based delegation (2026-09-26)
+
+Source: the proposal "orch 위임 기준 재검토: 시간 기준에서 비용 기준으로" (2026-09-26).
+
+- **Priority:** (1) Head tokens and context, (2) total tokens, (3) wall-clock. Time wins only while the user is waiting.
+- **Why the old rule changed:** the 5-minute rule came from the 2026-09-26 eval, which compared single vs parallel workers on the same key (`codex-high-l`) and measured time only. It never compared a top-tier Head doing the work against a cheaper worker doing it, and it never measured tokens or Head context.
+- **Rule:** delegate when the Head's own work (reading, editing, trial and error) is much larger than instruction plus returned report, no top-tier judgment is needed mid-task, and the result can be reviewed from a summary, diff stat, and test result.
+- **Commands:**
+  - `orch ask --model K "question"`: read-only (claude `--tools Read,Grep,Glob --permission-mode dontAsk`, codex `--sandbox read-only`, agy `--mode plan`). The answer is capped (`--max-output`, default 2000 characters) and the full answer stays on disk.
+  - `orch do --model K --own GLOBS [--test CMD] [--worktree DIR] [--background] "requirement"`: writes. Scope is checked against `--own` exactly like `orch collect` (a change outside it fails the task). With `--test`, orch reruns the command itself at the end. Only changed files, diff stat, test result, and a capped summary come back; the full diff stays on disk.
+  - `orch test "CMD"`: no model. Exit code, duration, failing test names, a capped first-failure excerpt, and the log path.
+  - Records live in `<run>/tasks/task-N/`. Without an active run, an ad-hoc closed run holds them. `--background` returns at once; `orch wait task-N` collects.
+  - Children get `ORCH_ROLE=worker`, so the worker hook and code checks block re-delegation.
+- **Pane cleanup no longer depends on the Head (round 2):** a Head's detached `orch wait` died on the identity check and finished panes stayed open. Now `orch spawn` starts a per-run reaper (`orch __reap`, singleton by lock) that closes a pane once its result has a status line and the agent is not working on two polls, and exits when the run closes or has had no live workers for 60 s. `orch wait`/`orch collect` report reaped workers as finished. Confirmed in a live Herdr run on 2026-09-26: a probe worker's pane closed with no `orch wait` call.
+- **Task hardening (round 2):** a foreground `orch ask/do/test` forwards SIGINT/SIGTERM/SIGHUP to the child's process group; task.json records pid and heartbeat, and `orch wait` marks a task whose runner died as failed; `__task` claims only a running, unclaimed task; `diff.patch` covers only the task's own changes and applies with `git apply`; scope checks run from the repo root without rename detection; the test excerpt keeps up to 10 lines of context before the first failure; timeouts report `timeout`; ad-hoc runs are closed from the first save, hidden from `orch run list` (use `--all`), and pruned by `orch gc` after 7 days.
+- **Other token leaks closed:** `orch read` defaults to 40 lines, `orch collect` prints the result's `summary:` line, and the skill tells the Head to read summaries first and not to poll.
+- **Open questions:** whether non-interactive permission limits are enough without hooks; how to measure subscription usage per model (cr reads account-wide 5-hour/7-day usage only, so the eval uses token counts). The eval arm `python3 eval/run.py run --only delegate` measures Head tokens, total tokens, quality, rework, and time per task type.
+
 ## CLI facts confirmed during implementation
 
 | Item | Confirmed result |
@@ -65,6 +86,15 @@ Changes made:
 
 `pane.split --no-focus`, `pane.resize`, `pane.close`, `agent.start`, `agent.send_keys`, and `agent.read` did not move focus. After the fix, measurement showed zero focus moves caused by orch requests. The regression test is `TestNormalizeLayoutDoesNotZoomWhenNotZoomed`.
 
+## Operational rules confirmed 2026-09-29
+
+- Waiting uses foreground `orch wait` by default. While the user is waiting for progress, do not move it to a background task.
+- A child repository's worktree outside a vat workspace cannot run workspace-dependent `vat` or `make check` commands ("not inside a vat workspace"). The contract must specify checks in the original checkout or require an unavailable-check report.
+- Chain checks and commits with `&&`, never `;`, so a failed check prevents the commit.
+- Do not add orch-specific branches to repository rules or scripts. Orch is one person's local tool; repository rules apply equally to every worker.
+- Scope collection selects a repository containing the contract's base commit: cwd first, absolute contract paths next, then child repositories through depth two (including linked worktrees). The selected repository is reported when it differs from cwd's repository; no match fails scope verification.
+- A prompted worker retains its original contract content hash. Identical re-prompts do nothing. Changed contracts, or legacy prompts without a saved hash, are refused with close-and-new-name guidance.
+
 ## Known limits
 
 - **The hook is best-effort.** It checks command strings with regexes, looking at line starts, and text after `;` `&` `|` `(` `$(`, and after `bash -c`/`sh -c`/`eval`/`xargs`. It does not catch:
@@ -81,5 +111,5 @@ Changes made:
 - **Hooks in a different account home:** if a worker runs under a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` different from the Head's, that home may lack hook configuration. In that case, recursive-delegation prevention relies on two things:
   - `orch spawn`'s `ORCH_ROLE` check (code)
   - the constitution rule (cr symlinks a global `AGENTS.md`/`CLAUDE.md` into the account home)
-- **The deepeet workspace:** the deepeet repo's `.claude/skills/orch/SKILL.md` tells agents to use `herdr` directly. The global hook blocks this path, so that skill needs to be rewritten around `orch`. Out of scope here, left untouched.
+- **The deepeet workspace:** the deepeet repo's `.claude/skills/orch/SKILL.md` and `.codex/skills/orch/SKILL.md` defer to this skill and add only deepeet rules (Brain via CTBF, evidence sources, approval gates). Its "orch is mandatory for every task" rule covers direct mode and `orch ask`/`orch do`.
 - **Eval interpretation:** the P7 eval set (`eval/`) has a small sample (12 review pairs, 8 implementation pairs). It shows direction only; drawing conclusions needs repeated measurement.

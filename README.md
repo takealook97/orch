@@ -2,6 +2,8 @@
 
 `orch` is a multi-agent executor that runs on Herdr panes. The main session (the Head) hands subtasks to workers as contract files, then has a different model family verify the results.
 
+The Head usually runs on the top-tier model, so orch delegates by cost, not time: the Head keeps judgment and review, and execution goes to cheaper catalog keys. One-off tasks skip panes entirely with `orch ask`/`orch do`; `orch test` keeps full test logs out of the Head's context.
+
 - Setup guide: `docs/setup.md`
 - Design doc: `skill/references/design.md`
 - Decisions and changes made during implementation: `skill/references/decisions.md`
@@ -41,6 +43,20 @@ orch prompt crit && orch wait crit
 orch run end                   # close all remaining panes and confirm removal
 ```
 
+## One-off tasks (no pane)
+
+```bash
+orch ask --model codex-medium-m "list the implementations of Store and their call paths"     # read-only, answer capped at 2000 chars
+orch do  --model codex-high-m --own 'parser/**' --test "go test ./parser/..." "handle empty input in Parse"
+orch do  --model codex-high-l --own 'docs/**' --background "draft the changelog for v0.4"      # returns task-N at once
+orch wait task-2                                                                             # same report when it finishes
+orch test "go test ./..."                                                                    # no model: exit code, failing names, capped excerpt
+```
+
+Flags go before the text; a text that starts with `-` goes after `--` (`orch ask --model codex-medium-m -- "-1 or 1?"`).
+
+`orch do` returns only status, changed files, diff stat, owned-scope violations (a violation fails the task), orch's own final test run, and a capped summary; the full diff, answer, and logs stay in `~/.orch/runs/<id>/tasks/task-N/`. No `orch run new` is needed. Children run with `ORCH_ROLE=worker`, so they cannot delegate further. Add `--json` for a machine-readable report.
+
 ## DAG and effect measurement
 
 ```bash
@@ -50,6 +66,7 @@ orch checklist --shuffle          # neutral-lane checklist template (full+ order
 
 python3 eval/run.py selfcheck   # self-check the eval set
 python3 eval/run.py run         # 20 tasks: cross- vs same-family review, parallel vs single implementation -> eval/out/<timestamp>/report.md
+python3 eval/run.py run --only delegate   # Head direct (claude-high-m) vs lower-key orch ask/do: Head tokens, total cost, quality, rework, time
 ```
 
 ## Account (optional)
@@ -86,8 +103,13 @@ Keys follow `<cli>-<tier>-<effort initial>` (`h`/`m`/`l`), where the tier is the
 
 `orch` only closes panes it spawned. If a tab has a user pane, it stops spawning.
 
+A finished worker's pane closes even if the Head never calls `orch wait`: `orch spawn` starts one reaper per run (`orch __reap`, log in `~/.orch/runs/<id>/reaper.log`) that closes a pane once its result file has a status line and the agent has stopped working, then exits when the run has no live workers.
+
 ## Development
 
 ```bash
 make check       # go vet, go test, playbook schema check
+git config core.hooksPath .githooks
 ```
+
+Commits use an English `type: imperative summary` subject of at most 72 characters. The local hook enforces the format. Allowed types: `feat`, `fix`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `perf`, `security`, `revert`.

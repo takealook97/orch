@@ -32,10 +32,14 @@ type Worker struct {
 	Tried      []string `json:"tried,omitempty"`
 	// Baseline maps files already changed at prompt time to their content hash.
 	Baseline      map[string]string `json:"baseline,omitempty"`
+	BaselineRoot  string            `json:"baseline_root,omitempty"`
+	ContractHash  string            `json:"contract_hash,omitempty"`
 	TriedAccounts []string          `json:"tried_accounts,omitempty"`
 	Started       time.Time         `json:"started"`
 	Prompted      time.Time         `json:"prompted,omitempty"`
 	Closed        time.Time         `json:"closed,omitempty"`
+	// Reaped marks a worker the reaper closed that wait or collect has not reported yet.
+	Reaped bool `json:"reaped,omitempty"`
 }
 
 type Event struct {
@@ -53,7 +57,9 @@ type Run struct {
 	Playbook  string    `json:"playbook,omitempty"`
 	Goal      string    `json:"goal,omitempty"`
 	Status    string    `json:"status"` // active, closed
+	Adhoc     bool      `json:"adhoc,omitempty"`
 	Workers   []*Worker `json:"workers"`
+	Tasks     []*Task   `json:"tasks,omitempty"`
 	Events    []Event   `json:"events"`
 }
 
@@ -245,6 +251,12 @@ Classify as confirmed defect / plausible risk / unsupported concern / resolved. 
 `
 
 func createRun(request, mode, playbook, goal string) (*Run, error) {
+	return newRun(request, mode, playbook, goal, false)
+}
+
+// newRun creates a run directory. An ad-hoc run (one-off tasks) is closed from its first
+// save, so no other orch call can ever resolve it as the active run.
+func newRun(request, mode, playbook, goal string, adhoc bool) (*Run, error) {
 	r := &Run{
 		ID:        newRunID(),
 		Created:   time.Now(),
@@ -274,5 +286,9 @@ func createRun(request, mode, playbook, goal string) (*Run, error) {
 		}
 	}
 	r.event("run created mode=%s playbook=%s goal=%s", mode, playbook, goal)
+	if adhoc {
+		r.Status, r.Adhoc = "closed", true
+		r.event("ad-hoc task run (closed; owns no panes)")
+	}
 	return r, saveRun(r)
 }

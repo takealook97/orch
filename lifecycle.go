@@ -32,6 +32,17 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				names = append(names, w.Name)
 			}
 		}
+		// Workers the reaper already closed still owe the Head their outcome.
+		for _, w := range r.Workers {
+			if w.Reaped {
+				names = append(names, w.Name)
+			}
+		}
+		for _, task := range r.Tasks {
+			if task.Status == "running" {
+				names = append(names, task.ID)
+			}
+		}
 	}
 	if len(names) == 0 {
 		return nil, errors.New("no workers to wait for")
@@ -49,7 +60,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 			return outcomes, err
 		}
 		readNow := time.Since(lastRead) > timings.ScreenRead
-		if readNow {
+		if readNow && len(r.liveWorkers()) > 0 {
 			lastRead = time.Now()
 			// A pane nobody recorded may come from a worker bypassing the guards. Report it;
 			// never close it (only panes this Head spawned are ever closed).
@@ -62,15 +73,51 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 		}
 		var still []string
 		for _, name := range pending {
+			if strings.HasPrefix(name, "task-") {
+				t, e := readTask(runID, name)
+				if e != nil {
+					outcomes = append(outcomes, waitOutcome{name, "failed", e.Error()})
+					continue
+				}
+				if t.Status == "running" {
+					if why := taskDead(t); why != "" {
+						t.Status, t.Note = "failed", why
+						_ = saveTask(t)
+					}
+				}
+				if t.Status != "running" {
+					outcomes = append(outcomes, waitOutcome{name, t.Status, taskReport(t, false)})
+					continue
+				}
+				if time.Now().After(deadline) {
+					outcomes = append(outcomes, waitOutcome{name, "timeout", "wait deadline reached"})
+					continue
+				}
+				still = append(still, name)
+				continue
+			}
 			w := r.worker(name)
 			if w == nil {
 				outcomes = append(outcomes, waitOutcome{name, "failed", "worker not in run"})
 				continue
 			}
-			if st := resultStatus(w.Result); st != "" {
+			st := resultStatus(w.Result)
+			if st != "" && w.Pane != "" && !agentStopped(w) {
+				// A status line alone is not a finish while the agent still works on the file.
+				if time.Now().After(deadline) {
+					outcomes = append(outcomes, waitOutcome{name, "timeout", "result has a status line but the agent is still working"})
+					continue
+				}
+				still = append(still, name)
+				continue
+			}
+			if st != "" {
 				setStatus(runID, name, st)
 				// A finished worker's pane is always closed at once (no reuse).
 				detail := w.Result
+				if w.Pane == "" && w.Reaped {
+					detail += " · pane closed by the reaper"
+				}
 				if w.Pane != "" {
 					if err := closeWorker(runID, name); err != nil {
 						// A pane that could not be removed is not a clean finish.
@@ -81,6 +128,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 						_ = normalizeLayout(os.Getenv("HERDR_PANE_ID"))
 					}
 				}
+				markReported(runID, name)
 				outcomes = append(outcomes, waitOutcome{name, st, detail})
 				continue
 			}
@@ -151,6 +199,16 @@ func unknownPanes(head string) []string {
 		}
 	}
 	return out
+}
+
+// markReported clears the reaper's mark once wait or collect has reported the worker.
+func markReported(runID, name string) {
+	_ = withRun(runID, func(r *Run) error {
+		if w := r.worker(name); w != nil {
+			w.Reaped = false
+		}
+		return nil
+	})
 }
 
 func setStatus(runID, name, st string) {
@@ -283,17 +341,23 @@ func fallbackName(r *Run, name string) string {
 
 // collect reports a worker's result and enforces the contract's write scope.
 func collect(runFlag, name string) (string, error) {
+	out, _, err := collectWorker(runFlag, name)
+	return out, err
+}
+
+// collectWorker is collect that also returns the worker's final status ("" without one).
+func collectWorker(runFlag, name string) (string, string, error) {
 	runID, err := resolveRun(runFlag)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	r, err := loadRun(runID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	w := r.worker(name)
 	if w == nil {
-		return "", fmt.Errorf("worker %q not found", name)
+		return "", "", fmt.Errorf("worker %q not found", name)
 	}
 	var b strings.Builder
 	st := resultStatus(w.Result)
@@ -305,29 +369,61 @@ func collect(runFlag, name string) (string, error) {
 				fmt.Fprintf(&b, "terminal output backup: %s\n", p)
 			}
 		}
-		return b.String(), nil
+		return b.String(), "", nil
 	}
 	fmt.Fprintf(&b, "status: %s\nresult: %s\n", st, w.Result)
+	if data, err := os.ReadFile(w.Result); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "- summary:") || strings.HasPrefix(line, "summary:") {
+				if rs := []rune(line); len(rs) > 300 {
+					line = string(rs[:300]) + "…"
+				}
+				fmt.Fprintln(&b, strings.TrimPrefix(line, "- "))
+				break
+			}
+		}
+	}
 	var closeErr error
-	if w.Pane != "" {
+	if w.Pane == "" && w.Reaped {
+		fmt.Fprintf(&b, "pane closed by the reaper\n")
+	}
+	if w.Pane != "" && !agentStopped(w) {
+		fmt.Fprintf(&b, "agent still working; pane left open\n")
+	} else if w.Pane != "" {
 		if closeErr = closeWorker(runID, name); closeErr != nil {
 			fmt.Fprintf(&b, "pane close failed: %v\n", closeErr)
 		} else {
 			fmt.Fprintf(&b, "pane closure confirmed\n")
 		}
 	}
-	if w.Contract != "" && w.Cwd != "" && isGitDir(w.Cwd) {
-		body, _ := os.ReadFile(w.Contract)
-		globs := ownedGlobs(string(body))
-		changed, err := changedFiles(w.Cwd, contractField(string(body), "base commit"))
+	markReported(runID, name)
+	if w.Contract != "" && w.Cwd != "" {
+		body, err := os.ReadFile(w.Contract)
+		// Preserve non-git tasks that declare no commit baseline.
+		checkScope := err != nil || isGitDir(w.Cwd) || explicitBase(contractField(string(body), "base commit"))
+		var root string
+		var changed []string
+		if err == nil && checkScope {
+			root, err = scopeRepository(w.Cwd, string(body))
+		}
+		if err == nil && checkScope {
+			changed, err = changedFiles(root, contractField(string(body), "base commit"))
+		}
 		if err != nil {
 			// Fail closed: an unverifiable scope is not a pass.
 			st = "failed"
 			fmt.Fprintf(&b, "scope could not be checked; marked failed: %v\n", err)
-		} else {
+		} else if checkScope {
 			// A file counts when it changed after the prompt (content differs from the baseline).
-			fresh := freshChanges(w.Cwd, changed, w.Baseline)
-			if bad := scopeViolations(fresh, globs); len(bad) > 0 {
+			if root != repoRoot(w.Cwd) {
+				fmt.Fprintf(&b, "scope checked in repository: %s\n", root)
+			}
+			baseline := w.Baseline
+			if (w.BaselineRoot != "" && w.BaselineRoot != root) || (w.BaselineRoot == "" && root != repoRoot(w.Cwd)) {
+				baseline = nil
+			}
+			fresh := freshChanges(root, changed, baseline)
+			if bad := repositoryScopeViolations(w.Cwd, root, fresh, ownedGlobs(string(body))); len(bad) > 0 {
 				st = "failed"
 				fmt.Fprintf(&b, "scope violation; marked failed: change outside owned files %s\n", strings.Join(bad, ", "))
 			} else if len(fresh) > 0 {
@@ -337,12 +433,18 @@ func collect(runFlag, name string) (string, error) {
 	}
 	setStatus(runID, name, st)
 	if closeErr != nil {
-		return b.String(), fmt.Errorf("worker %s pane could not be closed: %w", name, closeErr)
+		return b.String(), st, fmt.Errorf("worker %s pane could not be closed: %w", name, closeErr)
 	}
-	return b.String(), nil
+	return b.String(), st, nil
 }
 
-func closeWorker(runID, name string) error {
+func closeWorker(runID, name string) error { return closeWorkerAs(runID, name, "", false) }
+
+// closeWorkerAs closes a worker's pane; reap marks the close as the reaper's so wait and
+// collect still report the worker.
+// closeWorkerAs closes name's pane. A non-empty expect is the pane the caller observed: if the
+// name now points at another pane (the worker was closed and the name reused), nothing is closed.
+func closeWorkerAs(runID, name, expect string, reap bool) error {
 	var pane string
 	err := withRun(runID, func(r *Run) error {
 		if err := ownRun(r); err != nil {
@@ -358,12 +460,21 @@ func closeWorker(runID, name string) error {
 	if err != nil {
 		return err
 	}
+	if expect != "" && pane != expect {
+		return nil // the name was reused for a new worker; never close its pane
+	}
+	if pane == "" {
+		return nil // already closed (by the reaper or an earlier call); nothing to record
+	}
 	var cerr error
 	if pane != "" {
 		cerr = closePane(pane) // closes if live and confirms removal; lookup errors are failures
 	}
 	_ = withRun(runID, func(r *Run) error {
 		w := r.worker(name)
+		if cerr == nil && w.Pane != pane {
+			return nil // another orch process recorded this close first, or the name was reused
+		}
 		if cerr == nil {
 			w.Closed = time.Now()
 			// Keep a final outcome (done/partial/blocked/failed/quota); otherwise mark closed.
@@ -374,6 +485,10 @@ func closeWorker(runID, name string) error {
 			}
 			w.Pane = ""
 			r.event("close %s pane=%s", name, pane)
+			if reap {
+				w.Reaped = true
+				r.event("reap %s", name)
+			}
 		} else {
 			r.event("close failed %s: %v", name, cerr)
 		}
@@ -434,17 +549,21 @@ func gc(orphans bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Ad-hoc task runs own no panes; old ones are only clutter.
+	report := pruneAdhoc(runs, adhocRetention)
 	panes, err := listPanes("")
 	if err != nil {
-		return nil, err
+		return report, err
 	}
 	live := map[string]bool{}
 	for _, p := range panes {
 		live[p.ID] = true
 	}
-	var report []string
 	head := os.Getenv("HERDR_PANE_ID")
 	for _, r := range runs {
+		if r.Adhoc {
+			continue
+		}
 		mine := r.HeadPane == head
 		deadHead := !live[r.HeadPane]
 		switch {
@@ -481,6 +600,25 @@ func gc(orphans bool) ([]string, error) {
 		}
 	}
 	return report, nil
+}
+
+// adhocRetention is how long gc keeps the directory of an ad-hoc task run.
+const adhocRetention = 7 * 24 * time.Hour
+
+// pruneAdhoc deletes ad-hoc run directories created more than keep ago.
+func pruneAdhoc(runs []*Run, keep time.Duration) []string {
+	var report []string
+	for _, r := range runs {
+		if !r.Adhoc || time.Since(r.Created) <= keep {
+			continue
+		}
+		if err := os.RemoveAll(r.dir()); err != nil {
+			report = append(report, fmt.Sprintf("%s: ad-hoc run not deleted: %v", r.ID, err))
+			continue
+		}
+		report = append(report, fmt.Sprintf("%s: ad-hoc run deleted", r.ID))
+	}
+	return report
 }
 
 // resume re-attaches a run to the current Head pane and marks vanished workers as lost.

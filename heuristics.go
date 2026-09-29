@@ -28,6 +28,11 @@ var timings = struct {
 	DagPoll           time.Duration // poll interval of orch dag run
 	DagStartWait      time.Duration // wait budget right after orch dag run starts a node
 	DagWait           time.Duration // wait budget per loop of orch dag run
+	ReapPoll          time.Duration // poll interval of the per-run reaper
+	ReapIdle          time.Duration // the reaper exits after this long without live workers
+	TaskHeartbeat     time.Duration // how often a running task refreshes its heartbeat
+	TaskStale         time.Duration // a running task whose heartbeat is older than this has died
+	InterruptGrace    time.Duration // how long an interrupted task child may take to exit
 }{
 	TrustSettleStart:  8 * time.Second,
 	TrustSettleReady:  3 * time.Second,
@@ -45,6 +50,11 @@ var timings = struct {
 	DagPoll:           5 * time.Second,
 	DagStartWait:      time.Second,
 	DagWait:           20 * time.Second,
+	ReapPoll:          3 * time.Second,
+	ReapIdle:          60 * time.Second,
+	TaskHeartbeat:     10 * time.Second,
+	TaskStale:         60 * time.Second,
+	InterruptGrace:    2 * time.Second,
 }
 
 // Consecutive polls reporting "working" that count as proof a prompt was received.

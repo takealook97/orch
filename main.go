@@ -17,10 +17,15 @@ Run management
   orch run new [--request FILE|-] [--text "..."] [--mode direct|light|full|full+] [--playbook T] [--goal ID]
   orch run mode <mode> --reason "..." [--run ID]
   orch run end [--run ID]                 close all worker panes, confirm removal, end run
-  orch run list
+  orch run list [--all]                   --all also shows ad-hoc runs of one-off tasks
   orch status [--run ID]
 
 Delegation
+  orch ask --model K [--cwd DIR] [--max-output N] [--timeout MS] [--account same|hook] [--background] [--json] "question"
+  orch do --model K --own GLOBS [--test CMD] [--worktree DIR] [--cwd DIR] [--background] [--timeout MS] [--account same|hook] [--json] "requirement"
+  orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
+                                        ask/do/test: flags first; the text starts at the first
+                                        non-flag argument (use -- before text that starts with -)
   orch models                             seven catalog keys
   orch contract new <name> --role R --model K [--run ID]    create contract template
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
@@ -111,9 +116,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if envOrch("ROLE") == "worker" && !readOnly {
 		return fail(fmt.Errorf("ORCH_ROLE=worker: workers cannot use orch %s (Head only)", cmd))
 	}
-	// Commands that touch runs or panes must prove they run inside the claimed Head pane.
-	if !readOnly && os.Getenv("HERDR_PANE_ID") != "" {
+	// A detached __task or __reap was verified by its parent before launch (it is reparented).
+	if !readOnly && cmd != "__task" && cmd != "__reap" && os.Getenv("HERDR_PANE_ID") != "" {
 		if err := verifyCaller(os.Getenv("HERDR_PANE_ID")); err != nil {
+			if os.Getppid() == 1 {
+				err = fmt.Errorf("%w; detached orch processes cannot manage panes; run orch wait in the foreground or with your harness's background-task feature (not &, nohup or setsid)", err)
+			}
 			return fail(err)
 		}
 	}
@@ -122,6 +130,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	runFlag := fs.String("run", "", "run id")
 
 	switch cmd {
+	case "ask", "do", "test":
+		return taskCommand(cmd, rest, stdout, stderr)
+	case "__task":
+		pos, err := parse(fs, rest)
+		if err != nil || len(pos) != 1 {
+			return fail(fmt.Errorf("usage: orch __task --run ID task-N"))
+		}
+		return taskChild(*runFlag, pos[0], stdout, stderr)
+	case "__reap":
+		if _, err := parse(fs, rest); err != nil {
+			return 2
+		}
+		return reapCommand(*runFlag, stderr)
 	case "hook":
 		if len(rest) != 1 {
 			return fail(fmt.Errorf("usage: orch hook claude|codex|agy"))
@@ -154,6 +175,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		playbook := fs.String("playbook", "", "playbook type")
 		goal := fs.String("goal", "", "goal id")
 		reason := fs.String("reason", "", "reason")
+		all := fs.Bool("all", false, "include ad-hoc task runs")
 		pos, err := parse(fs, rest[1:])
 		if err != nil {
 			return 2
@@ -225,6 +247,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "run\tstatus\tmode\tHead\tworker(live/total)")
 			for _, r := range runs {
+				if r.Adhoc && !*all {
+					continue
+				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d/%d\n", r.ID, r.Status, r.Mode, r.HeadPane, len(r.liveWorkers()), len(r.Workers))
 			}
 			tw.Flush()
@@ -307,7 +332,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		outs, err := waitWorkers(*runFlag, pos, time.Duration(*timeout)*time.Millisecond, !*noFallback)
 		code := 0
 		for _, o := range outs {
-			fmt.Fprintf(stdout, "%s\t%s\t%s\n", o.Name, o.Status, o.Detail)
+			if strings.HasPrefix(o.Name, "task-") && strings.HasPrefix(o.Detail, "task: ") {
+				fmt.Fprintln(stdout, o.Detail)
+			} else {
+				fmt.Fprintf(stdout, "%s\t%s\t%s\n", o.Name, o.Status, o.Detail)
+			}
 			// A replaced worker is judged by its replacement's own outcome line.
 			if o.Status != "done" && !strings.HasPrefix(o.Status, "fallback:") {
 				code = 1
@@ -323,18 +352,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil || len(pos) != 1 {
 			return fail(fmt.Errorf("usage: orch collect <name>"))
 		}
-		out, err := collect(*runFlag, pos[0])
+		out, st, err := collectWorker(*runFlag, pos[0])
 		fmt.Fprint(stdout, out)
 		if err != nil {
 			return fail(err)
 		}
-		if strings.Contains(out, "scope violation") {
+		if st == "failed" {
 			return 1
 		}
 		return 0
 
 	case "read":
-		lines := fs.Int("lines", 120, "lines")
+		lines := fs.Int("lines", 40, "lines")
 		pos, err := parse(fs, rest)
 		if err != nil || len(pos) != 1 {
 			return fail(fmt.Errorf("usage: orch read <name>"))

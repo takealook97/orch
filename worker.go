@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -141,6 +143,9 @@ func spawn(o spawnOpts) (*Worker, error) {
 	if !nameRE.MatchString(o.Name) {
 		return nil, fmt.Errorf("name %q must match [a-z][a-z0-9_-]{0,31}", o.Name)
 	}
+	if strings.HasPrefix(o.Name, "task-") {
+		return nil, fmt.Errorf("name %q is reserved for one-off tasks", o.Name)
+	}
 	if !slices.Contains(roles, o.Role) {
 		return nil, fmt.Errorf("unknown --role %q (%s)", o.Role, strings.Join(roles, "|"))
 	}
@@ -273,8 +278,8 @@ func spawn(o spawnOpts) (*Worker, error) {
 		}
 		// Record the pane before anything else can fail.
 		if err := withRun(r.ID, func(r *Run) error {
-			if old := r.worker(o.Name); old != nil {
-				old.Name = old.Name + "~" + old.Started.Format("150405")
+			if err := retireName(r, o.Name); err != nil {
+				return err
 			}
 			r.Workers = append(r.Workers, w)
 			r.event("spawn %s key=%s role=%s pane=%s account=%s", w.Name, w.Key, w.Role, w.Pane, w.Account)
@@ -296,8 +301,8 @@ func spawn(o spawnOpts) (*Worker, error) {
 		return nil, err
 	}
 
-	// Pre-trust the folder so no CLI raises its trust dialog (Head cwd / worktrees only).
-	trustArgs, terr := pretrust(m.Kind, w.Cwd, workerEnv)
+	// Pre-trust the selected launch directory, including an explicit cwd outside Head cwd.
+	trustArgs, terr := pretrustLaunch(m.Kind, w.Cwd, workerEnv, o.Cwd != "" || o.Worktree != "")
 	if terr != nil {
 		fmt.Fprintln(os.Stderr, "orch: warning: folder pretrust failed (automatically approve the trust dialog if shown):", terr)
 	}
@@ -307,30 +312,68 @@ func spawn(o spawnOpts) (*Worker, error) {
 		return nil, err
 	}
 	args := append([]string{"agent", "start", o.Name, "--kind", m.Kind, "--pane", pane, "--"}, append(launch, trustArgs...)...)
-	_, startErr := herdrRun(args...)
-	debugf("agent start %s: err=%v", o.Name, startErr)
-	if startErr == nil {
-		// Some CLIs report idle while a folder-trust dialog is on screen (Codex in a new home).
-		settleTrust(o.Name, w.Cwd, timings.TrustSettleStart)
+	if err := startWorkerAgent(o.Name, pane, w.Cwd, args); err != nil {
+		abortWorker(runID, o.Name, err)
+		return nil, fmt.Errorf("agent start failed (pane cleanup attempted): %w", err)
 	}
-	if err := startErr; err != nil {
-		// A trust dialog can stall start until its timeout: clear it and wait for readiness.
-		if !strings.Contains(err.Error(), "agent_not_ready") && paneShowsTrust(pane) {
-			err = fmt.Errorf("agent_not_ready (trust dialog)")
-		}
-		if !strings.Contains(err.Error(), "agent_not_ready") {
-			// One retry, as startup may race the shell prompt.
-			time.Sleep(timings.StartRetry)
-			if _, err2 := herdrRun(args...); err2 != nil {
-				abortWorker(runID, o.Name, err2)
-				return nil, fmt.Errorf("agent start failed (pane closed): %w", err2)
-			}
-		} else if err := waitReady(o.Name, w.Cwd, timings.ReadyTimeout); err != nil {
-			abortWorker(runID, o.Name, err)
-			return nil, fmt.Errorf("%w (pane closed)", err)
-		}
-	}
+	// Finished panes close even if the Head never runs its wait (one reaper per run).
+	ensureReaper(runID)
 	return w, nil
+}
+
+// startWorkerAgent verifies registration even when Herdr reports a successful start.
+func startWorkerAgent(name, pane, cwd string, args []string) error {
+	_, startErr := herdrRun(args...)
+	debugf("agent start %s: err=%v", name, startErr)
+	if startErr != nil && !strings.Contains(startErr.Error(), "agent_not_ready") && !paneShowsTrust(pane) {
+		// One retry, as startup may race the shell prompt.
+		time.Sleep(timings.StartRetry)
+		_, startErr = herdrRun(args...)
+		if startErr != nil && !strings.Contains(startErr.Error(), "agent_not_ready") && !paneShowsTrust(pane) {
+			return startErr
+		}
+	}
+	if err := waitAgentRegistered(name, pane, cwd, timings.ReadyTimeout); err != nil {
+		if startErr != nil {
+			return fmt.Errorf("%w (start: %v)", err, startErr)
+		}
+		return err
+	}
+	if startErr != nil {
+		return waitReady(name, cwd, timings.ReadyTimeout)
+	}
+	settleTrust(name, cwd, timings.TrustSettleStart)
+	return nil
+}
+
+// waitAgentRegistered requires the requested name to belong to the pane we created.
+// Raw pane reads work even before Herdr has an agent record; never print their contents.
+func waitAgentRegistered(name, pane, cwd string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		info, err := agentGet(name)
+		if err == nil {
+			if info.Pane == pane {
+				return nil
+			}
+			if info.Pane != "" {
+				return fmt.Errorf("agent %s registered in pane %s, expected %s (cwd %s)", name, info.Pane, pane, cwd)
+			}
+			err = fmt.Errorf("agent lookup returned no pane_id")
+		}
+		lastErr = err
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		time.Sleep(min(timings.ReadyPoll, remaining))
+	}
+	cause := "CLI startup, login, or shell launch failure; no folder-trust dialog detected"
+	if paneShowsTrust(pane) {
+		cause = "folder-trust dialog is blocking CLI startup"
+	}
+	return fmt.Errorf("agent %s did not register within %s (pane %s, cwd %s): %s; last lookup: %v", name, timeout, pane, cwd, cause, lastErr)
 }
 
 // abortWorker closes a worker that failed to start and records why.
@@ -446,6 +489,22 @@ func promptMessage(r *Run, w *Worker) string {
 		promptMarker(w.Name), w.Contract, w.Result)
 }
 
+func contractHash(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func checkPromptContract(w *Worker, body []byte) error {
+	if w.Prompted.IsZero() {
+		return nil
+	}
+	if w.ContractHash == "" || w.ContractHash != contractHash(body) {
+		closeCommand := strings.Join([]string{"orch", "close", w.Name}, " ")
+		return fmt.Errorf("worker %s was already prompted; a running worker cannot reliably apply a revised contract (or its original hash is unavailable): %s, then spawn with a new name", w.Name, closeCommand)
+	}
+	return nil
+}
+
 func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error {
 	runID, err := resolveRun(runFlag)
 	if err != nil {
@@ -453,36 +512,47 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	}
 	var w *Worker
 	var msg string
+	var hash string
+	var alreadyPrompted bool
 	err = withRun(runID, func(r *Run) error {
 		w = r.worker(name)
 		if w == nil {
 			return fmt.Errorf("worker %q is not in run %s", name, runID)
 		}
 		dest := r.contractPath(name)
+		source := dest
 		if contractFile != "" {
-			abs, _ := filepath.Abs(contractFile)
-			if abs != dest {
-				data, err := os.ReadFile(contractFile)
-				if err != nil {
-					return err
-				}
-				if err := os.WriteFile(dest, data, 0600); err != nil {
-					return err
-				}
-			}
+			source = contractFile
 		}
-		body, err := os.ReadFile(dest)
+		body, err := os.ReadFile(source)
 		if err != nil {
 			return fmt.Errorf("contract missing: %s ('orch contract new' to create one or specify --contract)", dest)
+		}
+		if err := checkPromptContract(w, body); err != nil {
+			return err
+		}
+		if !w.Prompted.IsZero() {
+			alreadyPrompted = true
+			return nil
 		}
 		if err := validateContract(string(body)); err != nil {
 			return err
 		}
+		abs, _ := filepath.Abs(source)
+		if abs != dest {
+			if err := os.WriteFile(dest, body, 0600); err != nil {
+				return err
+			}
+		}
 		w.Contract = dest
-		if w.Cwd != "" && isGitDir(w.Cwd) {
-			base := contractField(string(body), "base commit")
-			if files, err := changedFiles(w.Cwd, base); err == nil {
-				w.Baseline = snapshot(w.Cwd, files)
+		hash = contractHash(body)
+		if w.Cwd != "" {
+			if root, err := scopeRepository(w.Cwd, string(body)); err == nil && isGitDir(root) {
+				base := contractField(string(body), "base commit")
+				if files, err := changedFiles(root, base); err == nil {
+					w.Baseline = snapshot(root, files)
+					w.BaselineRoot = root
+				}
 			}
 		}
 		msg = promptMessage(r, w)
@@ -490,6 +560,10 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	})
 	if err != nil {
 		return err
+	}
+	if alreadyPrompted {
+		fmt.Printf("worker %s already prompted with this contract; nothing sent\n", name)
+		return nil
 	}
 	// A slow CLI may raise its folder-trust dialog after start; clear it before typing.
 	settleTrust(name, w.Cwd, timings.TrustSettlePrompt)
@@ -532,6 +606,7 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		w := r.worker(name)
 		w.Status = "prompted"
 		w.Prompted = time.Now()
+		w.ContractHash = hash
 		r.event("prompt %s contract=%s", name, w.Contract)
 		return nil
 	})
@@ -575,4 +650,31 @@ func busy(name string) bool {
 
 func isGitDir(dir string) bool {
 	return exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() == nil
+}
+
+// retireName frees a worker name for a new spawn: the previous worker of that name becomes
+// <name>~<HHMMSS>, and its result file moves along so the new worker never inherits a
+// status line it did not write.
+func retireName(r *Run, name string) error {
+	suffix := time.Now().Format("150405")
+	old := r.worker(name)
+	if old != nil {
+		suffix = old.Started.Format("150405")
+	}
+	src := r.resultPath(name)
+	dst := r.resultPath(name + "~" + suffix)
+	if _, err := os.Stat(src); err == nil {
+		if err := os.Rename(src, dst); err != nil {
+			return fmt.Errorf("move previous result of %s: %w", name, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if old != nil {
+		old.Name = name + "~" + suffix
+		if old.Result == src {
+			old.Result = dst
+		}
+	}
+	return nil
 }

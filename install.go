@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -180,16 +181,42 @@ func install(repo string, dry bool) (*installReport, error) {
 	if linked := filepath.Join(home(), ".local", "bin", "orch"); fileExists(linked) {
 		bin = linked
 	}
+	// Back up a target only right before it changes, so a rerun with nothing to do
+	// leaves no empty backup directory behind.
 	bdir := filepath.Join(orchHome(), "backups", time.Now().Format("20060102-150405"))
-	targets := append(constitutionFiles(), claudeSettings(), codexHooks(), agyHooks())
-	targets = append(targets, skillLinks()...)
-	if !dry {
-		for _, t := range targets {
-			if err := backup(bdir, t); err != nil {
-				return nil, fmt.Errorf("backup failed %s: %w", t, err)
-			}
+	backedUp := false
+	save := func(t string) error {
+		if dry {
+			return nil
 		}
-		rep.add("backup: %s", bdir)
+		if err := backup(bdir, t); err != nil {
+			return fmt.Errorf("backup failed %s: %w", t, err)
+		}
+		if !backedUp {
+			backedUp = true
+			rep.add("backup: %s", bdir)
+		}
+		return nil
+	}
+	// writeHooks writes s only when its JSON differs from what is on disk.
+	writeHooks := func(path string, before []byte, s map[string]any) (bool, error) {
+		after, err := json.MarshalIndent(s, "", "  ")
+		if err != nil {
+			return false, err
+		}
+		// Compare content, not bytes: other tools (herdr integration) rewrite the same
+		// files with their own key order and indentation.
+		var was, now any
+		if json.Unmarshal(before, &was) == nil && json.Unmarshal(after, &now) == nil && reflect.DeepEqual(was, now) {
+			return false, nil
+		}
+		if err := save(path); err != nil {
+			return false, err
+		}
+		if dry {
+			return true, nil
+		}
+		return true, writeJSONFile(path, s)
 	}
 
 	// ① constitution
@@ -201,6 +228,9 @@ func install(repo string, dry bool) (*installReport, error) {
 			continue
 		}
 		rep.add("constitution updated: %s", f)
+		if err := save(f); err != nil {
+			return nil, err
+		}
 		if !dry {
 			if err := os.MkdirAll(filepath.Dir(f), 0700); err != nil {
 				return nil, err
@@ -219,12 +249,12 @@ func install(repo string, dry bool) (*installReport, error) {
 		}
 		added := ensureGroupedHook(hooks, "Agent|Task|Workflow|Bash", hookCommand(bin, "claude"))
 		s["hooks"] = hooks
-		rep.add("Claude hook %s: %s", map[bool]string{true: "added", false: "updated"}[added], claudeSettings())
-		if !dry {
-			if err := writeJSONFile(claudeSettings(), s); err != nil {
-				return nil, err
-			}
+		before, _ := os.ReadFile(claudeSettings())
+		changed, err := writeHooks(claudeSettings(), before, s)
+		if err != nil {
+			return nil, err
 		}
+		rep.add("Claude hook %s: %s", hookState(added, changed), claudeSettings())
 	} else {
 		return nil, err
 	}
@@ -235,12 +265,12 @@ func install(repo string, dry bool) (*installReport, error) {
 		}
 		added := ensureGroupedHook(hooks, "", hookCommand(bin, "codex"))
 		s["hooks"] = hooks
-		rep.add("Codex hook %s: %s", map[bool]string{true: "added", false: "updated"}[added], codexHooks())
-		if !dry {
-			if err := writeJSONFile(codexHooks(), s); err != nil {
-				return nil, err
-			}
+		before, _ := os.ReadFile(codexHooks())
+		changed, err := writeHooks(codexHooks(), before, s)
+		if err != nil {
+			return nil, err
 		}
+		rep.add("Codex hook %s: %s", hookState(added, changed), codexHooks())
 	} else {
 		return nil, err
 	}
@@ -251,12 +281,12 @@ func install(repo string, dry bool) (*installReport, error) {
 				"hooks":   []any{map[string]any{"type": "command", "command": hookCommand(bin, "agy"), "timeout": 10}},
 			}},
 		}
-		rep.add("agy hook updated: %s", agyHooks())
-		if !dry {
-			if err := writeJSONFile(agyHooks(), s); err != nil {
-				return nil, err
-			}
+		before, _ := os.ReadFile(agyHooks())
+		changed, err := writeHooks(agyHooks(), before, s)
+		if err != nil {
+			return nil, err
 		}
+		rep.add("agy hook %s: %s", hookState(false, changed), agyHooks())
 	} else {
 		return nil, err
 	}
@@ -269,8 +299,13 @@ func install(repo string, dry bool) (*installReport, error) {
 			continue
 		}
 		rep.add("skill link: %s → %s", link, skillSrc)
+		if err := save(link); err != nil {
+			return nil, err
+		}
 		if !dry {
-			_ = os.RemoveAll(link)
+			if err := os.RemoveAll(link); err != nil {
+				return nil, err
+			}
 			if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
 				return nil, err
 			}
@@ -283,8 +318,13 @@ func install(repo string, dry bool) (*installReport, error) {
 	pbSrc := filepath.Join(repo, "playbooks")
 	if cur, err := os.Readlink(pbLink); err != nil || cur != pbSrc {
 		rep.add("playbook link: %s → %s", pbLink, pbSrc)
+		if err := save(pbLink); err != nil {
+			return nil, err
+		}
 		if !dry {
-			_ = os.RemoveAll(pbLink)
+			if err := os.RemoveAll(pbLink); err != nil {
+				return nil, err
+			}
 			_ = os.MkdirAll(orchHome(), 0700)
 			if err := os.Symlink(pbSrc, pbLink); err != nil {
 				return nil, err
@@ -292,6 +332,16 @@ func install(repo string, dry bool) (*installReport, error) {
 		}
 	}
 	return rep, nil
+}
+
+func hookState(added, changed bool) string {
+	switch {
+	case added:
+		return "added"
+	case changed:
+		return "updated"
+	}
+	return "up to date"
 }
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }

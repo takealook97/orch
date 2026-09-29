@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+subject="$(head -n 1 "$1")"
+"$(git rev-parse --show-toplevel)/scripts/check-commit-subject.sh" "$subject"

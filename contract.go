@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -166,11 +167,154 @@ func matchSegs(p, n []string) bool {
 // emptyTree is git's well-known empty tree; it stands in for HEAD before the first commit.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-// changedFiles lists files changed in dir relative to base (or HEAD) plus untracked files.
+// repoRoot returns the top level of the git repository containing dir, or dir itself.
+func repoRoot(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return dir
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func explicitBase(base string) bool {
+	return base != "" && base != "none" && !strings.HasPrefix(base, "<")
+}
+
+func hasBaseCommit(dir, base string) bool {
+	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "--end-of-options", base+"^{commit}").Run() == nil
+}
+
+var contractPaths = regexp.MustCompile("`(/[^`]+)`|\"(/[^\"]+)\"|'(/[^']+)'|(/[^\\s`\"'(),;\\[\\]]+)")
+
+// scopeRepository prefers a unique repository named by an absolute contract
+// path, then falls back to a unique repository in cwd and its children through
+// depth two. Git discovers both normal repositories and linked worktrees.
+func scopeRepository(cwd, body string) (string, error) {
+	base := contractField(body, "base commit")
+	root := repoRoot(cwd)
+	if !explicitBase(base) {
+		return root, nil
+	}
+	collect := func(dirs []string) []string {
+		seen := map[string]bool{}
+		var candidates []string
+		try := func(dir string) {
+			if !isGitDir(dir) {
+				return
+			}
+			r := repoRoot(dir)
+			if resolved, err := filepath.EvalSymlinks(r); err == nil {
+				r = resolved
+			}
+			if seen[r] {
+				return
+			}
+			seen[r] = true
+			if hasBaseCommit(r, base) {
+				candidates = append(candidates, r)
+			}
+		}
+		for _, dir := range dirs {
+			try(dir)
+		}
+		sort.Strings(candidates)
+		return candidates
+	}
+	// File and glob paths are trimmed back to an existing directory.
+	var explicitDirs []string
+	for _, match := range contractPaths.FindAllStringSubmatch(body, -1) {
+		var token string
+		for _, part := range match[1:] {
+			if part != "" {
+				token = part
+				break
+			}
+		}
+		// A URL path is not a filesystem reference.
+		if strings.Contains(token, "://") || !filepath.IsAbs(token) {
+			continue
+		}
+		for dir := token; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+				explicitDirs = append(explicitDirs, dir)
+				break
+			}
+		}
+	}
+	if candidates := collect(explicitDirs); len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	var search func(string, int, *[]string)
+	search = func(dir string, depth int, dirs *[]string) {
+		*dirs = append(*dirs, dir)
+		if depth == 2 {
+			return
+		}
+		entries, _ := os.ReadDir(dir)
+		for _, entry := range entries {
+			if entry.IsDir() && entry.Name() != ".git" {
+				search(filepath.Join(dir, entry.Name()), depth+1, dirs)
+			}
+		}
+	}
+	var dirs []string
+	search(cwd, 0, &dirs)
+	if candidates := collect(dirs); len(candidates) == 1 {
+		return candidates[0], nil
+	} else if len(candidates) > 1 {
+		return "", fmt.Errorf("multiple repositories containing base commit %s found under %s: %s; 계약 Baseline 에 작업 저장소 절대 경로를 적어라", base, cwd, strings.Join(candidates, ", "))
+	}
+	return "", fmt.Errorf("no repository containing base commit %s found for %s (contract paths and children through depth 2 checked)", base, cwd)
+}
+
+// Anchor ownership to cwd and compare absolute paths, so workspace-relative
+// globs and absolute contract globs retain their original meaning.
+func repositoryScopeViolations(cwd, root string, changed, globs []string) []string {
+	if real, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = real
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	patterns := make([]string, len(globs))
+	for i, g := range globs {
+		if !filepath.IsAbs(g) {
+			g = filepath.Join(cwd, g)
+		} else {
+			// Resolve the existing prefix without trying to stat wildcard segments.
+			prefix := g
+			for {
+				if real, err := filepath.EvalSymlinks(prefix); err == nil {
+					rel, _ := filepath.Rel(prefix, g)
+					g = filepath.Join(real, rel)
+					break
+				}
+				parent := filepath.Dir(prefix)
+				if parent == prefix {
+					break
+				}
+				prefix = parent
+			}
+		}
+		patterns[i] = filepath.ToSlash(filepath.Clean(g))
+	}
+	var bad []string
+	for _, f := range changed {
+		if len(scopeViolations([]string{filepath.ToSlash(filepath.Join(root, f))}, patterns)) > 0 {
+			bad = append(bad, f)
+		}
+	}
+	return bad
+}
+
+// changedFiles lists files changed in dir's repository relative to base (or HEAD) plus
+// untracked files. Paths are relative to the repository root, whatever subdirectory dir is,
+// and renames count as a deletion plus an addition so both sides are checked.
 func changedFiles(dir, base string) ([]string, error) {
+	root := repoRoot(dir)
 	if base == "" || base == "none" || strings.HasPrefix(base, "<") {
 		base = "HEAD"
-		if exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
+		if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
 			base = emptyTree
 		}
 	}
@@ -183,14 +327,14 @@ func changedFiles(dir, base string) ([]string, error) {
 			out = append(out, s)
 		}
 	}
-	diff, err := exec.Command("git", "-C", dir, "diff", "--name-only", base).Output()
+	diff, err := exec.Command("git", "-C", root, "diff", "--no-renames", "--name-only", base).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff failed (%s): %w", dir, err)
 	}
 	for _, l := range strings.Split(string(diff), "\n") {
 		add(l)
 	}
-	untracked, err := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+	untracked, err := exec.Command("git", "-C", root, "ls-files", "--others", "--exclude-standard").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git ls-files failed (%s): %w", dir, err)
 	}
@@ -200,30 +344,62 @@ func changedFiles(dir, base string) ([]string, error) {
 	return out, nil
 }
 
-// fileHash returns the content hash of a worktree file, or "deleted".
-func fileHash(dir, rel string) string {
-	data, err := os.ReadFile(filepath.Join(dir, rel))
+// rootGlobs turns owned globs written relative to cwd into globs relative to the repository
+// root, the form changedFiles reports.
+func rootGlobs(cwd string, globs []string) []string {
+	root, err := filepath.EvalSymlinks(repoRoot(cwd))
+	if err != nil {
+		return globs
+	}
+	real, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return globs
+	}
+	rel, err := filepath.Rel(root, real)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return globs
+	}
+	out := make([]string, len(globs))
+	for i, g := range globs {
+		out[i] = filepath.ToSlash(rel) + "/" + strings.TrimPrefix(g, "./")
+	}
+	return out
+}
+
+// fileHash returns the hash of a file's mode and content (path relative to the repository
+// root), or "deleted", so a chmod counts as a change too.
+func fileHash(root, rel string) string {
+	p := filepath.Join(root, rel)
+	fi, err := os.Stat(p)
 	if err != nil {
 		return "deleted"
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return "deleted"
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\n", fi.Mode())
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // snapshot records the content hash of every already-changed file.
 func snapshot(dir string, files []string) map[string]string {
+	root := repoRoot(dir)
 	out := make(map[string]string, len(files))
 	for _, f := range files {
-		out[f] = fileHash(dir, f)
+		out[f] = fileHash(root, f)
 	}
 	return out
 }
 
 // freshChanges keeps files that were not dirty at prompt time or whose content changed since.
 func freshChanges(dir string, changed []string, baseline map[string]string) []string {
+	root := repoRoot(dir)
 	var out []string
 	for _, f := range changed {
-		if h, ok := baseline[f]; ok && h == fileHash(dir, f) {
+		if h, ok := baseline[f]; ok && h == fileHash(root, f) {
 			continue
 		}
 		out = append(out, f)
