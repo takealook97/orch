@@ -32,6 +32,8 @@ type Worker struct {
 	Tried      []string `json:"tried,omitempty"`
 	// Baseline maps files already changed at prompt time to their content hash.
 	Baseline      map[string]string `json:"baseline,omitempty"`
+	BaselineRoot  string            `json:"baseline_root,omitempty"`
+	ContractHash  string            `json:"contract_hash,omitempty"`
 	TriedAccounts []string          `json:"tried_accounts,omitempty"`
 	Started       time.Time         `json:"started"`
 	Prompted      time.Time         `json:"prompted,omitempty"`

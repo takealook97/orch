@@ -175,6 +175,127 @@ func repoRoot(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func explicitBase(base string) bool {
+	return base != "" && base != "none" && !strings.HasPrefix(base, "<")
+}
+
+func hasBaseCommit(dir, base string) bool {
+	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "--end-of-options", base+"^{commit}").Run() == nil
+}
+
+var contractPaths = regexp.MustCompile("`(/[^`]+)`|\"(/[^\"]+)\"|'(/[^']+)'|(/[^\\s`\"'(),;\\[\\]]+)")
+
+// scopeRepository tries cwd, contract paths, then child repositories through
+// depth two. Git discovers both normal repositories and linked worktrees.
+func scopeRepository(cwd, body string) (string, error) {
+	base := contractField(body, "base commit")
+	root := repoRoot(cwd)
+	if !explicitBase(base) || hasBaseCommit(root, base) {
+		return root, nil
+	}
+	seen := map[string]bool{root: true}
+	try := func(dir string) string {
+		if !isGitDir(dir) {
+			return ""
+		}
+		r := repoRoot(dir)
+		if seen[r] {
+			return ""
+		}
+		seen[r] = true
+		if hasBaseCommit(r, base) {
+			return r
+		}
+		return ""
+	}
+	// File and glob paths are trimmed back to an existing directory.
+	for _, match := range contractPaths.FindAllStringSubmatch(body, -1) {
+		var token string
+		for _, part := range match[1:] {
+			if part != "" {
+				token = part
+				break
+			}
+		}
+		// A URL path is not a filesystem reference.
+		if strings.Contains(token, "://") || !filepath.IsAbs(token) {
+			continue
+		}
+		for dir := token; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+				if r := try(dir); r != "" {
+					return r, nil
+				}
+				break
+			}
+		}
+	}
+	var search func(string, int) string
+	search = func(dir string, depth int) string {
+		if depth > 0 {
+			if r := try(dir); r != "" {
+				return r
+			}
+		}
+		if depth == 2 {
+			return ""
+		}
+		entries, _ := os.ReadDir(dir)
+		for _, entry := range entries {
+			if entry.IsDir() && entry.Name() != ".git" {
+				if r := search(filepath.Join(dir, entry.Name()), depth+1); r != "" {
+					return r
+				}
+			}
+		}
+		return ""
+	}
+	if r := search(cwd, 0); r != "" {
+		return r, nil
+	}
+	return "", fmt.Errorf("no repository containing base commit %s found for %s (contract paths and children through depth 2 checked)", base, cwd)
+}
+
+// Anchor ownership to cwd and compare absolute paths, so workspace-relative
+// globs and absolute contract globs retain their original meaning.
+func repositoryScopeViolations(cwd, root string, changed, globs []string) []string {
+	if real, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = real
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	patterns := make([]string, len(globs))
+	for i, g := range globs {
+		if !filepath.IsAbs(g) {
+			g = filepath.Join(cwd, g)
+		} else {
+			// Resolve the existing prefix without trying to stat wildcard segments.
+			prefix := g
+			for {
+				if real, err := filepath.EvalSymlinks(prefix); err == nil {
+					rel, _ := filepath.Rel(prefix, g)
+					g = filepath.Join(real, rel)
+					break
+				}
+				parent := filepath.Dir(prefix)
+				if parent == prefix {
+					break
+				}
+				prefix = parent
+			}
+		}
+		patterns[i] = filepath.ToSlash(filepath.Clean(g))
+	}
+	var bad []string
+	for _, f := range changed {
+		if len(scopeViolations([]string{filepath.ToSlash(filepath.Join(root, f))}, patterns)) > 0 {
+			bad = append(bad, f)
+		}
+	}
+	return bad
+}
+
 // changedFiles lists files changed in dir's repository relative to base (or HEAD) plus
 // untracked files. Paths are relative to the repository root, whatever subdirectory dir is,
 // and renames count as a deletion plus an addition so both sides are checked.

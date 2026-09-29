@@ -100,7 +100,7 @@ orch run end                                                  # close every pane
 - If the right column is full (terminal height / 8, max 6 rows), spawn is refused. Nodes are spawned in critical-path order as rows free up.
 - **A finished worker pane must be closed immediately.** orch guarantees this without the Head: `orch spawn` starts a per-run reaper that closes a pane as soon as its result file has a status line (and the agent is no longer working), and exits when the run has no live workers. `orch wait` also closes the pane the moment it sees the status line and confirms removal. Same for `orch collect`, fallback, and `orch run end`. Panes are never reused; the next contract gets a new worker. A worker that stalled with no result (`idle-no-result`) is also closed right away with `orch close <name>` once you've made a judgment call.
 - Don't read a worker's conversation transcript. Use `orch read` only when the result file is missing or something is stuck.
-- Run `orch wait` in the foreground, or through your harness's own background-task feature. Never detach it with `&`, `nohup`, or `setsid`: a detached process fails the Head identity check and exits at once.
+- Run `orch wait` in the foreground by default. While the user is waiting for progress, keep it in the foreground; do not send it to a background task. Never detach it with `&`, `nohup`, or `setsid`: a detached process fails the Head identity check and exits at once.
 - **Head token hygiene.** Read only the result's `summary:` line and the report `orch collect`/`orch do` prints; open the full result or diff only when the summary can't settle acceptance. While waiting, block on `orch wait` once; don't loop `orch status` or `orch read`. Run tests with `orch test`, not raw, so full logs stay out of your context. For short work, prefer `orch do` over a hand-written contract (orch fills the scope, report format, and done condition).
 - `agent-blocked`, `idle-no-result`, and `timeout` are unresolved. Check with `orch read`, then choose among extending, `orch fallback`, or reassigning. Don't answer an approval question that falls outside already-granted scope; escalate it to the user.
 
@@ -111,6 +111,10 @@ Pane workers need a contract; `orch ask`/`orch do` do not (their flags and requi
 - **Write it to be self-contained.** Even if a fallback starts fresh on a different model or account, the contract alone must be enough to do the work.
 - Hand over **paths** (files, line ranges, commit hashes), not inline content.
 - Give `Owned files (glob)` exclusively. If read-only, write "none". `orch collect` diffs changes since the base commit and fails anything outside scope.
+- In a vat workspace, a child repository's worktree outside the workspace cannot run workspace-dependent `vat` or `make check` commands ("not inside a vat workspace"). Specify the original checkout as the check location, or require the worker to record the unavailable check in its result.
+- Join checks and commits with `&&`, never `;`: a failed check must stop the commit.
+- Keep repository rules and scripts the same for every worker. Do not add orch-specific branches: orch is one person's local tool.
+- After a contract has been prompted, a changed contract requires closing the worker and spawning a new name. Prompting identical content is an idempotent no-op; a changed or unknown original contract hash is refused.
 - Write down `Allowed evidence sources`. Unrelated Slack or external-connector searches are forbidden.
 - Forbidden under Permissions: deploy, external writes, git push, out-of-scope edits, re-delegation.
 - If a worker needs a new decision, it goes under "Blockers". The Head folds it into decisions.md and updates any affected contracts.

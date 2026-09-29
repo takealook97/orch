@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -451,6 +453,22 @@ func promptMessage(r *Run, w *Worker) string {
 		promptMarker(w.Name), w.Contract, w.Result)
 }
 
+func contractHash(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func checkPromptContract(w *Worker, body []byte) error {
+	if w.Prompted.IsZero() {
+		return nil
+	}
+	if w.ContractHash == "" || w.ContractHash != contractHash(body) {
+		closeCommand := strings.Join([]string{"orch", "close", w.Name}, " ")
+		return fmt.Errorf("worker %s was already prompted; a running worker cannot reliably apply a revised contract (or its original hash is unavailable): %s, then spawn with a new name", w.Name, closeCommand)
+	}
+	return nil
+}
+
 func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error {
 	runID, err := resolveRun(runFlag)
 	if err != nil {
@@ -458,36 +476,47 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	}
 	var w *Worker
 	var msg string
+	var hash string
+	var alreadyPrompted bool
 	err = withRun(runID, func(r *Run) error {
 		w = r.worker(name)
 		if w == nil {
 			return fmt.Errorf("worker %q is not in run %s", name, runID)
 		}
 		dest := r.contractPath(name)
+		source := dest
 		if contractFile != "" {
-			abs, _ := filepath.Abs(contractFile)
-			if abs != dest {
-				data, err := os.ReadFile(contractFile)
-				if err != nil {
-					return err
-				}
-				if err := os.WriteFile(dest, data, 0600); err != nil {
-					return err
-				}
-			}
+			source = contractFile
 		}
-		body, err := os.ReadFile(dest)
+		body, err := os.ReadFile(source)
 		if err != nil {
 			return fmt.Errorf("contract missing: %s ('orch contract new' to create one or specify --contract)", dest)
+		}
+		if err := checkPromptContract(w, body); err != nil {
+			return err
+		}
+		if !w.Prompted.IsZero() {
+			alreadyPrompted = true
+			return nil
 		}
 		if err := validateContract(string(body)); err != nil {
 			return err
 		}
+		abs, _ := filepath.Abs(source)
+		if abs != dest {
+			if err := os.WriteFile(dest, body, 0600); err != nil {
+				return err
+			}
+		}
 		w.Contract = dest
-		if w.Cwd != "" && isGitDir(w.Cwd) {
-			base := contractField(string(body), "base commit")
-			if files, err := changedFiles(w.Cwd, base); err == nil {
-				w.Baseline = snapshot(w.Cwd, files)
+		hash = contractHash(body)
+		if w.Cwd != "" {
+			if root, err := scopeRepository(w.Cwd, string(body)); err == nil && isGitDir(root) {
+				base := contractField(string(body), "base commit")
+				if files, err := changedFiles(root, base); err == nil {
+					w.Baseline = snapshot(root, files)
+					w.BaselineRoot = root
+				}
 			}
 		}
 		msg = promptMessage(r, w)
@@ -495,6 +524,10 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	})
 	if err != nil {
 		return err
+	}
+	if alreadyPrompted {
+		fmt.Printf("worker %s already prompted with this contract; nothing sent\n", name)
+		return nil
 	}
 	// A slow CLI may raise its folder-trust dialog after start; clear it before typing.
 	settleTrust(name, w.Cwd, timings.TrustSettlePrompt)
@@ -537,6 +570,7 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		w := r.worker(name)
 		w.Status = "prompted"
 		w.Prompted = time.Now()
+		w.ContractHash = hash
 		r.event("prompt %s contract=%s", name, w.Contract)
 		return nil
 	})

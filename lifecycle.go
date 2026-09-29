@@ -397,18 +397,33 @@ func collectWorker(runFlag, name string) (string, string, error) {
 		}
 	}
 	markReported(runID, name)
-	if w.Contract != "" && w.Cwd != "" && isGitDir(w.Cwd) {
-		body, _ := os.ReadFile(w.Contract)
-		globs := rootGlobs(w.Cwd, ownedGlobs(string(body)))
-		changed, err := changedFiles(w.Cwd, contractField(string(body), "base commit"))
+	if w.Contract != "" && w.Cwd != "" {
+		body, err := os.ReadFile(w.Contract)
+		// Preserve non-git tasks that declare no commit baseline.
+		checkScope := err != nil || isGitDir(w.Cwd) || explicitBase(contractField(string(body), "base commit"))
+		var root string
+		var changed []string
+		if err == nil && checkScope {
+			root, err = scopeRepository(w.Cwd, string(body))
+		}
+		if err == nil && checkScope {
+			changed, err = changedFiles(root, contractField(string(body), "base commit"))
+		}
 		if err != nil {
 			// Fail closed: an unverifiable scope is not a pass.
 			st = "failed"
 			fmt.Fprintf(&b, "scope could not be checked; marked failed: %v\n", err)
-		} else {
+		} else if checkScope {
 			// A file counts when it changed after the prompt (content differs from the baseline).
-			fresh := freshChanges(w.Cwd, changed, w.Baseline)
-			if bad := scopeViolations(fresh, globs); len(bad) > 0 {
+			if root != repoRoot(w.Cwd) {
+				fmt.Fprintf(&b, "scope checked in repository: %s\n", root)
+			}
+			baseline := w.Baseline
+			if (w.BaselineRoot != "" && w.BaselineRoot != root) || (w.BaselineRoot == "" && root != repoRoot(w.Cwd)) {
+				baseline = nil
+			}
+			fresh := freshChanges(root, changed, baseline)
+			if bad := repositoryScopeViolations(w.Cwd, root, fresh, ownedGlobs(string(body))); len(bad) > 0 {
 				st = "failed"
 				fmt.Fprintf(&b, "scope violation; marked failed: change outside owned files %s\n", strings.Join(bad, ", "))
 			} else if len(fresh) > 0 {

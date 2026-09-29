@@ -86,6 +86,15 @@ Changes made:
 
 `pane.split --no-focus`, `pane.resize`, `pane.close`, `agent.start`, `agent.send_keys`, and `agent.read` did not move focus. After the fix, measurement showed zero focus moves caused by orch requests. The regression test is `TestNormalizeLayoutDoesNotZoomWhenNotZoomed`.
 
+## Operational rules confirmed 2026-09-29
+
+- Waiting uses foreground `orch wait` by default. While the user is waiting for progress, do not move it to a background task.
+- A child repository's worktree outside a vat workspace cannot run workspace-dependent `vat` or `make check` commands ("not inside a vat workspace"). The contract must specify checks in the original checkout or require an unavailable-check report.
+- Chain checks and commits with `&&`, never `;`, so a failed check prevents the commit.
+- Do not add orch-specific branches to repository rules or scripts. Orch is one person's local tool; repository rules apply equally to every worker.
+- Scope collection selects a repository containing the contract's base commit: cwd first, absolute contract paths next, then child repositories through depth two (including linked worktrees). The selected repository is reported when it differs from cwd's repository; no match fails scope verification.
+- A prompted worker retains its original contract content hash. Identical re-prompts do nothing. Changed contracts, or legacy prompts without a saved hash, are refused with close-and-new-name guidance.
+
 ## Known limits
 
 - **The hook is best-effort.** It checks command strings with regexes, looking at line starts, and text after `;` `&` `|` `(` `$(`, and after `bash -c`/`sh -c`/`eval`/`xargs`. It does not catch:
