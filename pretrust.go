@@ -52,8 +52,10 @@ func pretrustLaunch(kind, dir string, env []string, explicitCwd bool) ([]string,
 	}
 	switch kind {
 	case "codex":
-		// A per-launch override; nothing is written to any config file.
-		return []string{"-c", fmt.Sprintf(`projects.%q.trust_level="trusted"`, dir)}, nil
+		// A per-launch override; nothing is written to any config file. Codex splits a -c key
+		// on every '.', so a quoted `projects."<dir>".trust_level` key never matches: the
+		// directory goes into an inline-table value instead (merged into config.toml's projects).
+		return []string{"-c", fmt.Sprintf(`projects={%s={trust_level="trusted"}}`, tomlString(dir))}, nil
 	case "claude":
 		// Inside a git repository Claude checks the repository root, not ancestors, so both
 		// the folder and its git root are recorded explicitly.
@@ -75,6 +77,25 @@ func pretrustLaunch(kind, dir string, env []string, explicitCwd bool) ([]string,
 		return nil, trustAgy(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), dir)
 	}
 	return nil, nil
+}
+
+// tomlString quotes s as a TOML basic string.
+func tomlString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\u%04X`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func claudeConfigFile(env []string) string {

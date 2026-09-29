@@ -51,7 +51,7 @@ func TestSpawnUnregisteredCustomCwdClosesPane(t *testing.T) {
 			}
 			return []byte(`{"result":{"pane":{"pane_id":"worker-pane"}}}`), nil
 		case "agent start":
-			pretrusted = slices.Contains(args, fmt.Sprintf(`projects.%q.trust_level="trusted"`, cwd))
+			pretrusted = slices.Contains(args, codexTrustArg(cwd))
 			return []byte(`{"result":{}}`), nil
 		case "agent get":
 			return nil, errors.New("agent_not_found")
@@ -126,7 +126,7 @@ func TestStartWorkerAgentWaitsAfterSuccessfulStartAndRetry(t *testing.T) {
 			if retry {
 				want = 2
 			}
-			if starts != want || gets != 3 {
+			if starts != want || gets != 4 { // 3 until registered, 1 liveness re-check
 				t.Fatalf("starts=%d gets=%d", starts, gets)
 			}
 		})
@@ -200,5 +200,103 @@ func TestPretrustExplicitCwdOnly(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(config, ".claude.json"))
 	if err != nil || !strings.Contains(string(data), outside) {
 		t.Fatalf("Claude selected directory trust: %s %v", data, err)
+	}
+}
+
+func codexTrustArg(dir string) string {
+	return `projects={"` + dir + `"={trust_level="trusted"}}`
+}
+
+// Codex splits -c keys on every '.', so the directory must travel inside the value.
+func TestCodexTrustOverrideKeepsDirectoryOutOfKey(t *testing.T) {
+	for _, dir := range []string{t.TempDir(), filepath.Join(t.TempDir(), "a.b"), `/tmp/q"uote\back`} {
+		args, err := pretrustLaunch("codex", dir, nil, true)
+		if err != nil || len(args) != 2 || args[0] != "-c" {
+			t.Fatalf("args=%v err=%v", args, err)
+		}
+		key, value, _ := strings.Cut(args[1], "=")
+		if key != "projects" || strings.Contains(key, dir) {
+			t.Fatalf("directory leaked into the dotted key: %s", args[1])
+		}
+		real := dir
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			real = r
+		}
+		if want := "{" + tomlString(real) + `={trust_level="trusted"}}`; value != want {
+			t.Fatalf("value=%s want %s", value, want)
+		}
+	}
+	if got := tomlString(`/tmp/q"uote\back` + "\t"); got != `"/tmp/q\"uote\\back\u0009"` {
+		t.Fatalf("tomlString=%s", got)
+	}
+}
+
+// Head reproduction: start and registration succeed, then the pane is left with only a shell.
+func TestSpawnFailsWhenAgentLeavesShellOnlyPane(t *testing.T) {
+	startupTest(t)
+	t.Setenv("ORCH_HOME", t.TempDir())
+	t.Setenv("ORCH_ROLE", "")
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDR_PANE_ID", "head")
+	cwd, _ := filepath.EvalSymlinks(t.TempDir())
+	r, err := createRun("shell-only regression", "light", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, closed, gets := false, false, 0
+	herdrRun = func(args ...string) ([]byte, error) {
+		switch strings.Join(args[:2], " ") {
+		case "pane layout":
+			if !live {
+				return []byte(`{"result":{"layout":{"area":{"width":90,"height":30},"panes":[{"pane_id":"head","rect":{"width":90,"height":30}}]}}}`), nil
+			}
+			return []byte(`{"result":{"layout":{"area":{"width":90,"height":30},"panes":[{"pane_id":"head","rect":{"width":30,"height":30}},{"pane_id":"worker-pane","rect":{"x":30,"width":60,"height":30}}]}}}`), nil
+		case "pane split":
+			live = true
+			return []byte(`{"result":{"pane":{"pane_id":"worker-pane"}}}`), nil
+		case "agent start":
+			return []byte(`{"result":{}}`), nil
+		case "agent get":
+			gets++
+			if gets == 1 { // registered right after start
+				return []byte(`{"result":{"agent":{"pane_id":"worker-pane","agent_status":"idle"}}}`), nil
+			}
+			return nil, errors.New("agent_not_found")
+		case "pane read":
+			return []byte(`{"result":{"text":"deepeet@host:/private/tmp/orch-cwd-probe %"}}`), nil
+		case "pane close":
+			live, closed = false, true
+			return []byte(`{"result":{}}`), nil
+		case "pane list":
+			if live {
+				return []byte(`{"result":{"panes":[{"pane_id":"head"},{"pane_id":"worker-pane"}]}}`), nil
+			}
+			return []byte(`{"result":{"panes":[{"pane_id":"head"}]}}`), nil
+		}
+		t.Fatalf("unexpected Herdr call: %v", args)
+		return nil, nil
+	}
+	w, err := spawn(spawnOpts{Run: r.ID, Key: "codex-medium-m", Name: "cwd-probe", Role: roleRecon, Cwd: cwd})
+	if err == nil || w != nil {
+		t.Fatalf("spawn reported success for a shell-only pane: worker=%+v err=%v", w, err)
+	}
+	if !strings.Contains(err.Error(), "only a shell remains") || !strings.Contains(err.Error(), "agent_not_found") {
+		t.Fatalf("missing diagnosis: %v", err)
+	}
+	if !closed || live {
+		t.Fatalf("pane not cleaned: closed=%v live=%v", closed, live)
+	}
+}
+
+func TestConfirmAgentLiveRejectsTrustDialog(t *testing.T) {
+	startupTest(t)
+	herdrRun = func(args ...string) ([]byte, error) {
+		if args[0] == "agent" {
+			return []byte(`{"result":{"agent":{"pane_id":"p","agent_status":"idle"}}}`), nil
+		}
+		return []byte(`{"result":{"text":"Do you trust the files in this directory?"}}`), nil
+	}
+	if err := confirmAgentLive("probe", "p", "/cwd"); err == nil || !strings.Contains(err.Error(), "folder-trust") {
+		t.Fatalf("trust dialog accepted as live agent: %v", err)
 	}
 }
