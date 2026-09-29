@@ -12,7 +12,8 @@ import (
 
 // Folder trust is granted before a worker starts, so no CLI shows its trust dialog.
 // It is granted only where the Head itself already works: its cwd and below, or a git
-// worktree of the Head's repository. Anything else keeps the CLI's own dialog.
+// worktree of the Head's repository. An explicit worker cwd also grants trust for
+// that launch; unrelated folders keep the CLI's own dialog.
 
 // trustable reports whether orch may pre-trust dir on the Head's behalf.
 func trustable(dir string) bool {
@@ -37,7 +38,13 @@ func trustable(dir string) bool {
 
 // pretrust prepares trust for a worker of kind in dir and returns extra CLI arguments.
 func pretrust(kind, dir string, env []string) ([]string, error) {
-	if !trustable(dir) {
+	return pretrustLaunch(kind, dir, env, false)
+}
+
+// pretrustLaunch treats an explicitly selected worker directory as launch authorization.
+// The caller resolves symlinks before passing it; this does not extend runtime trust scope.
+func pretrustLaunch(kind, dir string, env []string, explicitCwd bool) ([]string, error) {
+	if !explicitCwd && !trustable(dir) {
 		return nil, nil
 	}
 	if real, err := filepath.EvalSymlinks(dir); err == nil {

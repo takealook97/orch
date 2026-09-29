@@ -301,8 +301,8 @@ func spawn(o spawnOpts) (*Worker, error) {
 		return nil, err
 	}
 
-	// Pre-trust the folder so no CLI raises its trust dialog (Head cwd / worktrees only).
-	trustArgs, terr := pretrust(m.Kind, w.Cwd, workerEnv)
+	// Pre-trust the selected launch directory, including an explicit cwd outside Head cwd.
+	trustArgs, terr := pretrustLaunch(m.Kind, w.Cwd, workerEnv, o.Cwd != "" || o.Worktree != "")
 	if terr != nil {
 		fmt.Fprintln(os.Stderr, "orch: warning: folder pretrust failed (automatically approve the trust dialog if shown):", terr)
 	}
@@ -312,32 +312,68 @@ func spawn(o spawnOpts) (*Worker, error) {
 		return nil, err
 	}
 	args := append([]string{"agent", "start", o.Name, "--kind", m.Kind, "--pane", pane, "--"}, append(launch, trustArgs...)...)
-	_, startErr := herdrRun(args...)
-	debugf("agent start %s: err=%v", o.Name, startErr)
-	if startErr == nil {
-		// Some CLIs report idle while a folder-trust dialog is on screen (Codex in a new home).
-		settleTrust(o.Name, w.Cwd, timings.TrustSettleStart)
-	}
-	if err := startErr; err != nil {
-		// A trust dialog can stall start until its timeout: clear it and wait for readiness.
-		if !strings.Contains(err.Error(), "agent_not_ready") && paneShowsTrust(pane) {
-			err = fmt.Errorf("agent_not_ready (trust dialog)")
-		}
-		if !strings.Contains(err.Error(), "agent_not_ready") {
-			// One retry, as startup may race the shell prompt.
-			time.Sleep(timings.StartRetry)
-			if _, err2 := herdrRun(args...); err2 != nil {
-				abortWorker(runID, o.Name, err2)
-				return nil, fmt.Errorf("agent start failed (pane closed): %w", err2)
-			}
-		} else if err := waitReady(o.Name, w.Cwd, timings.ReadyTimeout); err != nil {
-			abortWorker(runID, o.Name, err)
-			return nil, fmt.Errorf("%w (pane closed)", err)
-		}
+	if err := startWorkerAgent(o.Name, pane, w.Cwd, args); err != nil {
+		abortWorker(runID, o.Name, err)
+		return nil, fmt.Errorf("agent start failed (pane cleanup attempted): %w", err)
 	}
 	// Finished panes close even if the Head never runs its wait (one reaper per run).
 	ensureReaper(runID)
 	return w, nil
+}
+
+// startWorkerAgent verifies registration even when Herdr reports a successful start.
+func startWorkerAgent(name, pane, cwd string, args []string) error {
+	_, startErr := herdrRun(args...)
+	debugf("agent start %s: err=%v", name, startErr)
+	if startErr != nil && !strings.Contains(startErr.Error(), "agent_not_ready") && !paneShowsTrust(pane) {
+		// One retry, as startup may race the shell prompt.
+		time.Sleep(timings.StartRetry)
+		_, startErr = herdrRun(args...)
+		if startErr != nil && !strings.Contains(startErr.Error(), "agent_not_ready") && !paneShowsTrust(pane) {
+			return startErr
+		}
+	}
+	if err := waitAgentRegistered(name, pane, cwd, timings.ReadyTimeout); err != nil {
+		if startErr != nil {
+			return fmt.Errorf("%w (start: %v)", err, startErr)
+		}
+		return err
+	}
+	if startErr != nil {
+		return waitReady(name, cwd, timings.ReadyTimeout)
+	}
+	settleTrust(name, cwd, timings.TrustSettleStart)
+	return nil
+}
+
+// waitAgentRegistered requires the requested name to belong to the pane we created.
+// Raw pane reads work even before Herdr has an agent record; never print their contents.
+func waitAgentRegistered(name, pane, cwd string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		info, err := agentGet(name)
+		if err == nil {
+			if info.Pane == pane {
+				return nil
+			}
+			if info.Pane != "" {
+				return fmt.Errorf("agent %s registered in pane %s, expected %s (cwd %s)", name, info.Pane, pane, cwd)
+			}
+			err = fmt.Errorf("agent lookup returned no pane_id")
+		}
+		lastErr = err
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		time.Sleep(min(timings.ReadyPoll, remaining))
+	}
+	cause := "CLI startup, login, or shell launch failure; no folder-trust dialog detected"
+	if paneShowsTrust(pane) {
+		cause = "folder-trust dialog is blocking CLI startup"
+	}
+	return fmt.Errorf("agent %s did not register within %s (pane %s, cwd %s): %s; last lookup: %v", name, timeout, pane, cwd, cause, lastErr)
 }
 
 // abortWorker closes a worker that failed to start and records why.
