@@ -343,6 +343,26 @@ func startWorkerAgent(name, pane, cwd string, args []string) error {
 		return waitReady(name, cwd, timings.ReadyTimeout)
 	}
 	settleTrust(name, cwd, timings.TrustSettleStart)
+	return confirmAgentLive(name, pane, cwd)
+}
+
+// confirmAgentLive re-checks the agent once the trust settle window has passed. Registration
+// right after start is not proof: a CLI stuck on its folder-trust screen drops out of Herdr's
+// agent list and leaves what looks like a bare shell.
+func confirmAgentLive(name, pane, cwd string) error {
+	info, err := agentGet(name)
+	if err == nil && info.Pane != pane {
+		err = fmt.Errorf("agent lookup returned pane %q", info.Pane)
+	}
+	trust := paneShowsTrust(pane)
+	switch {
+	case err != nil && trust:
+		return fmt.Errorf("agent %s left pane %s after start (cwd %s): folder-trust dialog is blocking CLI startup; last lookup: %v", name, pane, cwd, err)
+	case err != nil:
+		return fmt.Errorf("agent %s left pane %s after start (cwd %s): only a shell remains; last lookup: %v", name, pane, cwd, err)
+	case trust:
+		return fmt.Errorf("agent %s in pane %s is still on a folder-trust dialog (cwd %s)", name, pane, cwd)
+	}
 	return nil
 }
 
