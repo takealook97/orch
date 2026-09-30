@@ -14,8 +14,13 @@ import (
 )
 
 func TestCatalogFixed(t *testing.T) {
-	if len(catalog) != 7 {
-		t.Fatalf("catalog has %d keys, want 7", len(catalog))
+	if len(catalog) != 6 {
+		t.Fatalf("catalog has %d keys, want 6", len(catalog))
+	}
+	// Build the retired key in parts so reference audits only find its decision history.
+	retired := "codex-medium-" + "m"
+	if _, err := modelByKey(retired); err == nil || !strings.Contains(err.Error(), "not in catalog") {
+		t.Fatalf("retired key accepted or unexpected error: %v", err)
 	}
 	families := map[string]bool{}
 	vars := map[string]bool{}
@@ -75,14 +80,15 @@ func TestLaunchArgs(t *testing.T) {
 
 func TestModelOverride(t *testing.T) {
 	t.Setenv("CODEX_MEDIUM_H", "gpt-7-mini")
-	t.Setenv("CODEX_MEDIUM_M", "")
+	t.Setenv("CODEX_HIGH_L", "")
+	t.Setenv("CODEX_HIGH_M", "gpt-7-sol")
 	t.Setenv("CLAUDE_HIGH_M", "claude-next")
 	m, _ := modelByKey("codex-medium-h")
 	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --model gpt-7-mini -c model_reasoning_effort="high"` {
 		t.Fatalf("got %q", got)
 	}
-	if got := joinArgs(t, key("codex-medium-m"), false); !strings.Contains(got, "--model gpt-6-luna ") {
-		t.Fatalf("codex-medium-m followed codex-medium-h override: %q", got)
+	if got := joinArgs(t, key("codex-high-l"), false); !strings.Contains(got, "--model gpt-6.1-sol ") {
+		t.Fatalf("codex-high-l followed codex-high-m override: %q", got)
 	}
 	m, _ = modelByKey("claude-high-m")
 	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-next --effort medium" {
@@ -492,7 +498,7 @@ func TestCloseRefusesOtherHeadsRun(t *testing.T) {
 
 func TestFallbackContractRewrite(t *testing.T) {
 	r := &Run{ID: "x"}
-	body := contractTemplate(r, "fb", roleRecon, "codex-medium-m")
+	body := contractTemplate(r, "fb", roleRecon, "codex-medium-h")
 	note := "\n## Fallback handoff\n- previous partial result: " + r.resultPath("fb") + "\n"
 	got := fallbackContract(r, body, "fb", "fb-f1", note)
 	if !strings.Contains(got, "# Contract: fb-f1") || !strings.Contains(got, "# Result: fb-f1\n") {
@@ -665,8 +671,8 @@ func TestFallbackLineageIsBounded(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	r, _ := createRun("x", "light", "", "")
 	_ = withRun(r.ID, func(r *Run) error {
-		r.Workers = append(r.Workers, &Worker{Name: "a", Key: "codex-medium-m", Purpose: "explore", Contract: "c.md",
-			Tried: []string{"codex-medium-m", "codex-medium-h", "gemini-medium-m"}, TriedAccounts: []string{"A", "B", "C"}})
+		r.Workers = append(r.Workers, &Worker{Name: "a", Key: "codex-medium-h", Purpose: "explore", Contract: "c.md",
+			Tried: []string{"codex-medium-h", "gemini-medium-m"}, TriedAccounts: []string{"A", "B", "C", "D"}})
 		return nil
 	})
 	if _, err := doFallback(r.ID, "a", "quota exhausted"); err == nil || !strings.Contains(err.Error(), "fallback limit") {

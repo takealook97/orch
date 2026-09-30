@@ -115,3 +115,5 @@ Changes made:
   - the constitution rule (cr symlinks a global `AGENTS.md`/`CLAUDE.md` into the account home)
 - **The deepeet workspace:** the deepeet repo's `.claude/skills/orch/SKILL.md` and `.codex/skills/orch/SKILL.md` defer to this skill and add only deepeet rules (Brain via CTBF, evidence sources, approval gates). Its "orch is mandatory for every task" rule covers direct mode and `orch ask`/`orch do`.
 - **Eval interpretation:** the P7 eval set (`eval/`) has a small sample (12 review pairs, 8 implementation pairs). It shows direction only; drawing conclusions needs repeated measurement.
+
+2026-09-30: removed codex-medium-m; Luna runs only at effort high (codex-medium-h). Catalog is 6 keys.

@@ -26,7 +26,7 @@ Delegation
   orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
-  orch models                             seven catalog keys
+  orch models                             six catalog keys
   orch contract new <name> --role R --model K [--run ID]    create contract template
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
            [--cwd D|--worktree D] [--account same|hook] [--run ID]
