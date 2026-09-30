@@ -7,13 +7,13 @@ stages:
     model: codex-medium-h
     purpose: explore
   design:
-    model: claude-high-m
-    purpose: synthesis
+    owner: head
+    notes: "The Head writes decisions.md (interfaces, names, file-level plan). Optional helper: claude-high-m (synthesis) only to condense large or conflicting recon evidence; the Head still decides."
   design_check:
     when: "design ran && mode == full+"
-    model: codex-high-m
+    model: other_family(author)
     purpose: verify-critical
-    notes: "5-10 min pre-implementation challenge of decisions.md by a family other than the designer: missing requirements, conflicts with the existing system, needless abstraction, migration risk, rollback path. No code review."
+    notes: "Author is the Head (spawn with --author-family head); default the lightest other-family key: Head Anthropic -> codex-high-l, Head OpenAI -> claude-medium-m; codex-high-m / claude-high-m only when the design is complex. 5-10 min pre-implementation challenge of decisions.md: missing requirements, conflicts with the existing system, needless abstraction, migration risk, rollback path. No code review."
   produce:
     parallel: by_worktree
     model: claude-high-m
@@ -29,6 +29,6 @@ stages:
   integrate:
     owner: head
     mechanics: head
-    escalate_to: codex-high-m
-    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-m. Semantic conflicts: claude-high-m. Merge one worktree at a time; full test suite after each merge."
+    escalate_to: codex-high-l
+    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge one worktree at a time; full test suite after each merge."
 retry_limit: 2

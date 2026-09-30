@@ -139,9 +139,14 @@ func TestLaneConstraints(t *testing.T) {
 
 func TestFallbackRespectsFamily(t *testing.T) {
 	// Critical review of an Anthropic author: claude-medium-m/claude-high-m are skipped.
-	m, ok := nextFallback("verify-critical", "codex-high-m", roleCritical, []string{familyAnthropic}, nil, []string{"codex-high-m"})
-	if !ok || m.Key != "codex-medium-h" {
+	m, ok := nextFallback("verify-critical", "claude-medium-m", roleCritical, []string{familyAnthropic}, nil, []string{"claude-medium-m"})
+	if !ok || m.Key != "codex-high-l" {
 		t.Fatalf("got %v %v", m.Key, ok)
+	}
+	// Escalate within OpenAI after the cheaper critical reviewer is exhausted.
+	m, ok = nextFallback("verify-critical", "codex-high-l", roleCritical, []string{familyAnthropic}, nil, []string{"codex-high-l"})
+	if !ok || m.Key != "codex-high-m" {
+		t.Fatalf("critical escalation = %s, available=%v", m.Key, ok)
 	}
 	// Implementation chain follows the user example codex-high-m → claude-high-m → claude-medium-m.
 	m, _ = nextFallback("impl", "codex-high-m", roleProduce, nil, nil, []string{"codex-high-m"})

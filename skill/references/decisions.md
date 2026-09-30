@@ -119,3 +119,5 @@ Changes made:
 2026-09-30: removed codex-medium-m; Luna runs only at effort high (codex-medium-h). Catalog is 6 keys.
 
 2026-09-30: neutral lane optional in full when no user-facing surface; clean merges need no model; no third attempt after 2 fix iterations, Head classifies the cause; full+ adds a design challenge after design.
+
+2026-09-30: the Head owns design (claude-high-m only condenses evidence); design_check reviews the Head's design with a different family; QA defaults to the lightest other-family key: author OpenAI -> claude-medium-m, otherwise codex-high-l; textual merge conflicts and Head-Claude design checks use codex-high-l.

@@ -133,7 +133,7 @@ var chains = map[string][]string{
 	"image":       {"codex-high-m"},
 	"verify-mech": {"codex-medium-h", "codex-high-m", "claude-medium-m"},
 	// Verification chains are filtered by family constraints at spawn time.
-	"verify-critical":    {"claude-medium-m", "claude-high-m", "codex-high-m", "codex-medium-h"},
+	"verify-critical":    {"claude-medium-m", "claude-high-m", "codex-high-l", "codex-high-m"},
 	"verify-neutral":     {"gemini-medium-m", "claude-medium-m", "codex-high-m"},
 	"verify-adversarial": {"claude-high-m", "codex-high-m", "claude-medium-m"},
 }

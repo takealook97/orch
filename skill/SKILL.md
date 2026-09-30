@@ -37,7 +37,7 @@ Estimate within 30 seconds of receiving the request.
 |---|---|---|
 | direct | All of: E <= 10 calls/5 min · F <= 2 files, one module · P <= 1 · U pinned · R immediate · no H | No run, no panes. The Head decides; execution that needs no top-tier judgment still goes to `orch ask`/`orch do` (section 0). Tests run once through `orch test` |
 | light | Exceeds direct, but F <= 5, 1-2 modules · U pinned · R possible · no H | 1 producer (parallel if P >= 2) + 1 independent verification lane. A single producer can be `orch do`; the verification lane is still a pane worker of a different family |
-| full | Any of: F > 5 or 3+ modules · P >= 3 · U needs investigation to pin down · R is cumbersome | Investigate -> (design) -> produce -> verification lanes -> integrate |
+| full | Any of: F > 5 or 3+ modules · P >= 3 · U needs investigation to pin down · R is cumbersome | Investigate -> (Head design) -> produce -> verification lanes -> integrate |
 | full+ | Any H applies | full + design challenge + 2 critical lanes from different families + an adversarial lane |
 
 H: auth/permissions/secrets/encryption / data deletion, migration, schema, backup / money, payment, billing, usage calculation / core concurrency structures / production config, deploy pipeline, externally published output / the user asks for "thorough, complete verification".
@@ -76,7 +76,7 @@ Work coming from `/goal` or another command follows the same rule. A command set
 
 ```bash
 orch run new --text "<original request verbatim>" --mode full --playbook feature   # prints the run id, ~/.orch/runs/<id>/
-# fill in acceptance.md (numbered acceptance criteria) and decisions.md (naming, interface, format decisions)
+# Head fills in acceptance.md and writes decisions.md (interfaces, names, file-level plan) and each contract plan
 orch contract new impl-api --role produce --model codex-high-m      # contract template -> fill it in
 orch spawn --model codex-high-m --name impl-api --role produce --purpose impl --worktree ../wt-api
 orch prompt impl-api                                          # send only the contract path and result path
@@ -87,7 +87,7 @@ orch spawn --model claude-medium-m --name crit-api --role verify-critical --revi
 orch run end                                                  # close every pane and confirm removal
 ```
 
-- full+: when a design stage ran, run a design challenge (different family from the designer, `codex-high-m` by default) before any produce worker starts.
+- full+: when a design stage ran, run a design challenge (different family from the Head; spawn with `--author-family head`) before any produce worker starts; default the lightest other-family key: Head Anthropic -> codex-high-l, Head OpenAI -> claude-medium-m; codex-high-m / claude-high-m only when the design is complex.
 - To spawn several workers at once, call spawn repeatedly, then wait on all of them together with `orch wait a b c`.
 - If there are multiple pieces with dependencies, **delegate as a DAG.** Write `dag.yaml` in the run directory, then `orch dag check` -> `orch dag run`. It spawns nodes whose inputs are ready, in order of longest critical path, closes finished panes, and skips downstream nodes whose dependencies aren't done (the mechanical lane is the gate). If interrupted, calling `orch dag run` again resumes it. Check status with `orch dag status`.
 
@@ -134,7 +134,7 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Broad file/symbol search, bulk classification, translation | `codex-medium-h` | ambiguous classification criteria -> `claude-medium-m` | explore |
 | Evidence extraction, log/test-failure analysis, data extraction | `codex-medium-h` | tangled root-cause candidates or schema interpretation -> `codex-high-m` | extract |
 | Web, long documents, PDFs, reading images/screenshots | `gemini-medium-m` | deep technical interpretation -> `claude-high-m`; visual detail -> `claude-medium-m` | web |
-| Synthesizing conflicting evidence, root-cause hypotheses, ambiguous design | `claude-high-m` | -- | synthesis |
+| Condensing large or conflicting evidence for the Head, root-cause hypotheses | `claude-high-m` | -- | synthesis |
 | Drafting interfaces/schemas | `codex-high-m` | wide blast radius -> `claude-high-m` | impl |
 | Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, test code, mechanical edits) | `codex-high-l` | very narrow, 1-2 files -> `codex-medium-h` | mech-impl |
 | Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | -- | impl |
@@ -143,8 +143,10 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Docs, reports, research synthesis | `claude-medium-m` | deep technical content or conflicting sources -> `claude-high-m` | docs |
 | Short summaries, changelogs | `codex-medium-h` | -- | extract |
 | Data analysis | `codex-high-m` | ambiguous interpretation or causal judgment -> `claude-high-m` | analysis |
-| Merge/integration mechanics | Head directly (git + `orch test`) for clean merges; `codex-high-m` for textual conflicts | semantic conflicts -> `claude-high-m` | integrate |
+| Merge/integration mechanics | Head directly (git + `orch test`) for clean merges; `codex-high-l` for textual conflicts | semantic conflicts -> `claude-high-m` | integrate |
 | Image generation | `codex-high-m` (Codex image_generation) | -- | image |
+
+Design is the Head's job: the Head writes decisions.md and the plans in each contract. A worker may condense evidence for it, never decide it.
 
 Luna runs only at effort high (`codex-medium-h`). Effort is chosen separately from the model (precise extraction: `codex-medium-h`; planned implementation: `codex-high-l`; mixed judgment: `codex-high-m`). For implementation, write the plan into the contract and hand it to `codex-high-l`; the `mech-impl` chain escalates to `codex-high-m` on failure. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
 
@@ -161,7 +163,7 @@ Plan verification at the same time you assign the production work. An author's o
 | Neutral | verify-neutral | `gemini-medium-m` (never given the author's self-assessment) | Original request, acceptance criteria, deliverables, evidence of actual behavior | Requirements checklist |
 | Adversarial | verify-adversarial | A different family from the author, `gemini-medium-m` forbidden. Default `claude-high-m`; `codex-high-m` if the author is Anthropic | One concrete attack target | A counterexample or grounds for refuting it |
 
-Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-m` · Google -> `codex-high-m` (or `claude-high-m` if complex). Confirming a single narrow claim: `codex-medium-h` (or `claude-medium-m` if the author is OpenAI).
+Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `codex-high-l` (or `claude-high-m` if complex). QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect.
 
 | Mode | Mechanical | Critical | Neutral | Adversarial |
 |---|---|---|---|---|

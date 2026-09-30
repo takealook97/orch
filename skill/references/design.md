@@ -370,8 +370,8 @@ Write it to ~/.orch/runs/<id>/results/<name>.md in the format below.
 |---|---|---|---|
 | **direct** | **All** of: E <= 10 tool calls or about 5 minutes · F <= 2 files, one module · P <= 1 · U = acceptance criteria can be pinned down immediately · R = git reverts it instantly · no H | Head does it directly. No run directory. If there's a test or build, Head runs it once directly | 0 |
 | **light** | Crosses one or more of the direct conditions, but: F <= 5 files, one or two modules · U = can be pinned down · R = git can revert it · no H | One deliverable (parallel if P >= 2) + **one independent verification lane**. Mechanical checks are Head running the command directly | 1-3 |
-| **full** | **One or more** of: F > 5 files or 3+ modules · P >= 3 · U = acceptance criteria need investigation to pin down · R = reverting is a hassle (multiple commits, config, a pre-publish stage of a document) | recon -> (design) -> produce -> mechanical + critical (+ neutral if user-facing output changed) -> integrate | 3 up to the D5 cap |
-| **full+** | **Any** H | same as full, plus a design challenge after design and before produce, 2 critical lanes from different families + an adversarial lane | same as full |
+| **full** | **One or more** of: F > 5 files or 3+ modules · P >= 3 · U = acceptance criteria need investigation to pin down · R = reverting is a hassle (multiple commits, config, a pre-publish stage of a document) | recon -> (Head design) -> produce -> mechanical + critical (+ neutral if user-facing output changed) -> integrate | 3 up to the D5 cap |
+| **full+** | **Any** H | same as full, plus a design challenge of the Head's decisions.md by a different family (`--author-family head`) after design and before produce, 2 critical lanes from different families + an adversarial lane | same as full |
 
 **H: high-risk flags (any one triggers full+)**
 - Auth, permissions, secrets, encryption
@@ -469,7 +469,7 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Ambiguous architecture, design that crosses multiple areas | `claude-high-m` | — | Deep synthesis |
+| Condensing large or conflicting evidence for the Head, root-cause hypotheses | `claude-high-m` | — | Evidence synthesis; the Head decides |
 | Alternative design (for comparison) | `claude-medium-m` | If the primary design is Anthropic's -> `codex-high-m` | A different perspective, a different family if possible |
 | Interface, schema, data-model drafts | `codex-high-m` | Impact is wide -> `claude-high-m` | Clear technical judgment |
 
@@ -480,11 +480,11 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 | Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, renames, boilerplate) | `codex-high-l` | Scope is very narrow, 1-2 files -> `codex-medium-h` | The Head already made the judgment; default implementer |
 | Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | — | Judgment is left to the worker |
 | Hard implementation (concurrency, performance, security, complex state) | `claude-high-m` | — | Assign it from the start. Never try a weak model first |
-| Changes across multiple modules, large refactors | `claude-high-m` (design + core) + `codex-high-m`/`codex-high-l` per shard | — | Core judgment goes to `claude-high-m`, mechanical shards run in parallel on the Codex high tier |
+| Changes across multiple modules, large refactors | Head (design) + `claude-high-m` (core) + `codex-high-m`/`codex-high-l` per shard | — | Design decisions belong to the Head; core implementation goes to `claude-high-m`, mechanical shards run in parallel on the Codex high tier |
 | Hard debugging (unstable repro, cause spans multiple layers) | `claude-high-m` | Repro is reliable and the cause is local -> `codex-high-m` | — |
 | Alternative implementation (for comparison) | `claude-medium-m` | If the primary implementation is Anthropic's -> `codex-high-m` | A different family |
 | Writing test code | `codex-high-m` | Scenario design is the focus -> `claude-medium-m` | — |
-| Merging, conflict resolution, mechanical integration | `codex-high-m` | Conflicts are semantic -> `claude-high-m` | — |
+| Merging, conflict resolution, mechanical integration | `codex-high-l` | Conflicts are semantic -> `claude-high-m` | — |
 
 #### D. Produce: writing, analysis, other
 
@@ -504,9 +504,9 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 | Mechanical: rerun tests, builds, lint | `codex-medium-h` | Environment setup is complex -> `codex-high-m` | Run it and record it exactly |
 | Mechanical: run repro scenarios, recompute | `codex-medium-h` | — | — |
 | Mechanical: inspect rendered output, produced files | `gemini-medium-m` | — | Multimodal |
-| Critical: general code review | Author is OpenAI -> `claude-medium-m` · Anthropic -> `codex-high-m` · Google -> `codex-high-m` | — | A different family |
+| Critical: general code review | Author is OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `codex-high-l` (or `claude-high-m` if complex) | — | A different family; QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect |
 | Critical: complex change or one crossing multiple areas | Author is OpenAI/Google -> `claude-high-m` · Anthropic -> `codex-high-m` | — | Depth + a different family |
-| Critical: confirm one narrow, explicit claim | `codex-medium-h` (author isn't OpenAI) | Author is OpenAI -> `claude-medium-m` | — |
+| Critical: confirm one narrow, explicit claim | `codex-high-l` (author isn't OpenAI) | Author is OpenAI -> `claude-medium-m` | — |
 | Critical: fact/source rebuttal (research) | `claude-high-m` | `claude-high-m` wrote the synthesis -> `codex-high-m` | — |
 | Neutral: requirements checklist | `gemini-medium-m` | — | A different family, checklist-style work |
 | Adversarial: attacking a specific target | Per §9.3: a family different from both the author and the critical reviewer. Default `claude-high-m`; if the author is Anthropic, `codex-high-m` | — | Depth first. Never `gemini-medium-m` |
@@ -563,7 +563,7 @@ There are exactly three families: OpenAI (`codex-*`), Anthropic (`claude-high-m`
 | Data analysis | `codex-high-m` | `claude-high-m` | `claude-medium-m` | |
 | Integration, merging | `codex-high-m` | `claude-high-m` | Head does it directly | |
 | Mechanical verification | `codex-medium-h` | `codex-high-m` | `claude-medium-m` | the author's own session is forbidden |
-| Critical review | assignment table E | swap within the same **different family** (`claude-medium-m`<->`claude-high-m`, and `codex-high-m`<->`codex-medium-h` rather than `codex-high-m`<->`claude-high-m`) | whatever's left in a family different from the author | **The family constraint wins.** Never fall back into the author's family |
+| Critical review | assignment table E | swap within the same **different family** (`claude-medium-m`<->`claude-high-m`, and `codex-high-l`<->`codex-high-m` rather than `codex-high-m`<->`claude-high-m`) | whatever's left in a family different from the author | **The family constraint wins.** Never fall back into the author's family |
 | Neutral verification | `gemini-medium-m` | `claude-medium-m` (or `codex-high-m` if the author is Anthropic) | any other different family | Keep the output format (the checklist). Mark it "gemini-medium-m substitute" in the report |
 | Adversarial verification | assignment table E | a session in a different family from both the author and the critical reviewer | — | Never fall back to `gemini-medium-m` |
 
@@ -691,7 +691,7 @@ If it doesn't pass, one writer proceeds at a time. Recon and verification prep s
 ```
 time ->
 recon        [codex-medium-h:A][codex-medium-h:logs][gemini-medium-m:docs]                ← start together
-design            [claude-high-m: fix the interface]                     ← waits only on recon A
+design            [Head: fix the interface]                     ← waits only on recon A
 verify-prep       [gemini-medium-m: checklist template][codex-medium-h: test scenarios]  ← alongside design
 produce                 [codex-high-m:1 wt1][codex-high-l:2 wt2][claude-high-m:3 wt3][claude-medium-m:docs]
 verify                        [codex-medium-h mech:1][claude-medium-m critical:1][gemini-medium-m neutral:1]  ← as soon as shard 1 finishes
@@ -733,7 +733,13 @@ stages:
     output: results/recon-<area>.md
   design:
     when: "ambiguous || cross_module"
-    model: claude-high-m
+    owner: head
+    notes: "The Head writes decisions.md (interfaces, names, file-level plan). Optional helper: claude-high-m (synthesis) only to condense large or conflicting recon evidence; the Head still decides."
+  design_check:
+    when: "design ran && mode == full+"
+    model: other_family(author)
+    purpose: verify-critical
+    notes: "Author is the Head (spawn with --author-family head); default the lightest other-family key: Head Anthropic -> codex-high-l, Head OpenAI -> claude-medium-m; codex-high-m / claude-high-m only when the design is complex. 5-10 min pre-implementation challenge of decisions.md: missing requirements, conflicts with the existing system, needless abstraction, migration risk, rollback path. No code review."
   produce:
     parallel: by_worktree
     model: codex-high-m
@@ -749,8 +755,8 @@ stages:
   integrate:
     owner: head
     mechanics: head
-    escalate_to: codex-high-m
-    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-m. Semantic conflicts: claude-high-m. Merge one worktree at a time; full test suite after each merge."
+    escalate_to: codex-high-l
+    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge one worktree at a time; full test suite after each merge."
 retry_limit: 2
 ```
 
