@@ -166,7 +166,7 @@ Each model x effort combination gets its own key. Head picks only by key.
 |---|---|---|---|---|---|
 | `codex-medium-m` | codex | `--model $CODEX_MEDIUM_M -c model_reasoning_effort="medium"` | OpenAI | lowest | fast exploration, bulk classification, simple extraction |
 | `codex-medium-h` | codex | `--model $CODEX_MEDIUM_H -c model_reasoning_effort="high"` | OpenAI | low | precise, narrow work: evidence extraction, log/test analysis, narrow verification |
-| `codex-high-l` | codex | `--model $CODEX_HIGH_L -c model_reasoning_effort="low"` | OpenAI | medium | fast implementation of a fully specified task, mechanical integration, bulk repetitive edits |
+| `codex-high-l` | codex | `--model $CODEX_HIGH_L -c model_reasoning_effort="low"` | OpenAI | medium | implementation from a file-level plan in the contract, mechanical integration, bulk repetitive edits |
 | `codex-high-m` | codex | `--model $CODEX_HIGH_M -c model_reasoning_effort="medium"` | OpenAI | medium+ | general implementation, debugging, verification that needs tool execution, technical review |
 | `claude-high-m` | claude | `--model $CLAUDE_HIGH_M --effort medium` (see D1; medium or low only, never high) | Anthropic | highest | hard implementation, ambiguous design, changes that cross multiple areas, hard debugging, deep review |
 | `claude-medium-m` | claude | `--model $CLAUDE_MEDIUM_M --effort <D1>` | Anthropic | medium | independent implementation, alternative approaches, docs/writing, code review, scenario QA |
@@ -443,7 +443,7 @@ Head decides whether to delegate a subtask or do it directly using the following
    - Input shape: code and logs, or web/long documents/images
    - Cost of being wrong: how expensive is a mistake
 3. **Pick the cheapest key that satisfies the contract** — but don't stall on a hard task by retrying it repeatedly with a weak model. If the difficulty is visible up front, go straight to `claude-high-m`.
-4. **Effort is chosen separately from the model.** Even within the Codex medium tier, bulk classification gets `codex-medium-m` and precise extraction gets `codex-medium-h`. Even within the Codex high tier, a fully specified mechanical implementation gets `codex-high-l`, and one that mixes in judgment gets `codex-high-m`.
+4. **Effort is chosen separately from the model.** Even within the Codex medium tier, bulk classification gets `codex-medium-m` and precise extraction gets `codex-medium-h`. Even within the Codex high tier, implementation from a file-level plan gets `codex-high-l`, and one where the worker still has to choose the approach gets `codex-high-m` (decision D13).
 5. **No model has a fixed title.** `gemini-medium-m` also takes recon or produce work when the purpose fits — it just can never be the **sole verifier.**
 6. Don't save `claude-high-m` for planning or arbitration only. Use it directly on hard implementation.
 7. **The verification-family constraint (§9.3) outranks both assignment and fallback.**
@@ -478,8 +478,8 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Fully specified mechanical implementation (renames, applying a repeated pattern, boilerplate) | `codex-high-l` | Scope is very narrow, 1-2 files -> `codex-medium-h` | Almost no judgment involved |
-| General feature implementation, bug fixes | `codex-high-m` | — | Default implementer |
+| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, renames, boilerplate) | `codex-high-l` | Scope is very narrow, 1-2 files -> `codex-medium-h` | The Head already made the judgment; default implementer |
+| Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | — | Judgment is left to the worker |
 | Hard implementation (concurrency, performance, security, complex state) | `claude-high-m` | — | Assign it from the start. Never try a weak model first |
 | Changes across multiple modules, large refactors | `claude-high-m` (design + core) + `codex-high-m`/`codex-high-l` per shard | — | Core judgment goes to `claude-high-m`, mechanical shards run in parallel on the Codex high tier |
 | Hard debugging (unstable repro, cause spans multiple layers) | `claude-high-m` | Repro is reliable and the cause is local -> `codex-high-m` | — |

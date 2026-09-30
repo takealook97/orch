@@ -132,8 +132,8 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Web, long documents, PDFs, reading images/screenshots | `gemini-medium-m` | deep technical interpretation -> `claude-high-m`; visual detail -> `claude-medium-m` | web |
 | Synthesizing conflicting evidence, root-cause hypotheses, ambiguous design | `claude-high-m` | -- | synthesis |
 | Drafting interfaces/schemas | `codex-high-m` | wide blast radius -> `claude-high-m` | impl |
-| Mechanical implementation with a complete spec | `codex-high-l` | very narrow, 1-2 files -> `codex-medium-h` | mech-impl |
-| General feature implementation, bug fixes, test code | `codex-high-m` | -- | impl |
+| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, test code, mechanical edits) | `codex-high-l` | very narrow, 1-2 files -> `codex-medium-h` | mech-impl |
+| Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | -- | impl |
 | Hard implementation/debugging (concurrency, performance, security, complex state, flaky repro) | `claude-high-m` | reliable repro, localized cause -> `codex-high-m` | hard-impl |
 | Alternative implementation/design (for comparison) | `claude-medium-m` | primary is Anthropic -> `codex-high-m` | alt |
 | Docs, reports, research synthesis | `claude-medium-m` | deep technical content or conflicting sources -> `claude-high-m` | docs |
@@ -142,7 +142,7 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Merge/integration mechanics | `codex-high-m` | semantic conflicts -> `claude-high-m` | integrate |
 | Image generation | `codex-high-m` (Codex image_generation) | -- | image |
 
-Effort is chosen separately from the model (bulk classification: `codex-medium-m`; precise extraction: `codex-medium-h`; fully specified: `codex-high-l`; mixed judgment: `codex-high-m`). `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
+Effort is chosen separately from the model (bulk classification: `codex-medium-m`; precise extraction: `codex-medium-h`; planned implementation: `codex-high-l`; mixed judgment: `codex-high-m`). For implementation, write the plan into the contract and hand it to `codex-high-l`; the `mech-impl` chain escalates to `codex-high-m` on failure. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
 
 **Fallback**: if `orch wait` detects capacity exhaustion in the output, it first tries a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`codex-high-m` -> `claude-high-m`, `codex-medium-h` -> `codex-high-m`). For `orch do`: if a task fails its test or scope check twice at one key, rerun it one key higher; if it fails at `claude-high-m`, settle the missing judgment yourself and delegate again, or take it over.
 
