@@ -30,8 +30,8 @@ const (
 var catalog = []Model{
 	{"codex-medium-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction", "gpt-6-luna", "medium"},
 	{"codex-medium-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification", "gpt-6-luna", "high"},
-	{"codex-high-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", "gpt-6-sol", "low"},
-	{"codex-high-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", "gpt-6-sol", "medium"},
+	{"codex-high-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", "gpt-6.1-sol", "low"},
+	{"codex-high-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", "gpt-6.1-sol", "medium"},
 	{"claude-high-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", "opus", "medium"},
 	{"claude-medium-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA", "sonnet", "medium"},
 	{"gemini-medium-m", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks", "gemini-3.8-flash-medium", ""},

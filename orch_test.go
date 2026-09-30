@@ -59,7 +59,7 @@ func TestLaunchArgs(t *testing.T) {
 	}
 	m, _ := modelByKey("codex-high-m")
 	got := joinArgs(t, m, true)
-	want := `--dangerously-bypass-approvals-and-sandbox --no-daemon --model gpt-6-sol -c model_reasoning_effort="medium"`
+	want := `--dangerously-bypass-approvals-and-sandbox --no-daemon --model gpt-6.1-sol -c model_reasoning_effort="medium"`
 	if got != want {
 		t.Fatalf("got %q", got)
 	}
