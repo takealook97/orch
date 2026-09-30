@@ -43,7 +43,7 @@ type Playbook struct {
 
 var (
 	modes      = []string{"direct", "light", "full", "full+"}
-	stageNames = []string{"recon", "design", "produce", "verify", "integrate"}
+	stageNames = []string{"recon", "design", "design_check", "produce", "verify", "integrate"}
 	laneNames  = []string{"mechanical", "critical", "neutral", "adversarial"}
 	// A lane model is a catalog key, "head", or other_family(<refs>).
 	otherFamily = regexp.MustCompile(`^other_family\((author|author,\s*critical)\)$`)
