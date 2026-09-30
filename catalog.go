@@ -28,8 +28,7 @@ const (
 )
 
 var catalog = []Model{
-	{"codex-medium-m", "codex", familyOpenAI, "lowest", "fast exploration, bulk classification, simple extraction", "gpt-6-luna", "medium"},
-	{"codex-medium-h", "codex", familyOpenAI, "low", "precise extraction, log and test analysis, focused verification", "gpt-6-luna", "high"},
+	{"codex-medium-h", "codex", familyOpenAI, "low", "exploration, bulk classification, precise extraction, log and test analysis, focused verification", "gpt-6-luna", "high"},
 	{"codex-high-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", "gpt-6.1-sol", "low"},
 	{"codex-high-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", "gpt-6.1-sol", "medium"},
 	{"claude-high-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", "opus", "medium"},
@@ -120,7 +119,7 @@ func isVerifyRole(role string) bool { return strings.HasPrefix(role, "verify-") 
 
 // Fallback chains by purpose (design §9.4). The first entry is the primary key.
 var chains = map[string][]string{
-	"explore":     {"codex-medium-m", "codex-medium-h", "gemini-medium-m"},
+	"explore":     {"codex-medium-h", "gemini-medium-m"},
 	"extract":     {"codex-medium-h", "codex-high-m", "claude-medium-m"},
 	"web":         {"gemini-medium-m", "claude-medium-m", "claude-high-m"},
 	"synthesis":   {"claude-high-m", "codex-high-m", "claude-medium-m"},

@@ -24,7 +24,7 @@ func dagRunFixture(t *testing.T, yamlText string, contracts ...string) *Run {
 }
 
 const goodDag = `nodes:
-  - {name: recon, model: codex-medium-m, role: recon, purpose: explore}
+  - {name: recon, model: codex-medium-h, role: recon, purpose: explore}
   - {name: impl-a, model: codex-high-m, role: produce, purpose: impl, needs: [recon]}
   - {name: impl-b, model: claude-high-m, role: produce, purpose: hard-impl, needs: [recon]}
   - {name: mech-a, model: codex-medium-h, role: verify-mech, needs: [impl-a]}

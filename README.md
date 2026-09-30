@@ -46,14 +46,14 @@ orch run end                   # close all remaining panes and confirm removal
 ## One-off tasks (no pane)
 
 ```bash
-orch ask --model codex-medium-m "list the implementations of Store and their call paths"     # read-only, answer capped at 2000 chars
+orch ask --model codex-medium-h "list the implementations of Store and their call paths"     # read-only, answer capped at 2000 chars
 orch do  --model codex-high-m --own 'parser/**' --test "go test ./parser/..." "handle empty input in Parse"
 orch do  --model codex-high-l --own 'docs/**' --background "draft the changelog for v0.4"      # returns task-N at once
 orch wait task-2                                                                             # same report when it finishes
 orch test "go test ./..."                                                                    # no model: exit code, failing names, capped excerpt
 ```
 
-Flags go before the text; a text that starts with `-` goes after `--` (`orch ask --model codex-medium-m -- "-1 or 1?"`).
+Flags go before the text; a text that starts with `-` goes after `--` (`orch ask --model codex-medium-h -- "-1 or 1?"`).
 
 `orch do` returns only status, changed files, diff stat, owned-scope violations (a violation fails the task), orch's own final test run, and a capped summary; the full diff, answer, and logs stay in `~/.orch/runs/<id>/tasks/task-N/`. No `orch run new` is needed. Children run with `ORCH_ROLE=worker`, so they cannot delegate further. Add `--json` for a machine-readable report.
 
@@ -79,7 +79,6 @@ By default `orch` passes the Head's login to workers. To split capacity, wire an
 
 | Key | CLI | Family | Model variable | Default model |
 |---|---|---|---|---|
-| `codex-medium-m` | codex, effort medium | OpenAI | `CODEX_MEDIUM_M` | `gpt-6-luna` |
 | `codex-medium-h` | codex, effort high | OpenAI | `CODEX_MEDIUM_H` | `gpt-6-luna` |
 | `codex-high-l` | codex, effort low | OpenAI | `CODEX_HIGH_L` | `gpt-6.1-sol` |
 | `codex-high-m` | codex, effort medium | OpenAI | `CODEX_HIGH_M` | `gpt-6.1-sol` |

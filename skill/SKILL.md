@@ -90,7 +90,7 @@ orch run end                                                  # close every pane
 
   ```yaml
   nodes:
-    - {name: recon-api, model: codex-medium-m, role: recon, purpose: explore}
+    - {name: recon-api, model: codex-medium-h, role: recon, purpose: explore}
     - {name: impl-api, model: codex-high-m, role: produce, purpose: impl, needs: [recon-api], worktree: ../wt-api}
     - {name: mech-api, model: codex-medium-h, role: verify-mech, needs: [impl-api]}
     - {name: crit-api, model: claude-medium-m, role: verify-critical, reviews: [impl-api], needs: [mech-api]}
@@ -128,7 +128,7 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 
 | Purpose | Primary | Conditional alternative | `--purpose` |
 |---|---|---|---|
-| Broad file/symbol search, bulk classification, translation | `codex-medium-m` | irregular naming -> `codex-medium-h`; ambiguous classification criteria -> `claude-medium-m` | explore |
+| Broad file/symbol search, bulk classification, translation | `codex-medium-h` | ambiguous classification criteria -> `claude-medium-m` | explore |
 | Evidence extraction, log/test-failure analysis, data extraction | `codex-medium-h` | tangled root-cause candidates or schema interpretation -> `codex-high-m` | extract |
 | Web, long documents, PDFs, reading images/screenshots | `gemini-medium-m` | deep technical interpretation -> `claude-high-m`; visual detail -> `claude-medium-m` | web |
 | Synthesizing conflicting evidence, root-cause hypotheses, ambiguous design | `claude-high-m` | -- | synthesis |
@@ -143,7 +143,7 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Merge/integration mechanics | `codex-high-m` | semantic conflicts -> `claude-high-m` | integrate |
 | Image generation | `codex-high-m` (Codex image_generation) | -- | image |
 
-Effort is chosen separately from the model (bulk classification: `codex-medium-m`; precise extraction: `codex-medium-h`; planned implementation: `codex-high-l`; mixed judgment: `codex-high-m`). For implementation, write the plan into the contract and hand it to `codex-high-l`; the `mech-impl` chain escalates to `codex-high-m` on failure. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
+Luna runs only at effort high (`codex-medium-h`). Effort is chosen separately from the model (precise extraction: `codex-medium-h`; planned implementation: `codex-high-l`; mixed judgment: `codex-high-m`). For implementation, write the plan into the contract and hand it to `codex-high-l`; the `mech-impl` chain escalates to `codex-high-m` on failure. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
 
 **Fallback**: if `orch wait` detects capacity exhaustion in the output, it first tries a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`codex-high-m` -> `claude-high-m`, `codex-medium-h` -> `codex-high-m`). For `orch do`: if a task fails its test or scope check twice at one key, rerun it one key higher; if it fails at `claude-high-m`, settle the missing judgment yourself and delegate again, or take it over.
 
