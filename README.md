@@ -81,8 +81,8 @@ By default `orch` passes the Head's login to workers. To split capacity, wire an
 |---|---|---|---|---|
 | `codex-medium-m` | codex, effort medium | OpenAI | `CODEX_MEDIUM_M` | `gpt-6-luna` |
 | `codex-medium-h` | codex, effort high | OpenAI | `CODEX_MEDIUM_H` | `gpt-6-luna` |
-| `codex-high-l` | codex, effort low | OpenAI | `CODEX_HIGH_L` | `gpt-6-sol` |
-| `codex-high-m` | codex, effort medium | OpenAI | `CODEX_HIGH_M` | `gpt-6-sol` |
+| `codex-high-l` | codex, effort low | OpenAI | `CODEX_HIGH_L` | `gpt-6.1-sol` |
+| `codex-high-m` | codex, effort medium | OpenAI | `CODEX_HIGH_M` | `gpt-6.1-sol` |
 | `claude-high-m` | claude, effort medium | Anthropic | `CLAUDE_HIGH_M` | `opus` |
 | `claude-medium-m` | claude, effort medium | Anthropic | `CLAUDE_MEDIUM_M` | `sonnet` |
 | `gemini-medium-m` | agy | Google | `GEMINI_MEDIUM_M` | `gemini-3.8-flash-medium` |
