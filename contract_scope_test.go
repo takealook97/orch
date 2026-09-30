@@ -27,6 +27,38 @@ func scopeRepo(t *testing.T, dir string) string {
 	return strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
 }
 
+func TestScopeNonASCIIPaths(t *testing.T) {
+	dir := t.TempDir()
+	scopeRepo(t, dir)
+	git(t, dir, "config", "core.quotepath", "true")
+	if err := os.MkdirAll(filepath.Join(dir, "goals"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	tracked := "goals/목표-가.md"
+	untracked := "goals/목표-나.md"
+	if err := os.WriteFile(filepath.Join(dir, tracked), []byte("base"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-qm", "Korean paths")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	for _, file := range []string{tracked, untracked} {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte("changed"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed, err := changedFiles(dir, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad := repositoryScopeViolations(dir, dir, changed, []string{"goals/**"}); len(bad) != 0 {
+		t.Fatalf("scope violations: %v", bad)
+	}
+	if len(changed) != 2 || !slices.Contains(changed, tracked) || !slices.Contains(changed, untracked) {
+		t.Fatalf("changed=%v", changed)
+	}
+}
+
 func TestScopeRepositoryWorkspace(t *testing.T) {
 	for _, rootGit := range []bool{false, true} {
 		t.Run(fmt.Sprint(rootGit), func(t *testing.T) {

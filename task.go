@@ -741,6 +741,23 @@ func claimTask(runID, id string) (*Task, error) {
 	return t, err
 }
 
+type ownedFlags []string
+
+func (v *ownedFlags) String() string { return strings.Join(*v, ",") }
+
+func (v *ownedFlags) Set(value string) error {
+	*v = append(*v, value)
+	return nil
+}
+
+var taskFlagName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// errUnknownTaskFlag marks an error parseTask raises itself; flag.Parse errors are
+// already printed by the flag package.
+type errUnknownTaskFlag struct{ msg string }
+
+func (e errUnknownTaskFlag) Error() string { return e.msg }
+
 // parseTask parses flags up to the first positional argument (or "--"); everything after
 // it is the question, requirement or command, so a prompt may start with "-".
 func parseTask(fs *flag.FlagSet, args []string) ([]string, error) {
@@ -753,6 +770,14 @@ func parseTask(fs *flag.FlagSet, args []string) ([]string, error) {
 		}
 		name, _, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
 		f := fs.Lookup(name)
+		if strings.HasPrefix(a, "--") {
+			longName, _, _ := strings.Cut(strings.TrimPrefix(a, "--"), "=")
+			if taskFlagName.MatchString(longName) && fs.Lookup(longName) == nil {
+				var names []string
+				fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
+				return nil, errUnknownTaskFlag{fmt.Sprintf("orch: unknown flag --%s for %s (flags: %s; put -- before a prompt that starts with -)", longName, fs.Name(), strings.Join(names, ", "))}
+			}
+		}
 		if !strings.HasPrefix(a, "-") || len(a) < 2 || f == nil {
 			pos = append(pos, args[i:]...)
 			break
@@ -778,7 +803,8 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	key := fs.String("model", "", "catalog key")
 	cwd := fs.String("cwd", "", "directory")
 	maxOutput := fs.Int("max-output", 2000, "characters")
-	own := fs.String("own", "", "owned globs")
+	var own ownedFlags
+	fs.Var(&own, "own", "owned globs")
 	testCmd := fs.String("test", "", "test command")
 	worktree := fs.String("worktree", "", "worktree directory")
 	background := fs.Bool("background", false, "run in background")
@@ -788,6 +814,10 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	maxLines := fs.Int("max-lines", 40, "test excerpt lines")
 	pos, err := parseTask(fs, args)
 	if err != nil {
+		var unknown errUnknownTaskFlag
+		if errors.As(err, &unknown) {
+			fmt.Fprintln(stderr, err)
+		}
 		return 2
 	}
 	if len(pos) != 1 {
@@ -824,7 +854,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch:", err)
 		return 1
 	}
-	if kind == "do" && strings.TrimSpace(*own) == "" {
+	if kind == "do" && strings.TrimSpace(strings.Join(own, ",")) == "" {
 		fmt.Fprintln(stderr, "orch: --own is required")
 		return 2
 	}
@@ -833,7 +863,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch:", err)
 		return 1
 	}
-	t.Own = splitOwned(*own)
+	t.Own = splitOwned(strings.Join(own, ","))
 	t.TestCmd = *testCmd
 	t.TimeoutMS = *timeout
 	t.MaxOutput = *maxOutput
