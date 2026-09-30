@@ -50,6 +50,9 @@ func contractTemplate(r *Run, name, role, key string) string {
 - decision log: %[5]s/decisions.md (read and follow it)
 - Interface assumptions: <signatures and schemas shared with other pieces>
 
+## Plan
+- <ordered steps written like a /plan handover. Implementation: file, function and signature, exact change, edge cases, and the test that proves it. Recon/verify/docs: where to look, what to check or claim, and how each finding is proven. Follow it as written and report any gap under Blockers>
+
 ## Scope
 - Owned files (glob): none
 - Changes outside owned files fail the contract (orch collect checks the diff)

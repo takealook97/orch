@@ -110,6 +110,7 @@ Pane workers need a contract; `orch ask`/`orch do` do not (their flags and requi
 
 - **Write it to be self-contained.** Even if a fallback starts fresh on a different model or account, the contract alone must be enough to do the work.
 - Hand over **paths** (files, line ranges, commit hashes), not inline content.
+- **Every handoff carries a plan written like a `/plan` handover document**: pane contracts in `## Plan`, `orch ask`/`orch do` in the requirement text. Ordered steps; for implementation each step names the file, the function and its signature, the exact change, the edge cases, and the test that proves it; for recon, verification, and docs each step names where to look, what to check or claim, and how the finding is proven. A plan this tight is what lets cheaper keys such as `codex-high-l` (sol, effort low) do the work; if you can't write it, the judgment isn't done yet: settle it first, or hand the open question to a stronger key explicitly.
 - Give `Owned files (glob)` exclusively. If read-only, write "none". `orch collect` diffs changes since the base commit and fails anything outside scope.
 - In a vat workspace, a child repository's worktree outside the workspace cannot run workspace-dependent `vat` or `make check` commands ("not inside a vat workspace"). Specify the original checkout as the check location, or require the worker to record the unavailable check in its result.
 - Join checks and commits with `&&`, never `;`: a failed check must stop the commit.
@@ -132,8 +133,8 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Web, long documents, PDFs, reading images/screenshots | `gemini-medium-m` | deep technical interpretation -> `claude-high-m`; visual detail -> `claude-medium-m` | web |
 | Synthesizing conflicting evidence, root-cause hypotheses, ambiguous design | `claude-high-m` | -- | synthesis |
 | Drafting interfaces/schemas | `codex-high-m` | wide blast radius -> `claude-high-m` | impl |
-| Mechanical implementation with a complete spec | `codex-high-l` | very narrow, 1-2 files -> `codex-medium-h` | mech-impl |
-| General feature implementation, bug fixes, test code | `codex-high-m` | -- | impl |
+| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, test code, mechanical edits) | `codex-high-l` | very narrow, 1-2 files -> `codex-medium-h` | mech-impl |
+| Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | -- | impl |
 | Hard implementation/debugging (concurrency, performance, security, complex state, flaky repro) | `claude-high-m` | reliable repro, localized cause -> `codex-high-m` | hard-impl |
 | Alternative implementation/design (for comparison) | `claude-medium-m` | primary is Anthropic -> `codex-high-m` | alt |
 | Docs, reports, research synthesis | `claude-medium-m` | deep technical content or conflicting sources -> `claude-high-m` | docs |
@@ -142,7 +143,7 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Merge/integration mechanics | `codex-high-m` | semantic conflicts -> `claude-high-m` | integrate |
 | Image generation | `codex-high-m` (Codex image_generation) | -- | image |
 
-Effort is chosen separately from the model (bulk classification: `codex-medium-m`; precise extraction: `codex-medium-h`; fully specified: `codex-high-l`; mixed judgment: `codex-high-m`). `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
+Effort is chosen separately from the model (bulk classification: `codex-medium-m`; precise extraction: `codex-medium-h`; planned implementation: `codex-high-l`; mixed judgment: `codex-high-m`). For implementation, write the plan into the contract and hand it to `codex-high-l`; the `mech-impl` chain escalates to `codex-high-m` on failure. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
 
 **Fallback**: if `orch wait` detects capacity exhaustion in the output, it first tries a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`codex-high-m` -> `claude-high-m`, `codex-medium-h` -> `codex-high-m`). For `orch do`: if a task fails its test or scope check twice at one key, rerun it one key higher; if it fails at `claude-high-m`, settle the missing judgment yourself and delegate again, or take it over.
 

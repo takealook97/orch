@@ -18,6 +18,8 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 | D10 | All three CLIs use a PreToolUse hook, and `orch spawn` also self-checks (refuses if `ORCH_ROLE=worker`) | Confirmed hook support in all three CLIs |
 | D11 | Delegation is judged by cost, not time: execution that needs no top-tier judgment goes to a cheaper key regardless of length; the 5-minute floor applies only to parallel splits | The Head runs on the top-tier model, so its usage and context are the scarce resource (see "Cost-based delegation" below) |
 | D12 | `orch ask` / `orch do` run a catalog key's CLI non-interactively without a pane (`claude -p`, `codex exec`, `agy -p`); `orch test` runs a command with no model and returns only a summary | Removes the fixed cost (spawn, contract, prompt, wait, collect) that made short delegation look unprofitable |
+| D13 | Implementation defaults to `codex-high-l` (sol, effort low) when the contract carries a file-level plan; `codex-high-m` is kept for work where the worker must choose the approach or find the cause | The Head writes the plan into the contract, so the worker has little judgment left; the `mech-impl` chain escalates to `codex-high-m` on failure. Not yet measured on `gpt-6.1-sol` (2026-09-30) |
+| D14 | Every handoff (pane contract `## Plan`, `orch ask`/`orch do` requirement text) carries a `/plan`-style step plan | User's standing rule (2026-09-30): workers run a plan, the Head does the judgment |
 | D13 | D3 stays: built-in subagents remain blocked inside Herdr. The cheap path is `orch ask`/`orch do`, which keeps the model catalog and `ORCH_ROLE=worker` injection | Model pinning is kept while a light path exists |
 
 ## Changes from the design doc

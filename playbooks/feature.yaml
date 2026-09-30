@@ -14,11 +14,11 @@ stages:
     notes: Lock interfaces and names in decisions.md first (parallel-write gate 3)
   produce:
     parallel: by_worktree
-    model: codex-high-m
-    purpose: impl
-    escalate_to: claude-high-m
+    model: codex-high-l
+    purpose: mech-impl
+    escalate_to: codex-high-m
     escalate_when: ["failed_once", "cross_cutting"]
-    notes: Use codex-high-l(mech-impl) for mechanical shards; start with claude-high-m(hard-impl) for concurrency, security, or complex state
+    notes: Write a file-level plan into each shard contract so codex-high-l can run it; use codex-high-m(impl) when the shard needs its own design choices; start with claude-high-m(hard-impl) for concurrency, security, or complex state
   verify:
     start: per_shard
     lanes:
