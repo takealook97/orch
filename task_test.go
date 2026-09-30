@@ -15,6 +15,67 @@ import (
 	"unicode/utf8"
 )
 
+func TestDoRepeatedOwn(t *testing.T) {
+	taskEnv(t)
+	dir := taskRepo(t)
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"a.txt", "sub/b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte("old\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-qm", "owned files")
+	fakeCLI(t, "codex", `printf 'new\n' > a.txt
+printf 'new\n' > sub/b.txt
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"SUMMARY: ok"}}'
+`)
+	var out, errout bytes.Buffer
+	code := run([]string{"do", "--model", "codex-medium-h", "--own", "a.txt", "--own", "sub/*", "--cwd", dir, "--json", "req"}, strings.NewReader(""), &out, &errout)
+	var result Task
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil || code != 0 || result.Status != "done" || len(result.ScopeViolations) != 0 || len(result.Changed) != 2 {
+		t.Fatalf("code=%d result=%s stderr=%s err=%v", code, out.String(), errout.String(), err)
+	}
+}
+
+func TestTaskUnknownFlag(t *testing.T) {
+	for _, unknown := range []string{"--purpose", "--purpose=docs"} {
+		t.Run(unknown, func(t *testing.T) {
+			taskEnv(t)
+			var out, errout bytes.Buffer
+			args := []string{"do", "--model", "codex-medium-h", unknown}
+			if unknown == "--purpose" {
+				args = append(args, "docs")
+			}
+			args = append(args, "--own", "x", "req")
+			code := run(args, strings.NewReader(""), &out, &errout)
+			if code != 2 || !strings.Contains(errout.String(), "unknown flag --purpose for orch do") || !strings.Contains(errout.String(), "--own") || !strings.Contains(errout.String(), "put -- before a prompt that starts with -") {
+				t.Fatalf("code=%d stderr=%s", code, errout.String())
+			}
+		})
+	}
+}
+
+func TestTaskDashPrompt(t *testing.T) {
+	for _, prompt := range []string{"--- FAIL: x", "-prompt", "-"} {
+		t.Run(prompt, func(t *testing.T) {
+			taskEnv(t)
+			fakeCLI(t, "codex", `echo '{"type":"item.completed","item":{"type":"agent_message","text":"SUMMARY: ok"}}'`)
+			var out, errout bytes.Buffer
+			code := run([]string{"ask", "--model", "codex-medium-h", "--cwd", t.TempDir(), "--json", prompt}, strings.NewReader(""), &out, &errout)
+			var result Task
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil || code != 0 {
+				t.Fatalf("code=%d result=%s stderr=%s err=%v", code, out.String(), errout.String(), err)
+			}
+			if saved, err := os.ReadFile(filepath.Join(result.Dir, "prompt.md")); err != nil || string(saved) != prompt {
+				t.Fatalf("prompt=%q err=%v", saved, err)
+			}
+		})
+	}
+}
+
 func TestTaskArgs(t *testing.T) {
 	for _, m := range catalog {
 		for _, kind := range []string{"ask", "do"} {

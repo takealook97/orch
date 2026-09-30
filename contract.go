@@ -330,14 +330,14 @@ func changedFiles(dir, base string) ([]string, error) {
 			out = append(out, s)
 		}
 	}
-	diff, err := exec.Command("git", "-C", root, "diff", "--no-renames", "--name-only", base).Output()
+	diff, err := exec.Command("git", "-C", root, "-c", "core.quotepath=off", "diff", "--no-renames", "--name-only", base).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff failed (%s): %w", dir, err)
 	}
 	for _, l := range strings.Split(string(diff), "\n") {
 		add(l)
 	}
-	untracked, err := exec.Command("git", "-C", root, "ls-files", "--others", "--exclude-standard").Output()
+	untracked, err := exec.Command("git", "-C", root, "-c", "core.quotepath=off", "ls-files", "--others", "--exclude-standard").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git ls-files failed (%s): %w", dir, err)
 	}
