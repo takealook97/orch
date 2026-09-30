@@ -38,9 +38,11 @@ Estimate within 30 seconds of receiving the request.
 | direct | All of: E <= 10 calls/5 min · F <= 2 files, one module · P <= 1 · U pinned · R immediate · no H | No run, no panes. The Head decides; execution that needs no top-tier judgment still goes to `orch ask`/`orch do` (section 0). Tests run once through `orch test` |
 | light | Exceeds direct, but F <= 5, 1-2 modules · U pinned · R possible · no H | 1 producer (parallel if P >= 2) + 1 independent verification lane. A single producer can be `orch do`; the verification lane is still a pane worker of a different family |
 | full | Any of: F > 5 or 3+ modules · P >= 3 · U needs investigation to pin down · R is cumbersome | Investigate -> (design) -> produce -> verification lanes -> integrate |
-| full+ | Any H applies | full + 2 critical lanes from different families + an adversarial lane |
+| full+ | Any H applies | full + design challenge + 2 critical lanes from different families + an adversarial lane |
 
 H: auth/permissions/secrets/encryption / data deletion, migration, schema, backup / money, payment, billing, usage calculation / core concurrency structures / production config, deploy pipeline, externally published output / the user asks for "thorough, complete verification".
+
+In full, the neutral lane is required only if user-facing output (docs, UI, CLI text, API surface) changed.
 
 light's single verification lane: if it's code and tests exist, the Head runs the tests with `orch test` plus **1 critical lane** (a different family). If it's docs or user-facing output, **1 neutral lane** (`gemini-medium-m`). If both apply, use critical.
 
@@ -85,6 +87,7 @@ orch spawn --model claude-medium-m --name crit-api --role verify-critical --revi
 orch run end                                                  # close every pane and confirm removal
 ```
 
+- full+: when a design stage ran, run a design challenge (different family from the designer, `codex-high-m` by default) before any produce worker starts.
 - To spawn several workers at once, call spawn repeatedly, then wait on all of them together with `orch wait a b c`.
 - If there are multiple pieces with dependencies, **delegate as a DAG.** Write `dag.yaml` in the run directory, then `orch dag check` -> `orch dag run`. It spawns nodes whose inputs are ready, in order of longest critical path, closes finished panes, and skips downstream nodes whose dependencies aren't done (the mechanical lane is the gate). If interrupted, calling `orch dag run` again resumes it. Check status with `orch dag status`.
 
@@ -140,7 +143,7 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 | Docs, reports, research synthesis | `claude-medium-m` | deep technical content or conflicting sources -> `claude-high-m` | docs |
 | Short summaries, changelogs | `codex-medium-h` | -- | extract |
 | Data analysis | `codex-high-m` | ambiguous interpretation or causal judgment -> `claude-high-m` | analysis |
-| Merge/integration mechanics | `codex-high-m` | semantic conflicts -> `claude-high-m` | integrate |
+| Merge/integration mechanics | Head directly (git + `orch test`) for clean merges; `codex-high-m` for textual conflicts | semantic conflicts -> `claude-high-m` | integrate |
 | Image generation | `codex-high-m` (Codex image_generation) | -- | image |
 
 Luna runs only at effort high (`codex-medium-h`). Effort is chosen separately from the model (precise extraction: `codex-medium-h`; planned implementation: `codex-high-l`; mixed judgment: `codex-high-m`). For implementation, write the plan into the contract and hand it to `codex-high-l`; the `mech-impl` chain escalates to `codex-high-m` on failure. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
@@ -164,15 +167,17 @@ Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-
 |---|---|---|---|---|
 | direct | `orch test`, if needed | -- | -- | -- |
 | light | yes (if there's something to run) | yes, for code | yes, for docs/UI | -- |
-| full | yes | yes | yes | optional |
+| full | yes | yes | if user-facing output (docs, UI, CLI text, API surface) changed | optional |
 | full+ | yes | yes, x2, different families | yes | yes |
+
+In full, skip the neutral lane when the change has no user-facing surface; record the skip in the final report.
 
 - **The mechanical lane is the gate.** If it fails, don't spawn LLM lanes; send it back for a fix. If it passes, spawn the rest concurrently.
 - Give LLM reviewers permission to run tests too, and require evidence (file:line, repro command) for every finding.
 - Build the neutral checklist template with `orch checklist` (generated from acceptance.md). For full+'s second judgment, shuffle the order with `orch checklist --shuffle`.
 - The neutral checklist format is fixed: `| # | Acceptance criterion | Verdict (met/not met/cannot confirm from evidence) | Evidence location | Notes |` plus "added but not requested" and "confusing from the user's perspective". One verdict per item. For items confirmable by script, carry over the mechanical-lane result. In full+, shuffle the order and judge once more; the Head confirms the remaining items directly.
 
-**Judgment**: the Head verifies every finding against primary evidence and sorts it into `findings.md` (confirmed defect / plausible risk / unfounded concern / resolved). Only a reproduced or proven finding counts as a defect. Reviewers have no veto. Passing the neutral checklist or a technical review alone is **not** sufficient for acceptance. Send defects to a fix worker and re-run **only the affected lanes**. Up to 2 iterations; after that, escalate or report to the user. Note plausible risks in the final report.
+**Judgment**: the Head verifies every finding against primary evidence and sorts it into `findings.md` (confirmed defect / plausible risk / unfounded concern / resolved). Only a reproduced or proven finding counts as a defect. Reviewers have no veto. Passing the neutral checklist or a technical review alone is **not** sufficient for acceptance. Send defects to a fix worker and re-run **only the affected lanes**. Up to 2 fix iterations. A third attempt at the same plan is forbidden: two failures usually mean the plan is wrong, not the implementation. The Head classifies the cause and acts: design error -> back to design (revise decisions.md and the contracts); ambiguous requirement -> ask the user; environment problem -> report a blocker; worker capability -> escalate the key (section 4) and rerun once. Note plausible risks in the final report.
 
 ## 6. Parallelism
 
@@ -180,7 +185,7 @@ Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-
 - Writes are parallel only when **all parallel-write gates** pass: 2+ independent deliverables · owned-file globs don't overlap · the interface is already locked in decisions.md · concurrent writers <= 4. Otherwise, use a single sequential writer.
 - Stages are not barriers. As soon as one piece's investigation finishes, start that piece's production; as soon as production finishes, start that piece's verification.
 - One writer per checkout. Split concurrent writers with `--worktree`. Shared files (config, lockfiles, schema) belong to a single worker.
-- Merge worktrees one at a time, running build, typecheck, and the full test suite at each merge. Even if per-piece verification passed, run full verification again after integration.
+- Merge worktrees one at a time, running build, typecheck, and the full test suite at each merge. Even if per-piece verification passed, run full verification again after integration. A clean merge needs no model.
 
 ## 7. Cleanup and reporting
 

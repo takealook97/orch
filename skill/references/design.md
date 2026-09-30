@@ -370,8 +370,8 @@ Write it to ~/.orch/runs/<id>/results/<name>.md in the format below.
 |---|---|---|---|
 | **direct** | **All** of: E <= 10 tool calls or about 5 minutes · F <= 2 files, one module · P <= 1 · U = acceptance criteria can be pinned down immediately · R = git reverts it instantly · no H | Head does it directly. No run directory. If there's a test or build, Head runs it once directly | 0 |
 | **light** | Crosses one or more of the direct conditions, but: F <= 5 files, one or two modules · U = can be pinned down · R = git can revert it · no H | One deliverable (parallel if P >= 2) + **one independent verification lane**. Mechanical checks are Head running the command directly | 1-3 |
-| **full** | **One or more** of: F > 5 files or 3+ modules · P >= 3 · U = acceptance criteria need investigation to pin down · R = reverting is a hassle (multiple commits, config, a pre-publish stage of a document) | recon -> (design) -> produce -> 3 verification lanes -> integrate | 3 up to the D5 cap |
-| **full+** | **Any** H | same as full, plus 2 critical lanes from different families + an adversarial lane | same as full |
+| **full** | **One or more** of: F > 5 files or 3+ modules · P >= 3 · U = acceptance criteria need investigation to pin down · R = reverting is a hassle (multiple commits, config, a pre-publish stage of a document) | recon -> (design) -> produce -> mechanical + critical (+ neutral if user-facing output changed) -> integrate | 3 up to the D5 cap |
+| **full+** | **Any** H | same as full, plus a design challenge after design and before produce, 2 critical lanes from different families + an adversarial lane | same as full |
 
 **H: high-risk flags (any one triggers full+)**
 - Auth, permissions, secrets, encryption
@@ -623,10 +623,12 @@ There are exactly three families: OpenAI (`codex-*`), Anthropic (`claude-high-m`
 |---|---|---|---|---|
 | direct | Head directly, if needed | — | — | — |
 | light | required (if there's something to run) | optional | required | — |
-| full | required | required | required | optional |
+| full | required | required | if user-facing output (docs, UI, CLI text, API surface) changed | optional |
 | full+ | required | required, two different families | required | required |
 
 required = must run · optional = run if useful · two = two of them
+
+In full, skip the neutral lane when the change has no user-facing surface; record the skip in the final report.
 
 ### 10.5 Verdicts and the fix loop
 - Head checks every finding against primary evidence and files it in `findings.md` under one of four categories:
@@ -635,7 +637,7 @@ required = must run · optional = run if useful · two = two of them
   - **Unfounded concern**: contradicted by the evidence
   - **Resolved**
 - Confirmed defects go back to an implementer (the original author or another worker), and **only the affected lanes** rerun.
-- **The retry cap is 2.** If a defect survives two rounds, escalate the model (e.g., `codex-high-m` -> `claude-high-m`, `codex-medium-h` -> `codex-high-m`) or report to the user.
+- **The retry cap is 2 fix iterations.** No third attempt at the same plan: Head classifies the cause — design error -> revise decisions.md and contracts; ambiguous requirement -> ask the user; environment problem -> report a blocker; worker capability -> escalate the key (§9) and rerun once.
 - **Neither a neutral-lane pass nor a technical reviewer's pass alone is enough to accept the work.**
 - **Don't apply a review finding just because it was raised.** Only a finding that's reproduced or proven by a test becomes a confirmed defect. Cross-family review has an asymmetric effect — folding in an unfounded finding from a weaker reviewer can make a stronger author's result worse (§17 C4). Reviewers have no veto.
 - State plausible risks in the final report. Don't hide them.
@@ -709,14 +711,14 @@ Playbooks live at `~/.orch/playbooks/<type>.yaml`. Head picks a type, adjusts it
 
 | Type | Default mode | Recon | Produce | Verify |
 |---|---|---|---|---|
-| Feature development | full | `codex-medium-h` per area | `codex-high-m` (or `claude-high-m` if hard; mechanical shards go to `codex-high-l`) per worktree | mechanical `codex-medium-h` + critical (different family) + neutral `gemini-medium-m` |
+| Feature development | full | `codex-medium-h` per area | `codex-high-m` (or `claude-high-m` if hard; mechanical shards go to `codex-high-l`) per worktree | mechanical `codex-medium-h` + critical (different family) + neutral `gemini-medium-m` if user-facing output changed |
 | Bug fix | light -> full | `codex-medium-h` (repro, logs, candidate causes) | `codex-high-m` (`claude-high-m` if the cause spans multiple layers) | mechanical (repro is gone + regression test) + critical |
 | Investigation/research | full | `gemini-medium-m` (broad) + `codex-medium-h` (code, data) in parallel | `claude-medium-m` synthesizes | neutral `gemini-medium-m` (source cross-check, a different session) + critical `claude-high-m` (fact rebuttal) |
 | Documentation | light | `codex-medium-h`/`gemini-medium-m` gather material | `claude-medium-m` | neutral `gemini-medium-m` + critical `codex-high-m` (facts, consistency) |
 | Analysis | full | `codex-medium-h` (data extraction) | `codex-high-m`/`claude-high-m` | mechanical `codex-medium-h` (recompute) + critical (different family) |
 | Image generation | light | `gemini-medium-m` (references, style analysis) | whichever CLI has generation tooling (D4) | neutral `gemini-medium-m` (requirements check) + critical `claude-medium-m` (visual quality) |
 | Refactoring | full | `codex-medium-h` (impact scope) | `claude-high-m` (core) + `codex-high-l` per mechanical shard | mechanical (full tests, same behavior) + critical `claude-high-m` |
-| Design/architecture review | full | `codex-medium-h` + `gemini-medium-m` | `claude-high-m` | critical `codex-high-m` + neutral `gemini-medium-m` |
+| Design/architecture review | full | `codex-medium-h` + `gemini-medium-m` | `claude-high-m` | critical `codex-high-m` + neutral `gemini-medium-m` if user-facing output changed |
 | Simple question, single-file edit | direct | — | Head | Head directly, if needed |
 
 ### 12.2 Playbook example (`feature.yaml`)
@@ -742,11 +744,13 @@ stages:
     lanes:
       mechanical: { model: codex-medium-h, required: true }
       critical:   { model: other_family(author), required: true }
-      neutral:    { model: gemini-medium-m, required: true, withhold: [self_assessment] }
+      neutral:    { model: gemini-medium-m, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
       adversarial:{ model: other_family(author, critical), when: "mode == full+" }
   integrate:
     owner: head
-    mechanics: codex-high-m
+    mechanics: head
+    escalate_to: codex-high-m
+    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-m. Semantic conflicts: claude-high-m. Merge one worktree at a time; full test suite after each merge."
 retry_limit: 2
 ```
 

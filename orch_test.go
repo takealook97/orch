@@ -413,6 +413,30 @@ func TestPlaybooksValid(t *testing.T) {
 	}
 }
 
+func TestPlaybookStages(t *testing.T) {
+	for _, tc := range []struct {
+		stage     string
+		wantError bool
+	}{
+		{stage: "design_check"},
+		{stage: "unknown", wantError: true},
+	} {
+		t.Run(tc.stage, func(t *testing.T) {
+			p := Playbook{Type: "x", DefaultMode: "full+", RetryLimit: 2, Stages: map[string]Stage{
+				tc.stage: {When: "design ran && mode == full+", Model: "codex-high-m", Purpose: "verify-critical"},
+			}}
+			errs := validatePlaybook(p)
+			if tc.wantError {
+				if len(errs) != 1 || !strings.Contains(errs[0], "unknown stage") {
+					t.Fatalf("expected unknown stage error, got %v", errs)
+				}
+			} else if len(errs) != 0 {
+				t.Fatalf("expected valid stage, got %v", errs)
+			}
+		})
+	}
+}
+
 func TestPlaybookRejectsBadKey(t *testing.T) {
 	p := Playbook{Type: "x", DefaultMode: "full", RetryLimit: 2, Stages: map[string]Stage{
 		"integrate": {Mechanics: "codex"},

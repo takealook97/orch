@@ -14,7 +14,7 @@ stages:
     start: after_produce
     lanes:
       critical: { model: other_family(author), required: true }
-      neutral: { model: gemini-medium-m, required: true, withhold: [self_assessment] }
+      neutral: { model: gemini-medium-m, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
   integrate:
     owner: head
 retry_limit: 2
