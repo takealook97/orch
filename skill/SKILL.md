@@ -110,6 +110,7 @@ Pane workers need a contract; `orch ask`/`orch do` do not (their flags and requi
 
 - **Write it to be self-contained.** Even if a fallback starts fresh on a different model or account, the contract alone must be enough to do the work.
 - Hand over **paths** (files, line ranges, commit hashes), not inline content.
+- **Every handoff carries a plan written like a `/plan` handover document**: pane contracts in `## Plan`, `orch ask`/`orch do` in the requirement text. Ordered steps; for implementation each step names the file, the function and its signature, the exact change, the edge cases, and the test that proves it; for recon, verification, and docs each step names where to look, what to check or claim, and how the finding is proven. A plan this tight is what lets cheaper keys such as `codex-high-l` (sol, effort low) do the work; if you can't write it, the judgment isn't done yet: settle it first, or hand the open question to a stronger key explicitly.
 - Give `Owned files (glob)` exclusively. If read-only, write "none". `orch collect` diffs changes since the base commit and fails anything outside scope.
 - In a vat workspace, a child repository's worktree outside the workspace cannot run workspace-dependent `vat` or `make check` commands ("not inside a vat workspace"). Specify the original checkout as the check location, or require the worker to record the unavailable check in its result.
 - Join checks and commits with `&&`, never `;`: a failed check must stop the commit.
