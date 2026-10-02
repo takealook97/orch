@@ -64,7 +64,7 @@ func TestLaunchArgs(t *testing.T) {
 	}
 	m, _ := modelByKey("codex-high-m")
 	got := joinArgs(t, m, true)
-	want := `--dangerously-bypass-approvals-and-sandbox --no-daemon --model gpt-6.1-sol -c model_reasoning_effort="medium"`
+	want := `--dangerously-bypass-approvals-and-sandbox --no-alt-screen --no-daemon --model gpt-6.1-sol -c model_reasoning_effort="medium"`
 	if got != want {
 		t.Fatalf("got %q", got)
 	}
@@ -84,7 +84,7 @@ func TestModelOverride(t *testing.T) {
 	t.Setenv("CODEX_HIGH_M", "gpt-7-sol")
 	t.Setenv("CLAUDE_HIGH_M", "claude-next")
 	m, _ := modelByKey("codex-medium-h")
-	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --model gpt-7-mini -c model_reasoning_effort="high"` {
+	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --no-alt-screen --model gpt-7-mini -c model_reasoning_effort="high"` {
 		t.Fatalf("got %q", got)
 	}
 	if got := joinArgs(t, key("codex-high-l"), false); !strings.Contains(got, "--model gpt-6.1-sol ") {

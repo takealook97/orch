@@ -91,7 +91,8 @@ func launchArgs(m Model, noDaemon bool) ([]string, error) {
 	var args []string
 	switch m.Kind {
 	case "codex":
-		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+		// Inline screen so the Codex TUI scrolls in Herdr panes (matches the cxd alias).
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox", "--no-alt-screen")
 		if noDaemon {
 			args = append(args, "--no-daemon")
 		}
