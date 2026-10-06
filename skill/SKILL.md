@@ -16,7 +16,7 @@ Delegate only through `orch`, in Claude and Codex alike. Don't drive Herdr panes
 The Head usually runs on the top-tier model (fable, opus high, astra, sol high); workers run on cheaper keys. Spend in this order: **(1) Head tokens and Head context → (2) total tokens → (3) wall-clock time.** When token cost and time conflict, pick tokens; put time first only while the user is waiting on the result.
 
 - The Head's job is **judgment and review**: decomposition, design decisions, trade-offs, accepting results, talking to the user.
-- **Execution goes to a lower key**, whatever its length, when it needs no top-tier judgment along the way: multi-file reading, log or long-document analysis, research, specified implementation (even 1-2 files), writing tests and fixing failures, build/lint/type errors, mechanical refactors, dependency bumps, clear-intent merge conflicts, git mechanics, scripts and bulk file processing, doc/commit/PR drafts, image iterations.
+- **Execution goes to a lower key**, whatever its length, when it needs no top-tier judgment along the way (length picks the channel, not the owner: see "Which channel" in section 1): multi-file reading, log or long-document analysis, research, specified implementation (even 1-2 files), writing tests and fixing failures, build/lint/type errors, mechanical refactors, dependency bumps, clear-intent merge conflicts, git mechanics, scripts and bulk file processing, doc/commit/PR drafts, image iterations.
 - The Head does it directly only when: the instruction would be about as long as the work (a one- or two-line change it already knows exactly, reading one known file, a grep or two) · judgment is needed throughout and can't be separated (settle the judgment first, then delegate the rest) · it depends on deep conversation context with the user.
 - Everything the Head reads or runs stays in its context for the rest of the session. A worker's context is thrown away when it finishes. So "how long would it take me" is the wrong question; ask **"does this need top-tier judgment?"**
 
@@ -61,10 +61,12 @@ Length alone never keeps a task with the Head. If the only way to trust a result
 
 | Situation | Channel |
 |---|---|
-| One read-only question (search, trace a call path, summarize a log or doc) | `orch ask --model <key> "..."` |
-| One execution task with owned files (implement, fix tests, refactor, draft a doc) | `orch do --model <key> --own '<globs>' [--test "<cmd>"] "..."`; add `--background` and keep judging, then `orch wait task-N` |
+| One bounded read-only question expected to finish in under 5 minutes (search, trace a call path, summarize a log or doc) | `orch ask --model <key> "..."` |
+| One bounded execution task with owned files expected to finish in under 5 minutes (implement a specified change, fix a failing test, draft a doc) | `orch do --model <key> --own '<globs>' [--test "<cmd>"] "..."`; add `--background` and keep judging, then `orch wait task-N` |
 | Only need to know whether tests/builds pass | `orch test "<cmd>"` (no model; exit code, failing names, capped excerpt) |
-| Long work, parallel pieces, work the user wants to watch, verification lanes | pane workers: `orch run new` -> contract -> `orch spawn` (section 2) |
+| Work expected to take 5+ minutes or of unknown length (a whole phase, fix-and-retest loops, broad research), parallel pieces, work the user wants to watch, and **every independent review or verification, read-only included** | pane workers: `orch run new` -> contract -> `orch spawn` (section 2) |
+
+Inside Herdr the user watches panes, not `orch ask`/`orch do`; a long pane-less task looks like orch doing nothing. When unsure whether a task will finish in 5 minutes, use a pane. An independent review is a verification lane even when it only reads: don't run it as `orch ask`. Inside Herdr, `orch ask`/`orch do` add a `hint:` line to the report when a task ran 5+ minutes without a pane; treat it as a misrouting and send that kind of work to a pane next time.
 
 **Parallel split floor:** splitting one job into parallel pieces is still worth it only when each piece takes 5+ minutes, the owned files don't overlap, and the interface is locked. The eval on 2026-09-26 measured roughly 13 seconds of fixed cost per extra worker. That floor applies to splitting, not to handing a whole task to a single cheaper worker.
 
@@ -203,4 +205,4 @@ Default is `same` (the Head's login). If many same-family workers need to split 
 
 ## 9. Layout (enforced by orch)
 
-The Head takes the full-height left third; workers stack top to bottom at equal height in the right two-thirds column. Every spawn uses `--no-focus`. **Don't steal the user's focus:** Herdr's `pane zoom` and `agent prompt` move the UI to the target tab, so don't call them directly (orch doesn't either). If a tab has a user pane, spawn stops (it never moves or closes it). If the layout breaks, use `orch layout`. If you need a pane for a plain command rather than delegation, prefix the command with `ORCH_RAW_HERDR=1` to get past the hook.
+The Head takes the full-height left third; workers stack top to bottom at equal height in the right two-thirds column. Every spawn uses `--no-focus`. **Don't steal the user's focus:** Herdr's `pane zoom` and `agent prompt` move the UI to the target tab, so don't call them directly (orch doesn't either). If a tab has a user pane, spawn stops (it never moves or closes it). If the layout breaks, use `orch layout`. If you need a pane for a plain command rather than delegation, prefix the command with `ORCH_RAW_HERDR=1` to get past the hook. Help lookups (`herdr pane split --help`) pass the hook without it.

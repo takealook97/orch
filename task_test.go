@@ -599,3 +599,24 @@ func TestAdhocRunNeverActiveAndHidden(t *testing.T) {
 		t.Fatalf("old ad-hoc run kept: %v", rep)
 	}
 }
+
+func TestPaneHintForLongPanelessTasks(t *testing.T) {
+	long := paneworthyTask.Milliseconds()
+	cases := []struct {
+		name    string
+		task    Task
+		inHerdr bool
+		want    bool
+	}{
+		{"long do in herdr", Task{Kind: "do", DurationMS: long}, true, true},
+		{"long ask in herdr", Task{Kind: "ask", DurationMS: long + 1}, true, true},
+		{"short do", Task{Kind: "do", DurationMS: long - 1}, true, false},
+		{"long do outside herdr", Task{Kind: "do", DurationMS: long}, false, false},
+		{"long test", Task{Kind: "test", DurationMS: long}, true, false},
+	}
+	for _, c := range cases {
+		if got := paneHint(&c.task, c.inHerdr) != ""; got != c.want {
+			t.Errorf("%s: hint=%v want %v", c.name, got, c.want)
+		}
+	}
+}

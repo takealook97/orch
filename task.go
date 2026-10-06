@@ -636,9 +636,25 @@ func executeTest(line, cwd string, maxLines, timeoutMS int, logPath string) (*Te
 	}
 	return r, nil
 }
+
+// A one-off task this long should have been a pane worker the user can watch (skill section 1).
+const paneworthyTask = 5 * time.Minute
+
+// paneHint tells the Head after the fact that a pane-less task ran long enough to need a pane.
+func paneHint(t *Task, inHerdr bool) string {
+	if !inHerdr || (t.Kind != "ask" && t.Kind != "do") || t.DurationMS < paneworthyTask.Milliseconds() {
+		return ""
+	}
+	return fmt.Sprintf("ran %d min without a pane; hand work this long to a pane worker (orch spawn) so the user can watch it", t.DurationMS/time.Minute.Milliseconds())
+}
+
 func taskReport(t *Task, asJSON bool) string {
+	hint := paneHint(t, os.Getenv("HERDR_ENV") == "1")
 	if asJSON {
 		v := map[string]any{"task": t.ID, "run": t.Run, "status": t.Status, "exit_code": t.ExitCode, "duration_ms": t.DurationMS, "dir": t.Dir}
+		if hint != "" {
+			v["hint"] = hint
+		}
 		if t.Key != "" {
 			v["key"] = t.Key
 		}
@@ -690,6 +706,9 @@ func taskReport(t *Task, asJSON bool) string {
 	}
 	if t.Dir != "" {
 		fmt.Fprintf(&b, "dir: %s\n", t.Dir)
+	}
+	if hint != "" {
+		fmt.Fprintf(&b, "hint: %s\n", hint)
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
