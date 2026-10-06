@@ -100,7 +100,7 @@ func decide(in hookInput, role string, inHerdr bool) string {
 	tool := in.tool()
 	cmd := in.commandText()
 	// The shell joins quoted fragments (he''rdr, or''ch, \herdr); match the joined form too.
-	cmd += "\n" + strings.NewReplacer("'", "", `"`, "", `\`, "").Replace(cmd)
+	cmd += "\n" + quoteJoiner.Replace(cmd)
 	if role == "worker" {
 		switch {
 		case subagentTools.MatchString(tool):
@@ -121,10 +121,76 @@ func decide(in hookInput, role string, inHerdr bool) string {
 	switch {
 	case subagentTools.MatchString(tool):
 		return "Inside Herdr, use orch ask for one-off read-only tasks, orch do for one-off writing tasks, and orch spawn for long, parallel, or verification work."
-	case paneCreate.MatchString(cmd):
+	case headCreatesPane(in.commandText()):
 		return "Create worker panes only with orch spawn (fixed model, layout, ORCH_ROLE injection). For a necessary non-delegation command pane, prefix the command with ORCH_RAW_HERDR=1."
 	}
 	return ""
+}
+
+// The Head's pane rule is a redirect, not a security boundary (ORCH_RAW_HERDR=1 bypasses it),
+// so it skips two false positives without parsing quotes:
+//   - an escaped separator (grep "a\|herdr pane split") is literal in every shell context
+//     and starts no command;
+//   - a help lookup (herdr pane split --help) creates nothing. Only the plain words before
+//     the first separator, bracket, quote, redirection, comment or "--" count as its arguments.
+//
+// The worker rule above stays strict.
+var helpFlag = regexp.MustCompile(`(^|\s)(--help|-h)(\s|$)`)
+
+// A comment or an end-of-options marker ends the words herdr itself reads.
+var argsEnd = regexp.MustCompile(`\s(#|--(\s|$))`)
+
+// Inside a nested shell's double-quoted script a backslash before ; & | is literal, so
+// escapes on such a line are left alone.
+var nestedShell = regexp.MustCompile(`\b(?:ba|z|da|k|fi)?sh\s+(?:-\w+\s+)*-\w*c|\beval\s`)
+
+var quoteJoiner = strings.NewReplacer("'", "", `"`, "", `\`, "")
+
+func headCreatesPane(cmd string) bool {
+	lit := literalEscapedSeparators(cmd)
+	for _, text := range []string{lit, quoteJoiner.Replace(lit)} {
+		for _, m := range paneCreate.FindAllStringIndex(text, -1) {
+			args := text[m[1]:]
+			if i := strings.IndexAny(args, ";&|()'\"<>`\n"); i >= 0 {
+				args = args[:i]
+			}
+			if loc := argsEnd.FindStringIndex(args); loc != nil {
+				args = args[:loc[0]]
+			}
+			if !helpFlag.MatchString(args) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// literalEscapedSeparators replaces ; & | behind an odd run of backslashes with '_',
+// except on lines that run a nested shell or eval.
+func literalEscapedSeparators(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if !nestedShell.MatchString(line) {
+			lines[i] = literalLine(line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func literalLine(s string) string {
+	out := []byte(s)
+	slashes := 0
+	for i, c := range out {
+		if c == '\\' {
+			slashes++
+			continue
+		}
+		if slashes%2 == 1 && strings.IndexByte(";&|", c) >= 0 {
+			out[i] = '_'
+		}
+		slashes = 0
+	}
+	return string(out)
 }
 
 func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
