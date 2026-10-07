@@ -239,7 +239,9 @@ func taskArgs(m Model, kind, cwd, answer, prompt string) ([]string, error) {
 	case "claude":
 		a := append([]string{"-p"}, ma...)
 		if kind == "ask" {
-			a = append(a, "--tools", "Read,Grep,Glob", "--permission-mode", "dontAsk")
+			// dontAsk denies anything not pre-approved, so the read-only tools are listed twice:
+			// --tools makes them available, --allowedTools lets them run without a prompt.
+			a = append(a, "--tools", "Read,Grep,Glob,WebSearch,WebFetch", "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch", "--permission-mode", "dontAsk")
 		} else {
 			a = append(a, "--permission-mode", "bypassPermissions")
 		}
@@ -255,13 +257,15 @@ func taskArgs(m Model, kind, cwd, answer, prompt string) ([]string, error) {
 		}
 		return append(a, "--skip-git-repo-check", "--json", "-C", cwd, "-o", answer, prompt), nil
 	case "agy":
-		a := append([]string{"-p"}, ma...)
+		// agy's -p takes the prompt as its value (unlike claude's -p flag), so the
+		// prompt must follow -p directly; anything else is read as the prompt.
+		a := append([]string{}, ma...)
 		if kind == "ask" {
 			a = append(a, "--mode", "plan")
 		} else {
 			a = append(a, "--dangerously-skip-permissions")
 		}
-		return append(a, "--output-format", "json", prompt), nil
+		return append(a, "--output-format", "json", "-p", prompt), nil
 	}
 	return nil, fmt.Errorf("unknown CLI kind %s", m.Kind)
 }

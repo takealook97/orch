@@ -100,6 +100,10 @@ func TestTaskArgs(t *testing.T) {
 				if kind == "ask" && !strings.Contains(s, "--mode plan") || kind == "do" && !strings.Contains(s, "--dangerously-skip-permissions") {
 					t.Fatal(s)
 				}
+				// agy -p takes the prompt as its value: the prompt must follow -p directly.
+				if n := len(a); n < 2 || a[n-2] != "-p" || a[n-1] != "prompt" {
+					t.Fatalf("agy prompt must follow -p: %s", s)
+				}
 			}
 		}
 	}
