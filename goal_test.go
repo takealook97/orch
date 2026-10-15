@@ -734,3 +734,148 @@ func TestGoalCodexPatchPathResolution(t *testing.T) {
 		t.Fatal("symlink escape allowed:", reason)
 	}
 }
+
+func rolloutGoal(objective, status string) string {
+	b, _ := json.Marshal(map[string]any{"type": "event_msg", "payload": map[string]any{"type": "thread_goal_updated", "goal": map[string]string{"objective": objective, "status": status}}})
+	return string(b) + "\n"
+}
+
+func TestCodexGoalCompileGuard(t *testing.T) {
+	goalEnv(t)
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	objective := "codex 훅 확인 프로브"
+	if err := os.WriteFile(path, []byte(rolloutGoal(objective, "active")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	input := func(tool, text string) hookInput {
+		raw, _ := json.Marshal(map[string]string{"command": text})
+		return hookInput{ToolName: tool, ToolInput: raw, TranscriptPath: path}
+	}
+	for _, tt := range []struct {
+		tool, text string
+		deny       bool
+	}{
+		{"Bash", "ls", true},
+		{"Bash", "orch goal new --text x", false},
+		{"functions.exec_command", "/usr/local/bin/orch goal freeze", false},
+		{"Bash", "orch help", false},
+		{"Bash", "orch models", false},
+		{"Bash", "orch status", false},
+		{"Read", "orch goal status", true},
+		{"Bash", "echo orch goal status", true},
+		{"Bash", "ORCH_RAW_HERDR=1 ls", true},
+		{"apply_patch", "*** Begin Patch\n*** Add File: " + filepath.Join(orchHome(), "goal.md") + "\n+x\n*** End Patch", false},
+		{"apply_patch", "*** Update File: /workspace/src/main.go\n+x", true},
+		{"apply_patch", "*** Update File: " + filepath.Join(orchHome(), "goal.md") + "\n*** Move to: /workspace/main.go", true},
+		{"apply_patch", "*** Begin Patch\n*** End Patch", true},
+	} {
+		in := input(tt.tool, tt.text)
+		reason := decide(in, "", true)
+		if (reason != "") != tt.deny || tt.deny && !strings.Contains(reason, objective) {
+			t.Errorf("%s %q: %q", tt.tool, tt.text, reason)
+		}
+	}
+	for _, p := range []string{filepath.Join(orchHome(), "goal.md"), "/workspace/main.go"} {
+		raw, _ := json.Marshal(map[string]string{"file_path": p})
+		in := hookInput{ToolName: "Edit", ToolInput: raw, TranscriptPath: path}
+		if got := decide(in, "", true); (got != "") != (p == "/workspace/main.go") {
+			t.Fatal(p, got)
+		}
+	}
+	in := input("Bash", "ls")
+	if got := decide(in, "worker", true); got != "" {
+		t.Fatal(got)
+	}
+	if got := decide(in, "", false); got != "" {
+		t.Fatal(got)
+	}
+	if c, _, e := goalCall("new", "--text", "draft"); c != 0 {
+		t.Fatal(e)
+	}
+	if got := decide(in, "", true); !strings.Contains(got, objective) {
+		t.Fatal("draft bypassed guard", got)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString(rolloutGoal(objective, "paused"))
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decide(in, "", true); got != "" {
+		t.Fatal(got)
+	}
+}
+
+func TestCodexGoalFrozenScope(t *testing.T) {
+	frozenTestGoal(t)
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, []byte(rolloutGoal("objective", "active")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		p    string
+		deny bool
+	}{{"/workspace/src/main.go", false}, {"/outside/main.go", true}} {
+		raw, _ := json.Marshal(map[string]string{"file_path": tt.p})
+		got := decide(hookInput{ToolName: "Write", ToolInput: raw, TranscriptPath: path}, "", true)
+		if (got != "") != tt.deny || tt.deny && !strings.Contains(got, "outside the active goal") {
+			t.Fatal(got)
+		}
+	}
+}
+
+func TestCodexGoalStateCache(t *testing.T) {
+	goalEnv(t)
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	write := func(body string, appendFile bool) {
+		t.Helper()
+		flag := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+		if appendFile {
+			flag = os.O_WRONLY | os.O_APPEND
+		}
+		f, err := os.OpenFile(path, flag, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.WriteString(body)
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(objective string, active bool) {
+		t.Helper()
+		if got, on := codexGoalState(path); got != objective || on != active {
+			t.Fatalf("got %q %v, want %q %v", got, on, objective, active)
+		}
+	}
+	check("", false)
+	first := rolloutGoal(strings.Repeat("first", 100), "active")
+	write(first, false)
+	check(strings.Repeat("first", 100), true)
+	// Replace the consumed prefix at the same length: only appended bytes should
+	// be read, so this paused event must not replace the cached active state.
+	replacement := rolloutGoal("ignored", "paused")
+	write(replacement+strings.Repeat(" ", len(first)-len(replacement)-1)+"\n", false)
+	check(strings.Repeat("first", 100), true)
+	partial := strings.TrimSuffix(rolloutGoal("second", "active"), "\n")
+	write(partial, true)
+	check(strings.Repeat("first", 100), true)
+	write("\n", true)
+	check("second", true)
+	write(rolloutGoal("second", "paused"), true)
+	check("second", false)
+	write(rolloutGoal("third", "active"), false)
+	check("third", true)
+	write("{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_goal_updated\",\"goal\":null}}\n", true)
+	check("", false)
+	write(rolloutGoal("ended", "ended"), true)
+	check("ended", false)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	check("", false)
+}

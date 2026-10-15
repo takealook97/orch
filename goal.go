@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -578,4 +580,76 @@ func goalCommand(rest []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return fail(e, 2)
 	}
 	return 0
+}
+
+// codexGoalState consumes complete rollout lines only. The persistent offset keeps
+// per-tool hooks from rereading the entire conversation; incomplete tails retry.
+func codexGoalState(path string) (objective string, active bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", false
+	}
+	var state struct {
+		Offset    int64  `json:"offset"`
+		Objective string `json:"objective"`
+		Status    string `json:"status"`
+	}
+	sum := sha256.Sum256([]byte(path))
+	cache := filepath.Join(orchHome(), "codex-goal-cache", fmt.Sprintf("%x", sum)[:16]+".json")
+	if b, err := os.ReadFile(cache); err == nil {
+		if json.Unmarshal(b, &state) != nil || state.Offset < 0 || state.Offset > info.Size() {
+			state.Offset, state.Objective, state.Status = 0, "", ""
+		}
+	}
+	if _, err := f.Seek(state.Offset, io.SeekStart); err != nil {
+		return "", false
+	}
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			if err != io.EOF {
+				return "", false
+			}
+			break
+		}
+		state.Offset += int64(len(line))
+		if !bytes.Contains(line, []byte(`"thread_goal_updated"`)) {
+			continue
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type string `json:"type"`
+				Goal *struct {
+					Objective string `json:"objective"`
+					Status    string `json:"status"`
+				} `json:"goal"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(line, &event) != nil || event.Type != "event_msg" || event.Payload.Type != "thread_goal_updated" {
+			continue
+		}
+		state.Objective, state.Status = "", ""
+		if event.Payload.Goal != nil {
+			state.Objective, state.Status = event.Payload.Goal.Objective, event.Payload.Goal.Status
+		}
+	}
+	if os.MkdirAll(filepath.Dir(cache), 0700) == nil {
+		if tmp, err := os.CreateTemp(filepath.Dir(cache), ".cache-*"); err == nil {
+			defer os.Remove(tmp.Name())
+			b, _ := json.Marshal(state)
+			_, writeErr := tmp.Write(b)
+			closeErr := tmp.Close()
+			if writeErr == nil && closeErr == nil {
+				_ = os.Rename(tmp.Name(), cache)
+			}
+		}
+	}
+	return state.Objective, state.Status == "active"
 }

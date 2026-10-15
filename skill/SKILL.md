@@ -76,7 +76,9 @@ Work coming from `/goal` or another command follows the same rule. A command set
 
 ## 1a. Goals (`/goal`)
 
-Compile a `/goal` before starting work: run `orch goal new --text "<goal verbatim>"` (or `--request FILE|-`), fill the printed `goal.md`, then run `orch goal freeze`. Claude and Codex UserPromptSubmit hooks remind Heads to do this inside Herdr when no goal is active. Trust the new `codex-prompt` hook once in Codex `/hooks`; agy has no prompt hook.
+Codex 0.162 skips UserPromptSubmit for the native `/goal <objective>` command. Its PreToolUse guard reads goal events from the rollout transcript and blocks the first tool call until an orch goal is frozen for the Head pane; a draft does not suffice. During compilation it permits orch goal/help/models/status commands and edits under ORCH_HOME. The `codex-prompt` hook still covers plain prompts that start with `/goal` text. Claude transcripts have no such goal events and are unaffected.
+
+Compile a `/goal` before starting work: run `orch goal new --text "<goal verbatim>"` (or `--request FILE|-`), fill the printed `goal.md`, then run `orch goal freeze`. Claude UserPromptSubmit and Codex plain-prompt hooks remind Heads to do this inside Herdr when no goal is active. Trust the new `codex-prompt` hook once in Codex `/hooks`; agy has no prompt hook.
 
 The goal file has `## Request`, `## Criteria`, `## Non-goals`, `## Scope`, and `## Budget`. Use 1–8 numbered criteria, each immediately followed by an indented `- check: <shell command>` line. Every criterion must be finite and checkable; open-ended words such as `perfect`, `everything`, `all remaining`, `완벽`, and `끝까지` are rejected. Scope is one absolute or `~/` glob per bullet (`**` includes subdirectories). Budget bullets are `hours: 4`, `max-workers: 20`, and `fix-rounds: 2` by default. The template is deliberately incomplete until criteria and scope are filled.
 

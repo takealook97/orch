@@ -127,3 +127,8 @@ Changes made:
 
 2026-09-30: the Head owns design (claude-high-m only condenses evidence); design_check reviews the Head's design with a different family; QA defaults to the lightest other-family key: author OpenAI -> claude-medium-m, otherwise codex-high-l; textual merge conflicts and Head-Claude design checks use codex-high-l.
 
+
+
+## D17. Codex native goal compilation (2026-10-15)
+
+Codex 0.162 does not fire UserPromptSubmit for native `/goal <objective>`. PreToolUse now reads complete `thread_goal_updated` rollout events, caching the last state and byte offset atomically under ORCH_HOME/codex-goal-cache. Active native goals block Head tools inside Herdr until the pane has a frozen orch goal (drafts do not count). Compilation permits command-position orch goal/help/models/status shell commands and edits wholly under ORCH_HOME. Paused, cleared, and other non-active goal states release this guard. Workers and sessions outside Herdr are unaffected, as are Claude transcripts without these events. The codex-prompt hook still covers plain prompts starting with `/goal` text. Existing raw-Herdr bypass ordering is preserved.

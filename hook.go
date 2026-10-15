@@ -39,10 +39,12 @@ var orchAny = regexp.MustCompile(cmdPos + `(\S*/)?orch\s+[a-z]`)
 var agentCLI = regexp.MustCompile(cmdPos + `(\S*/)?(codex\s+(exec|review|e)\b|claude\s+(-p|--print)\b|agy\s+(-p|--print)\b|gemini\s+-p\b)`)
 
 type hookInput struct {
-	Cwd       string          `json:"cwd"`
-	ToolName  string          `json:"tool_name"`
-	ToolInput json.RawMessage `json:"tool_input"`
-	ToolCall  *struct {
+	TranscriptPath string          `json:"transcript_path"`
+	SessionID      string          `json:"session_id"`
+	Cwd            string          `json:"cwd"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input"`
+	ToolCall       *struct {
 		Name string          `json:"name"`
 		Args json.RawMessage `json:"args"`
 	} `json:"toolCall"`
@@ -115,6 +117,9 @@ func decide(in hookInput, role string, inHerdr bool) string {
 	}
 	if !inHerdr {
 		return ""
+	}
+	if reason := codexGoalCompileReason(in); reason != "" {
+		return reason
 	}
 	if reason := goalScopeReason(in); reason != "" {
 		return reason
@@ -199,15 +204,15 @@ func literalLine(s string) string {
 
 func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 	data, _ := io.ReadAll(stdin)
-	if cli == "claude-prompt" || cli == "codex-prompt" {
-		return goalPromptHook(data, stdout)
-	}
 	// Debugging aid: with ~/.orch/hook-debug present, append every input per CLI.
 	if fileExists(filepath.Join(orchHome(), "hook-debug")) {
 		if f, err := os.OpenFile(filepath.Join(orchHome(), "hook-debug-"+cli+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err == nil {
 			_, _ = f.Write(append(bytes.TrimSpace(data), '\n'))
 			_ = f.Close()
 		}
+	}
+	if cli == "claude-prompt" || cli == "codex-prompt" {
+		return goalPromptHook(data, stdout)
 	}
 	var in hookInput
 	if err := json.Unmarshal(data, &in); err != nil {
@@ -283,15 +288,7 @@ func goalScopePath(scope string) string {
 	}
 	return goalPath(scope)
 }
-func goalScopeReason(in hookInput) string {
-	patch := goalPatchTool.MatchString(in.tool()) || goalShellPatch.MatchString(in.commandText())
-	if !goalEditTool.MatchString(in.tool()) && !patch {
-		return ""
-	}
-	g, e := activeGoalFor(os.Getenv("HERDR_PANE_ID"))
-	if e != nil || g == nil {
-		return ""
-	}
+func goalEditPaths(in hookInput, patch bool) []string {
 	var paths []string
 	if patch {
 		for _, match := range goalPatchPath.FindAllStringSubmatch(in.commandText(), -1) {
@@ -314,6 +311,57 @@ func goalScopeReason(in hookInput) string {
 			paths = append(paths, p)
 		}
 	}
+	return paths
+}
+
+var goalCompileCommand = regexp.MustCompile(cmdPos + `(\S*/)?orch\s+(goal|help|models|status)\b`)
+var goalShellTool = regexp.MustCompile(`(?i)(^|[.__])(?:Bash|exec_command|shell|shell_command|run_shell_command|run_command|terminal)$`)
+
+func codexGoalCompileReason(in hookInput) string {
+	if in.TranscriptPath == "" {
+		return ""
+	}
+	if g, _ := activeGoalFor(os.Getenv("HERDR_PANE_ID")); g != nil {
+		return ""
+	}
+	objective, active := codexGoalState(in.TranscriptPath)
+	if !active {
+		return ""
+	}
+	if goalShellTool.MatchString(in.tool()) && goalCompileCommand.MatchString(in.commandText()) {
+		return ""
+	}
+	patch := goalPatchTool.MatchString(in.tool()) || goalShellPatch.MatchString(in.commandText())
+	if patch || goalEditTool.MatchString(in.tool()) {
+		paths := goalEditPaths(in, patch)
+		allowed := len(paths) > 0
+		base := goalPath(orchHome())
+		for _, p := range paths {
+			if !filepath.IsAbs(p) && !strings.HasPrefix(p, "~/") && in.Cwd != "" {
+				p = filepath.Join(in.Cwd, p)
+			}
+			p = goalPath(p)
+			if p != base && !strings.HasPrefix(p, base+string(filepath.Separator)) {
+				allowed = false
+			}
+		}
+		if allowed {
+			return ""
+		}
+	}
+	return fmt.Sprintf(`A Codex /goal is active but no orch goal is frozen for this pane. First run: orch goal new --text "/goal %s"; fill goal.md with at most 8 checkable criteria, non-goals, scope and budget; `+`orch goal freeze. Then pass --serves N on every spawn/do and log anything else with orch goal note.`, objective)
+}
+
+func goalScopeReason(in hookInput) string {
+	patch := goalPatchTool.MatchString(in.tool()) || goalShellPatch.MatchString(in.commandText())
+	if !goalEditTool.MatchString(in.tool()) && !patch {
+		return ""
+	}
+	g, e := activeGoalFor(os.Getenv("HERDR_PANE_ID"))
+	if e != nil || g == nil {
+		return ""
+	}
+	paths := goalEditPaths(in, patch)
 	home, _ := os.UserHomeDir()
 	for _, p := range paths {
 		if !filepath.IsAbs(p) && !strings.HasPrefix(p, "~/") && in.Cwd != "" {

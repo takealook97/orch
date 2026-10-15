@@ -49,6 +49,8 @@ orch install --repo ~/IdeaProjects/orch --dry-run
 
 ### Codex hook trust
 
+Codex 0.162 skips UserPromptSubmit for the native `/goal <objective>` command. Its PreToolUse guard reads goal events from the rollout transcript and blocks the first tool call until an orch goal is frozen for the Head pane; a draft does not suffice. During compilation it permits orch goal/help/models/status commands and edits under ORCH_HOME. The `codex-prompt` hook still covers plain prompts that start with `/goal` text. Claude transcripts have no such goal events and are unaffected.
+
 Codex will not run a new or changed hook until you trust it. If you use Codex as the Head, open Codex once after installing, go to `/hooks`, and trust the `orch hook codex` and new `orch hook codex-prompt` entries once. Claude and Codex Heads receive `/goal` setup context; agy has no prompt hook. Scope checks cover Claude edit tools and Codex `apply_patch` edits, including shell heredoc patches. Other shell writes remain the Head's responsibility.
 
 ## 3. Verify
