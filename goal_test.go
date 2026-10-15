@@ -809,6 +809,42 @@ func TestCodexGoalCompileGuard(t *testing.T) {
 	}
 }
 
+func TestCodexGoalEndedCompileGuard(t *testing.T) {
+	for _, tt := range []struct {
+		name, status, request string
+		deny                  bool
+	}{
+		{"ended same objective", "ended", "  /goal finish the probe  ", false},
+		{"ended bare objective", "ended", "  finish the probe  ", false},
+		{"ended different objective", "ended", "/goal another task", true},
+		{"draft same objective", "draft", "/goal finish the probe", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			goalEnv(t)
+			path := filepath.Join(t.TempDir(), "rollout.jsonl")
+			if err := os.WriteFile(path, []byte(rolloutGoal("  finish the probe  ", "active")), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c, out, errText := goalCall("new", "--text", tt.request)
+			if c != 0 {
+				t.Fatal(errText)
+			}
+			g, err := loadGoal(strings.TrimSpace(out))
+			if err != nil {
+				t.Fatal(err)
+			}
+			g.Status = tt.status
+			if err := saveGoal(g); err != nil {
+				t.Fatal(err)
+			}
+			in := hookInput{ToolName: "Bash", ToolInput: json.RawMessage(`{"command":"ls"}`), TranscriptPath: path}
+			if got := decide(in, "", true); (got != "") != tt.deny {
+				t.Fatalf("deny = %v, want %v: %s", got != "", tt.deny, got)
+			}
+		})
+	}
+}
+
 func TestCodexGoalFrozenScope(t *testing.T) {
 	frozenTestGoal(t)
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
@@ -878,4 +914,59 @@ func TestCodexGoalStateCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("", false)
+}
+
+const codexWrittenGoalFile = "# Goal\n\n## Request\n\n/goal README 한 줄 요약 파일을 /tmp/codex-probe/summary.txt 에 만들어라\n\n## Criteria\n\n<!-- Example only: replace this comment with your criteria.\n1. Implement the requested behavior\n   - check: go test ./...\n-->\n\n## Non-goals\n\n- Fill in excluded work.\n\n## Scope\n\n<!-- Add absolute or ~-prefixed globs, one per bullet. -->\n\n## Budget\n\n- hours: 4\n- max-workers: 20\n- fix-rounds: 2\n# Goal: README 한 줄 요약 파일을 /tmp/codex-probe/summary.txt 에 만들어라\n\n## Criteria\n- [ ] 저장소의 README 내용을 확인한다. (check: README 텍스트를 읽어 근거 확인)\n- [ ] README를 한국어 한 문장으로 요약한다. (check: 요약 내용이 한 문장인지 확인)\n- [ ] 요약만 담긴 파일을 `/tmp/codex-probe/summary.txt`에 만든다. (check: 파일 내용과 경로를 읽어 확인)\n- [ ] 파일 경로와 내용이 실제로 맞는지 확인한다. (check: `cat /tmp/codex-probe/summary.txt` 결과 확인)\n\n## Non-goals\n- README나 다른 저장소 파일은 변경하지 않는다.\n\n## Scope globs\n- /private/tmp/codex-probe/README*\n- /private/tmp/codex-probe/summary.txt\n\n## Budget\n- Unbounded.\n"
+
+func TestGoalAuthoringDiagnostics(t *testing.T) {
+	cases := []struct{ name, body, want string }{
+		{"real appended document", codexWrittenGoalFile, "goal.md has 2 '## Criteria' sections"},
+		{"duplicate criteria", validGoalFile + "\n## Criteria\n", "goal.md has 2 '## Criteria' sections"},
+		{"duplicate scope", validGoalFile + "\n## Scope\n", "goal.md has 2 '## Scope' sections"},
+		{"duplicate budget", validGoalFile + "\n## Budget\n", "goal.md has 2 '## Budget' sections"},
+		{"duplicate non-goals", validGoalFile + "\n## Non-goals\n", "goal.md has 2 '## Non-goals' sections"},
+		{"checkbox", strings.Replace(validGoalFile, "1. Requested", "- [ ] Requested", 1), "criteria must be numbered lines"},
+		{"bullet", strings.Replace(validGoalFile, "1. Requested", "- Requested", 1), "criteria must be numbered lines"},
+		{"star", strings.Replace(validGoalFile, "1. Requested", "* Requested", 1), "criteria must be numbered lines"},
+		{"inline check", strings.Replace(validGoalFile, "1. Requested behavior works", "1. Requested behavior works (check: true)", 1), "move the check to its own"},
+		{"open budget", strings.Split(validGoalFile, "## Budget")[0] + "## Budget\n- Unbounded.\n", "Budget must set numeric hours and max-workers"},
+		{"nonnumeric hours", strings.Replace(validGoalFile, "hours: 4", "hours: unlimited", 1), "Budget must set numeric hours and max-workers"},
+		{"nonnumeric workers", strings.Replace(validGoalFile, "max-workers: 20", "max-workers: many", 1), "Budget must set numeric hours and max-workers"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			goalEnv(t)
+			c, out, stderr := goalCall("new", "--text", "request")
+			if c != 0 {
+				t.Fatal(c, stderr)
+			}
+			if e := os.WriteFile(filepath.Join(goalsDir(), strings.TrimSpace(out), "goal.md"), []byte(tt.body), 0600); e != nil {
+				t.Fatal(e)
+			}
+			c, _, stderr = goalCall("freeze")
+			if c != 2 || !strings.Contains(stderr, tt.want) || !strings.Contains(stderr, "\n\nExpected format:\n"+goalFormatHelp) {
+				t.Fatal(c, stderr)
+			}
+		})
+	}
+}
+func TestFilledGoalTemplateFreezes(t *testing.T) {
+	goalEnv(t)
+	c, out, stderr := goalCall("new", "--text", "request")
+	if c != 0 {
+		t.Fatal(c, stderr)
+	}
+	body := goalTemplate("request")
+	start := strings.Index(body, "<!--")
+	end := strings.Index(body[start:], "-->") + start + 3
+	body = body[:start] + "1. Requested behavior works\n   - check: true" + body[end:]
+	start = strings.Index(body, "<!--")
+	end = strings.Index(body[start:], "-->") + start + 3
+	body = body[:start] + "- /workspace/src/**" + body[end:]
+	if e := os.WriteFile(filepath.Join(goalsDir(), strings.TrimSpace(out), "goal.md"), []byte(body), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if c, _, stderr = goalCall("freeze"); c != 0 {
+		t.Fatal(c, stderr)
+	}
 }

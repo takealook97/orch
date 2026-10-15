@@ -125,16 +125,127 @@ func newestGoal(head, status string) (*Goal, error) {
 }
 func activeGoal(head string) (*Goal, error) { return newestGoal(head, "active") }
 
+func endedGoalMatches(head, objective string) bool {
+	objective = strings.TrimSpace(objective)
+	if objective == "" {
+		return false
+	}
+	g, err := newestGoal(head, "ended")
+	if err != nil || g == nil {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(g.dir(), "goal.md"))
+	if err != nil {
+		return false
+	}
+	var request []string
+	inRequest := false
+	for _, line := range strings.Split(string(b), "\n") {
+		heading := strings.TrimSpace(line)
+		if heading == "## Request" {
+			inRequest = true
+			continue
+		}
+		if inRequest {
+			if strings.HasPrefix(heading, "# ") || strings.HasPrefix(heading, "## ") {
+				break
+			}
+			request = append(request, line)
+		}
+	}
+	return strings.Contains(strings.TrimSpace(strings.Join(request, "\n")), objective)
+}
+
 var activeGoalFor = activeGoal
 
+const goalFormatHelp = `## Criteria
+1. <one checkable outcome>
+   - check: <shell command that exits 0 when met>
+2. ...
+## Non-goals
+- <excluded work>
+## Scope
+- /abs/path/or/~/glob/**
+## Budget
+- hours: 2
+- max-workers: 10
+- fix-rounds: 2
+Edit the existing sections in place; do not append a second document. A check must be a shell command, not prose.`
+
 func goalTemplate(request string) string {
-	return "# Goal\n\n## Request\n\n" + request + "\n\n## Criteria\n\n<!-- Example only: replace this comment with your criteria.\n1. Implement the requested behavior\n   - check: go test ./...\n-->\n\n## Non-goals\n\n- Fill in excluded work.\n\n## Scope\n\n<!-- Add absolute or ~-prefixed globs, one per bullet. -->\n\n## Budget\n\n- hours: 4\n- max-workers: 20\n- fix-rounds: 2\n"
+	return "# Goal\n\n## Request\n\n" + request + "\n\n## Criteria\n\n<!-- Edit this section in place; replace this comment with numbered criteria.\n1. <one checkable outcome>\n   - check: <shell command that exits 0 when met>\n2. ...\n-->\n\n## Non-goals\n\n- Fill in excluded work.\n\n## Scope\n\n<!-- Replace this comment with scope globs.\n- /abs/path/or/~/glob/**\n-->\n\n## Budget\n\n- hours: 4\n- max-workers: 20\n- fix-rounds: 2\n"
 }
 
 var goalCriterionLine = regexp.MustCompile(`^(\d+)\.\s+(.+)$`)
 
 func parseGoalFile(text string) (cs []Criterion, scope []string, hours float64, maxWorkers, fixRounds int, err error) {
-	bad := func(s string) { err = errors.New(s) }
+	bad := func(s string) { err = errors.New(s + "\n\nExpected format:\n" + goalFormatHelp) }
+	// Diagnose appended documents before unfinished template contents.
+	var lines []string
+	inComment := false
+	sections := map[string]int{}
+	for _, raw := range strings.Split(text, "\n") {
+		l := strings.TrimSpace(raw)
+		if strings.Contains(l, "<!--") {
+			inComment = true
+		}
+		if inComment {
+			if strings.Contains(l, "-->") {
+				inComment = false
+			}
+			continue
+		}
+		lines = append(lines, l)
+		switch l {
+		case "## Criteria", "## Scope", "## Budget", "## Non-goals":
+			sections[l]++
+		}
+	}
+	for _, header := range []string{"## Criteria", "## Scope", "## Budget", "## Non-goals"} {
+		if n := sections[header]; n > 1 {
+			bad(fmt.Sprintf("goal.md has %d '%s' sections; edit the template's sections in place instead of appending a new document", n, header))
+			return
+		}
+	}
+	preSection := ""
+	numericBudget := map[string]bool{}
+	for _, l := range lines {
+		if strings.HasPrefix(l, "## ") {
+			preSection = strings.TrimPrefix(l, "## ")
+			continue
+		}
+		if preSection == "Criteria" {
+			if (strings.HasPrefix(l, "- ") || strings.HasPrefix(l, "* ")) && !strings.HasPrefix(l, "- check:") {
+				bad("criteria must be numbered lines ('1. text') each followed by '   - check: CMD'")
+				return
+			}
+			if goalCriterionLine.MatchString(l) && strings.Contains(l, "(check:") {
+				bad("move the check to its own '   - check: CMD' line under the criterion")
+				return
+			}
+		}
+		if preSection == "Budget" && strings.HasPrefix(l, "- ") {
+			k, v, _ := strings.Cut(l[2:], ":")
+			switch k {
+			case "hours":
+				n, e := strconv.ParseFloat(strings.TrimSpace(v), 64)
+				numericBudget[k] = e == nil && !math.IsNaN(n) && !math.IsInf(n, 0)
+			case "max-workers":
+				_, e := strconv.Atoi(strings.TrimSpace(v))
+				numericBudget[k] = e == nil
+			}
+		}
+	}
+	if sections["## Budget"] > 0 && (!numericBudget["hours"] || !numericBudget["max-workers"]) {
+		detail := "invalid or missing Budget"
+		for _, key := range []string{"hours", "max-workers"} {
+			if valid, present := numericBudget[key]; present && !valid {
+				detail += "; invalid budget " + key
+			}
+		}
+		bad("Budget must set numeric hours and max-workers; an open budget is not allowed (" + detail + ")")
+		return
+	}
 	section := ""
 	pending := -1
 	seen := map[int]bool{}
@@ -375,9 +486,18 @@ func goalCommand(rest []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	workers := fs.Int("max-workers", 0, "additional workers")
 	reason := fs.String("reason", "", "user: reason")
 	if e := fs.Parse(rest[1:]); e != nil {
+		if sub == "freeze" {
+			fmt.Fprintln(stderr, "\nExpected format:\n"+goalFormatHelp)
+		}
 		return 2
 	}
-	fail := func(e error, code int) int { fmt.Fprintln(stderr, "orch:", e); return code }
+	fail := func(e error, code int) int {
+		if sub == "freeze" && !strings.HasSuffix(e.Error(), "\n\nExpected format:\n"+goalFormatHelp) {
+			e = fmt.Errorf("%w\n\nExpected format:\n%s", e, goalFormatHelp)
+		}
+		fmt.Fprintln(stderr, "orch:", e)
+		return code
+	}
 	head := os.Getenv("HERDR_PANE_ID")
 	if sub != "status" && sub != "check" {
 		if e := requireHead(); e != nil {

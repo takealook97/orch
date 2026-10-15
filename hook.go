@@ -328,6 +328,9 @@ func codexGoalCompileReason(in hookInput) string {
 	if !active {
 		return ""
 	}
+	if endedGoalMatches(os.Getenv("HERDR_PANE_ID"), objective) {
+		return ""
+	}
 	if goalShellTool.MatchString(in.tool()) && goalCompileCommand.MatchString(in.commandText()) {
 		return ""
 	}
@@ -349,7 +352,7 @@ func codexGoalCompileReason(in hookInput) string {
 			return ""
 		}
 	}
-	return fmt.Sprintf(`A Codex /goal is active but no orch goal is frozen for this pane. First run: orch goal new --text "/goal %s"; fill goal.md with at most 8 checkable criteria, non-goals, scope and budget; `+`orch goal freeze. Then pass --serves N on every spawn/do and log anything else with orch goal note.`, objective)
+	return fmt.Sprintf(`A Codex /goal is active but no orch goal is frozen for this pane. First run: orch goal new --text "/goal %s"; fill goal.md with at most 8 checkable criteria, non-goals, scope and budget; `+`orch goal freeze. Then pass --serves N on every spawn/do and log anything else with orch goal note. Format: numbered criteria '1. text' each with an indented '- check: <shell command>' line; '## Scope' bullets of globs; '## Budget' with numeric hours and max-workers. Edit the template sections in place.`, objective)
 }
 
 func goalScopeReason(in hookInput) string {
@@ -410,7 +413,7 @@ func goalPromptHook(data []byte, stdout io.Writer) int {
 		return 0
 	}
 	quoted := "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "$", "\\$", "`", "\\`").Replace(in.Prompt) + "\""
-	text := fmt.Sprintf("Before any other work run orch goal new --text %s (the goal verbatim). Fill goal.md with at most 8 checkable criteria, non-goals, scope and budget, then run orch goal freeze. Pass --serves N on every spawn/do. Record anything else found with orch goal note. Treat the goal as complete when orch goal check exits 0, and as stopped (report results and backlog and ask the user whether to extend) when it exits 3.", quoted)
+	text := fmt.Sprintf("Before any other work run orch goal new --text %s (the goal verbatim). Fill goal.md with at most 8 checkable criteria, non-goals, scope and budget, then run orch goal freeze. Pass --serves N on every spawn/do. Record anything else found with orch goal note. Treat the goal as complete when orch goal check exits 0, and as stopped (report results and backlog and ask the user whether to extend) when it exits 3. Format: numbered criteria '1. text' each with an indented '- check: <shell command>' line; '## Scope' bullets of globs; '## Budget' with numeric hours and max-workers. Edit the template sections in place.", quoted)
 	out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit", "additionalContext": text}})
 	fmt.Fprintln(stdout, string(out))
 	return 0
