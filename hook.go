@@ -39,6 +39,7 @@ var orchAny = regexp.MustCompile(cmdPos + `(\S*/)?orch\s+[a-z]`)
 var agentCLI = regexp.MustCompile(cmdPos + `(\S*/)?(codex\s+(exec|review|e)\b|claude\s+(-p|--print)\b|agy\s+(-p|--print)\b|gemini\s+-p\b)`)
 
 type hookInput struct {
+	Cwd       string          `json:"cwd"`
 	ToolName  string          `json:"tool_name"`
 	ToolInput json.RawMessage `json:"tool_input"`
 	ToolCall  *struct {
@@ -198,7 +199,7 @@ func literalLine(s string) string {
 
 func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 	data, _ := io.ReadAll(stdin)
-	if cli == "claude-prompt" {
+	if cli == "claude-prompt" || cli == "codex-prompt" {
 		return goalPromptHook(data, stdout)
 	}
 	// Debugging aid: with ~/.orch/hook-debug present, append every input per CLI.
@@ -243,6 +244,10 @@ func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 }
 
+var goalPatchTool = regexp.MustCompile(`(?i)(^|[.__])apply_patch$`)
+var goalPatchPath = regexp.MustCompile(`(?m)^\*\*\* (?:Add File|Update File|Delete File|Move to):[ \t]*(.+)$`)
+var goalShellPatch = regexp.MustCompile(`\bapply_patch\b[^\n]*<<`)
+
 var goalEditTool = regexp.MustCompile(`(?i)(^|[.__])(?:Edit|Write|MultiEdit|NotebookEdit)$`)
 
 func goalPath(p string) string {
@@ -279,40 +284,62 @@ func goalScopePath(scope string) string {
 	return goalPath(scope)
 }
 func goalScopeReason(in hookInput) string {
-	if !goalEditTool.MatchString(in.tool()) {
+	patch := goalPatchTool.MatchString(in.tool()) || goalShellPatch.MatchString(in.commandText())
+	if !goalEditTool.MatchString(in.tool()) && !patch {
 		return ""
 	}
 	g, e := activeGoalFor(os.Getenv("HERDR_PANE_ID"))
 	if e != nil || g == nil {
 		return ""
 	}
-	var fields map[string]any
-	raw := in.ToolInput
-	if len(raw) == 0 && in.ToolCall != nil {
-		raw = in.ToolCall.Args
+	var paths []string
+	if patch {
+		for _, match := range goalPatchPath.FindAllStringSubmatch(in.commandText(), -1) {
+			if p := strings.TrimSpace(match[1]); p != "" {
+				paths = append(paths, p)
+			}
+		}
+	} else {
+		var fields map[string]any
+		raw := in.ToolInput
+		if len(raw) == 0 && in.ToolCall != nil {
+			raw = in.ToolCall.Args
+		}
+		_ = json.Unmarshal(raw, &fields)
+		p, _ := fields["file_path"].(string)
+		if p == "" {
+			p, _ = fields["notebook_path"].(string)
+		}
+		if p != "" {
+			paths = append(paths, p)
+		}
 	}
-	_ = json.Unmarshal(raw, &fields)
-	p, _ := fields["file_path"].(string)
-	if p == "" {
-		p, _ = fields["notebook_path"].(string)
-	}
-	if p == "" {
-		return ""
-	}
-	p = goalPath(p)
 	home, _ := os.UserHomeDir()
-	for _, base := range []string{orchHome(), filepath.Join(home, ".orch"), filepath.Join(home, ".claude"), "/tmp", "/private/tmp"} {
-		base = goalPath(base)
-		if p == base || strings.HasPrefix(p, base+string(filepath.Separator)) {
-			return ""
+	for _, p := range paths {
+		if !filepath.IsAbs(p) && !strings.HasPrefix(p, "~/") && in.Cwd != "" {
+			p = filepath.Join(in.Cwd, p)
 		}
-	}
-	for _, scope := range g.Scope {
-		if globMatch(goalScopePath(scope), p) {
-			return ""
+		p = goalPath(p)
+		allowed := false
+		for _, base := range []string{orchHome(), filepath.Join(home, ".orch"), filepath.Join(home, ".claude"), "/tmp", "/private/tmp"} {
+			base = goalPath(base)
+			if p == base || strings.HasPrefix(p, base+string(filepath.Separator)) {
+				allowed = true
+				break
+			}
 		}
+		for _, scope := range g.Scope {
+			if globMatch(goalScopePath(scope), p) {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			continue
+		}
+		return fmt.Sprintf("path is outside the active goal's Scope (%s). If it is needed for a criterion, finish it within scope; otherwise record it with orch goal note", g.ID)
 	}
-	return fmt.Sprintf("path is outside the active goal's Scope (%s). If it is needed for a criterion, finish it within scope; otherwise record it with orch goal note", g.ID)
+	return ""
 }
 
 var goalPrompt = regexp.MustCompile(`(?m)^\s*/goal\b`)

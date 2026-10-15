@@ -130,7 +130,7 @@ func writeJSONFile(path string, m map[string]any) error {
 	return os.WriteFile(path, append(data, '\n'), 0600)
 }
 
-var ownHook = regexp.MustCompile(`/orch' hook (claude|claude-prompt|codex|agy)$`)
+var ownHook = regexp.MustCompile(`/orch' hook (claude|claude-prompt|codex|codex-prompt|agy)$`)
 
 func hookCommand(bin, cli string) string { return fmt.Sprintf("'%s' hook %s", bin, cli) }
 
@@ -266,6 +266,7 @@ func install(repo string, dry bool) (*installReport, error) {
 			hooks = map[string]any{}
 		}
 		added := ensureGroupedHook(hooks, "", hookCommand(bin, "codex"))
+		ensurePromptHook(hooks, hookCommand(bin, "codex-prompt"))
 		s["hooks"] = hooks
 		before, _ := os.ReadFile(codexHooks())
 		changed, err := writeHooks(codexHooks(), before, s)

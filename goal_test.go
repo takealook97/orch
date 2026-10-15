@@ -542,3 +542,195 @@ func TestGoalScopeSymlink(t *testing.T) {
 		}
 	}
 }
+
+func TestGoalCodexPatchScope(t *testing.T) {
+	g := frozenTestGoal(t)
+	for _, tt := range []struct {
+		name, tool, cwd, patch string
+		deny                   bool
+	}{
+		{"update", "apply_patch", "", "*** Update File: /workspace/src/a.go", false},
+		{"add", "namespace__APPLY_PATCH", "", "*** Add File: /workspace/src/new.go", false},
+		{"move", "functions.apply_patch", "", "*** Update File: /workspace/src/a.go\n*** Move to: /workspace/src/b.go", false},
+		{"outside update", "apply_patch", "", "*** Update File: /workspace/other/a.go", true},
+		{"outside add", "apply_patch", "", "*** Add File: /workspace/other/a.go", true},
+		{"outside delete", "apply_patch", "", "*** Delete File: /workspace/other/a.go", true},
+		{"outside move", "apply_patch", "", "*** Update File: /workspace/src/a.go\n*** Move to: /workspace/other/a.go", true},
+		{"relative inside", "apply_patch", "/workspace", "*** Add File:  src/a.go  ", false},
+		{"relative outside", "apply_patch", "/workspace/src", "*** Update File: ../other/a.go", true},
+		{"multi file", "apply_patch", "", "*** Add File: /workspace/src/a.go\n*** Update File: /workspace/other/b.go", true},
+		{"shell heredoc", "Bash", "", "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: /workspace/other/a.go\n@@\n-hi\n+hello\n*** End Patch\nPATCH", true},
+		{"shell inside", "shell", "/workspace", "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: src/a.go\n+hello\n*** End Patch\nPATCH", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]string{"command": tt.patch})
+			in := hookInput{ToolName: tt.tool, Cwd: tt.cwd, ToolInput: raw}
+			if r := decide(in, "", true); (r != "") != tt.deny {
+				t.Fatalf("deny=%v: %s", tt.deny, r)
+			}
+			if r := decide(in, "worker", true); r != "" {
+				t.Fatal(r)
+			}
+			if r := decide(in, "", false); r != "" {
+				t.Fatal(r)
+			}
+		})
+	}
+	// Real PreToolUse shape, including cwd and non-command string fields.
+	for _, field := range []string{"command", "input", "patch", "other"} {
+		data := fmt.Sprintf(`{"hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{%q:"*** Update File: ../other/a.go"},"cwd":"/workspace/src"}`, field)
+		var out bytes.Buffer
+		runHook("codex", strings.NewReader(data), &out, &out)
+		if !strings.Contains(out.String(), "outside the active goal") {
+			t.Fatal(out.String())
+		}
+	}
+	if err := withGoal(g.ID, func(g *Goal) error { g.Status = "ended"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	runHook("codex", strings.NewReader(`{"tool_name":"apply_patch","tool_input":{"command":"*** Update File: /outside"}}`), &out, &out)
+	if out.Len() != 0 {
+		t.Fatal(out.String())
+	}
+}
+
+func TestCodexGoalPromptHook(t *testing.T) {
+	goalEnv(t)
+	for _, tt := range []struct {
+		prompt string
+		inject bool
+	}{
+		{"/goal x", true}, {"<command-name>/goal</command-name>", true}, {"hello", false}, {"/goals x", false},
+	} {
+		raw, _ := json.Marshal(map[string]string{"prompt": tt.prompt})
+		var out bytes.Buffer
+		runHook("codex-prompt", bytes.NewReader(raw), &out, &out)
+		if (out.Len() != 0) != tt.inject {
+			t.Fatal(tt, out.String())
+		}
+		if tt.inject {
+			var response struct {
+				Output struct {
+					Event   string `json:"hookEventName"`
+					Context string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &response); err != nil || response.Output.Event != "UserPromptSubmit" || !strings.Contains(response.Output.Context, "orch goal new") {
+				t.Fatal(out.String(), err)
+			}
+		}
+	}
+	for _, mode := range []string{"worker", "outside", "active"} {
+		t.Run(mode, func(t *testing.T) {
+			goalEnv(t)
+			switch mode {
+			case "worker":
+				t.Setenv("ORCH_ROLE", "worker")
+			case "outside":
+				t.Setenv("HERDR_ENV", "")
+			case "active":
+				frozenTestGoal(t)
+			}
+			var out bytes.Buffer
+			runHook("codex-prompt", strings.NewReader(`{"prompt":"/goal x"}`), &out, &out)
+			if out.Len() != 0 {
+				t.Fatal(out.String())
+			}
+		})
+	}
+}
+
+func TestCodexPromptInstall(t *testing.T) {
+	repo, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ORCH_HOME", filepath.Join(home(), ".orch"))
+	bin := filepath.Join(home(), ".local", "bin", "orch")
+	if err := os.MkdirAll(filepath.Dir(bin), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, nil, 0700); err != nil {
+		t.Fatal(err)
+	}
+	foreign := map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": "offon-gate", "timeout": float64(30)}}}
+	initial := map[string]any{"hooks": map[string]any{"UserPromptSubmit": []any{foreign}}}
+	if err := os.MkdirAll(filepath.Dir(codexHooks()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(initial)
+	if err := os.WriteFile(codexHooks(), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := install(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(codexHooks())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installed map[string]any
+	if err := json.Unmarshal(before, &installed); err != nil {
+		t.Fatal(err)
+	}
+	groups := installed["hooks"].(map[string]any)["UserPromptSubmit"].([]any)
+	if len(groups) != 2 {
+		t.Fatal(string(before))
+	}
+	kept, _ := json.Marshal(groups[0])
+	want, _ := json.Marshal(foreign)
+	if !bytes.Equal(kept, want) {
+		t.Fatal(string(kept))
+	}
+	command := groups[1].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	if !strings.HasSuffix(command, " hook codex-prompt") || !ownHook.MatchString(command) {
+		t.Fatal(command)
+	}
+	if _, err := install(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(codexHooks())
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("second install changed hooks", err)
+	}
+}
+
+func TestGoalCodexPatchPathResolution(t *testing.T) {
+	g := frozenTestGoal(t)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := withGoal(g.ID, func(g *Goal) error { g.Scope = []string{filepath.Join(wd, "**")}; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if reason := decide(hookJSON("apply_patch", map[string]string{"patch": "*** Add File: relative.go"}), "", true); reason != "" {
+		t.Fatal("cwd fallback:", reason)
+	}
+	// Use a home directory fixture: temporary directories are always allowed.
+	root, err := os.MkdirTemp(home(), ".orch-codex-scope-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	scope := filepath.Join(root, "scope")
+	outside := filepath.Join(root, "outside")
+	for _, dir := range []string{scope, outside} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(scope, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := withGoal(g.ID, func(g *Goal) error { g.Scope = []string{filepath.Join(scope, "**")}; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	in := hookJSON("apply_patch", map[string]string{"input": "*** Add File: link/new.go"})
+	in.Cwd = scope
+	if reason := decide(in, "", true); !strings.Contains(reason, "outside the active goal") {
+		t.Fatal("symlink escape allowed:", reason)
+	}
+}

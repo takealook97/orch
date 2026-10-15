@@ -52,7 +52,7 @@ Maintenance
   orch goal new|freeze|status|check|note|extend|end  Frozen goals and budgets
   orch spawn ... --serves N[,M] [--fix-of SHARD]  Work for an active goal
   orch do ... --serves N[,M] [--fix-of SHARD]     Work for an active goal
-  orch hook claude|claude-prompt|codex|agy       Claude prompts / PreToolUse (stdin JSON)
+  orch hook claude|claude-prompt|codex|codex-prompt|agy       Claude/Codex prompts / PreToolUse (stdin JSON)
 
 roles: recon design produce integrate verify-mech verify-critical verify-neutral verify-adversarial
 `
@@ -149,7 +149,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return reapCommand(*runFlag, stderr)
 	case "hook":
 		if len(rest) != 1 {
-			return fail(fmt.Errorf("usage: orch hook claude|claude-prompt|codex|agy"))
+			return fail(fmt.Errorf("usage: orch hook claude|claude-prompt|codex|codex-prompt|agy"))
 		}
 		return runHook(rest[0], stdin, stdout, stderr)
 

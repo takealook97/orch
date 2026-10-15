@@ -76,7 +76,7 @@ Work coming from `/goal` or another command follows the same rule. A command set
 
 ## 1a. Goals (`/goal`)
 
-Compile a `/goal` before starting work: run `orch goal new --text "<goal verbatim>"` (or `--request FILE|-`), fill the printed `goal.md`, then run `orch goal freeze`. Claude's UserPromptSubmit hook reminds the Head to do this inside Herdr when no goal is active; Codex and agy have no prompt hook.
+Compile a `/goal` before starting work: run `orch goal new --text "<goal verbatim>"` (or `--request FILE|-`), fill the printed `goal.md`, then run `orch goal freeze`. Claude and Codex UserPromptSubmit hooks remind Heads to do this inside Herdr when no goal is active. Trust the new `codex-prompt` hook once in Codex `/hooks`; agy has no prompt hook.
 
 The goal file has `## Request`, `## Criteria`, `## Non-goals`, `## Scope`, and `## Budget`. Use 1–8 numbered criteria, each immediately followed by an indented `- check: <shell command>` line. Every criterion must be finite and checkable; open-ended words such as `perfect`, `everything`, `all remaining`, `완벽`, and `끝까지` are rejected. Scope is one absolute or `~/` glob per bullet (`**` includes subdirectories). Budget bullets are `hours: 4`, `max-workers: 20`, and `fix-rounds: 2` by default. The template is deliberately incomplete until criteria and scope are filled.
 
@@ -98,7 +98,7 @@ Pass `--serves N[,M]` on every spawn and do. Work without an existing criterion 
 
 Run `orch goal check` in the project working directory. Each criterion command runs through `sh -c` with a ten-minute timeout. Exit codes: **0** goal met; **1** a check failed; **2** no active goal or bad file; **3** goal stopped because the hours or worker budget was reached; **4** criteria tampered. At exit 3 stop starting work, report results and backlog, and ask the user whether to extend. Only after the user agrees, run `orch goal extend --hours N --max-workers N --reason "user: <approval>"`; limits are increased and the reason is logged. `orch goal end` ends the goal and prints its backlog.
 
-Claude's edit-tool hook restricts Edit, Write, MultiEdit, and NotebookEdit to frozen Scope globs, always permitting `~/.orch`, `~/.claude`, `/tmp`, and `/private/tmp`. Bash writes are not checked. These guards are speed bumps, not a security boundary; the Head still owns scope and user approval.
+Claude and Codex Head hooks restrict Claude Edit, Write, MultiEdit, and NotebookEdit and Codex `apply_patch` edits (including shell heredoc patches) to frozen Scope globs, always permitting `~/.orch`, `~/.claude`, `/tmp`, and `/private/tmp`. Other Bash writes are not checked. These guards are speed bumps, not a security boundary; the Head still owns scope and user approval.
 
 ## 2. Flow
 

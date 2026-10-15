@@ -37,7 +37,7 @@ make install
 | Layer | Target | How |
 |---|---|---|
 | Constitution | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` | Inserts or replaces the block between `<!-- orch:begin ... -->` and `<!-- orch:end -->`. Everything outside the markers is left alone |
-| Hooks | `~/.claude/settings.json` (PreToolUse, matcher `Agent\|Task\|Workflow\|Bash\|Edit\|Write\|MultiEdit\|NotebookEdit`, plus UserPromptSubmit goal setup), `~/.codex/hooks.json`, `~/.gemini/config/hooks.json` (`orch-guard`) | Adds or updates one `orch hook <cli>` entry per CLI. Other hooks are kept |
+| Hooks | `~/.claude/settings.json` (PreToolUse, matcher `Agent\|Task\|Workflow\|Bash\|Edit\|Write\|MultiEdit\|NotebookEdit`, plus UserPromptSubmit goal setup), `~/.codex/hooks.json` (PreToolUse and UserPromptSubmit goal setup), `~/.gemini/config/hooks.json` (`orch-guard`) | Adds or updates one `orch hook <cli>` entry per CLI. Other hooks are kept |
 | Skill | `~/.claude/skills/orch`, `~/.codex/skills/orch` | Symlinks to `<repo>/skill`. The skill is self-contained: `SKILL.md`, `references/design.md`, `references/decisions.md`, `scripts/orch-account-cr` |
 | Playbooks | `~/.orch/playbooks` | Symlink to `<repo>/playbooks` |
 
@@ -49,7 +49,7 @@ orch install --repo ~/IdeaProjects/orch --dry-run
 
 ### Codex hook trust
 
-Codex will not run a new or changed hook until you trust it. If you use Codex as the Head, open Codex once after installing, go to `/hooks`, and trust the `orch hook codex` entry.
+Codex will not run a new or changed hook until you trust it. If you use Codex as the Head, open Codex once after installing, go to `/hooks`, and trust the `orch hook codex` and new `orch hook codex-prompt` entries once. Claude and Codex Heads receive `/goal` setup context; agy has no prompt hook. Scope checks cover Claude edit tools and Codex `apply_patch` edits, including shell heredoc patches. Other shell writes remain the Head's responsibility.
 
 ## 3. Verify
 
@@ -140,7 +140,7 @@ To restore, copy the files from the backup directory you want back over the orig
 To uninstall:
 
 1. Remove the block between `<!-- orch:begin` and `<!-- orch:end -->` from `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`.
-2. Remove the Claude PreToolUse guard and UserPromptSubmit goal-prompt entry from `~/.claude/settings.json`, the `orch hook codex` entry from `~/.codex/hooks.json`, and the `orch-guard` key from `~/.gemini/config/hooks.json`.
+2. Remove the Claude PreToolUse guard and UserPromptSubmit goal-prompt entry from `~/.claude/settings.json`, the `orch hook codex` and `orch hook codex-prompt` entries from `~/.codex/hooks.json` (PreToolUse and UserPromptSubmit goal setup), and the `orch-guard` key from `~/.gemini/config/hooks.json`.
 3. Delete the links: `~/.claude/skills/orch`, `~/.codex/skills/orch`, `~/.orch/playbooks`, `~/.local/bin/orch`.
 4. Optionally delete `~/.orch` (run history and backups).
 
