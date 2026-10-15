@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"math"
+	"os"
 	"sort"
+	"strconv"
 )
 
 // Layout invariants (design §5.5, revised):
@@ -17,17 +19,27 @@ import (
 const headRatio = 1.0 / 3.0
 
 const (
-	minRowHeight = 8
-	maxRows      = 6
+	minRowHeight = 2
+	maxRows      = 20
 )
 
 func rowCap(l Layout) int {
-	n := l.Area.Height / minRowHeight
-	if n > maxRows {
-		n = maxRows
+	minHeight := positiveEnvInt("ORCH_MIN_ROW_HEIGHT", minRowHeight)
+	max := positiveEnvInt("ORCH_MAX_ROWS", maxRows)
+	n := l.Area.Height / minHeight
+	if n > max {
+		n = max
 	}
 	if n < 1 {
 		n = 1
+	}
+	return n
+}
+
+func positiveEnvInt(key string, fallback int) int {
+	n, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || n <= 0 {
+		return fallback
 	}
 	return n
 }

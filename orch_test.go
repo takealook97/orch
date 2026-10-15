@@ -260,8 +260,42 @@ func TestPlanResize(t *testing.T) {
 	if !gotRoot || !gotRow || len(ops) != 2 {
 		t.Fatalf("ops = %+v", ops)
 	}
-	if rowCap(l) != 6 {
+	t.Setenv("ORCH_MAX_ROWS", "")
+	t.Setenv("ORCH_MIN_ROW_HEIGHT", "")
+	if rowCap(l) != 20 {
 		t.Fatalf("rowCap = %d", rowCap(l))
+	}
+}
+
+func TestRowCapDefaultsAndEnvironmentOverrides(t *testing.T) {
+	l := Layout{Area: Rect{Height: 40}}
+	t.Setenv("ORCH_MAX_ROWS", "")
+	t.Setenv("ORCH_MIN_ROW_HEIGHT", "")
+	if got := rowCap(l); got != 20 {
+		t.Fatalf("default rowCap = %d, want 20", got)
+	}
+
+	t.Setenv("ORCH_MAX_ROWS", "3")
+	if got := rowCap(l); got != 3 {
+		t.Fatalf("ORCH_MAX_ROWS rowCap = %d, want 3", got)
+	}
+	t.Setenv("ORCH_MAX_ROWS", "20")
+	t.Setenv("ORCH_MIN_ROW_HEIGHT", "5")
+	if got := rowCap(l); got != 8 {
+		t.Fatalf("ORCH_MIN_ROW_HEIGHT rowCap = %d, want 8", got)
+	}
+}
+
+func TestRowCapInvalidEnvironmentUsesDefaults(t *testing.T) {
+	l := Layout{Area: Rect{Height: 40}}
+	for _, value := range []string{"0", "-2", "not-a-number"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("ORCH_MAX_ROWS", value)
+			t.Setenv("ORCH_MIN_ROW_HEIGHT", value)
+			if got := rowCap(l); got != 20 {
+				t.Fatalf("rowCap = %d, want default 20", got)
+			}
+		})
 	}
 }
 
