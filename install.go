@@ -130,7 +130,7 @@ func writeJSONFile(path string, m map[string]any) error {
 	return os.WriteFile(path, append(data, '\n'), 0600)
 }
 
-var ownHook = regexp.MustCompile(`/orch' hook (claude|codex|agy)$`)
+var ownHook = regexp.MustCompile(`/orch' hook (claude|claude-prompt|codex|agy)$`)
 
 func hookCommand(bin, cli string) string { return fmt.Sprintf("'%s' hook %s", bin, cli) }
 
@@ -143,13 +143,14 @@ func ensureGroupedHook(hooks map[string]any, matcher, command string) bool {
 		for _, h := range inner {
 			hm, _ := h.(map[string]any)
 			if c, _ := hm["command"].(string); ownHook.MatchString(c) {
+				changed := matcher != "" && gm["matcher"] != matcher
 				hm["command"] = command
 				if matcher != "" {
 					gm["matcher"] = matcher
 				}
 				list[i] = gm
 				hooks["PreToolUse"] = list
-				return false
+				return changed
 			}
 		}
 	}
@@ -247,7 +248,8 @@ func install(repo string, dry bool) (*installReport, error) {
 		if hooks == nil {
 			hooks = map[string]any{}
 		}
-		added := ensureGroupedHook(hooks, "Agent|Task|Workflow|Bash", hookCommand(bin, "claude"))
+		added := ensureGroupedHook(hooks, "Agent|Task|Workflow|Bash|Edit|Write|MultiEdit|NotebookEdit", hookCommand(bin, "claude"))
+		ensurePromptHook(hooks, hookCommand(bin, "claude-prompt"))
 		s["hooks"] = hooks
 		before, _ := os.ReadFile(claudeSettings())
 		changed, err := writeHooks(claudeSettings(), before, s)
@@ -392,4 +394,23 @@ func doctor() []check {
 		add(true, "account", "same (uses Head login, ORCH_ACCOUNT_CMD absent)")
 	}
 	return out
+}
+
+// UserPromptSubmit uses the same grouped hook shape without a tool matcher.
+func ensurePromptHook(hooks map[string]any, command string) bool {
+	list, _ := hooks["UserPromptSubmit"].([]any)
+	for _, g := range list {
+		gm, _ := g.(map[string]any)
+		inner, _ := gm["hooks"].([]any)
+		for _, h := range inner {
+			hm, _ := h.(map[string]any)
+			if c, _ := hm["command"].(string); ownHook.MatchString(c) {
+				changed := c != command
+				hm["command"] = command
+				return changed
+			}
+		}
+	}
+	hooks["UserPromptSubmit"] = append(list, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}})
+	return true
 }

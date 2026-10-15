@@ -115,6 +115,9 @@ func decide(in hookInput, role string, inHerdr bool) string {
 	if !inHerdr {
 		return ""
 	}
+	if reason := goalScopeReason(in); reason != "" {
+		return reason
+	}
 	if strings.Contains(cmd, "ORCH_RAW_HERDR=1") {
 		return ""
 	}
@@ -195,6 +198,9 @@ func literalLine(s string) string {
 
 func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 	data, _ := io.ReadAll(stdin)
+	if cli == "claude-prompt" {
+		return goalPromptHook(data, stdout)
+	}
 	// Debugging aid: with ~/.orch/hook-debug present, append every input per CLI.
 	if fileExists(filepath.Join(orchHome(), "hook-debug")) {
 		if f, err := os.OpenFile(filepath.Join(orchHome(), "hook-debug-"+cli+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err == nil {
@@ -235,4 +241,102 @@ func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, string(out))
 		return 0
 	}
+}
+
+var goalEditTool = regexp.MustCompile(`(?i)(^|[.__])(?:Edit|Write|MultiEdit|NotebookEdit)$`)
+
+func goalPath(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		home, _ := os.UserHomeDir()
+		p = filepath.Join(home, p[2:])
+	}
+	p, _ = filepath.Abs(p)
+	p = filepath.Clean(p)
+	// Resolve the existing prefix, retaining any new file or directory suffix.
+	ancestor := p
+	var suffix []string
+	for {
+		if real, err := filepath.EvalSymlinks(ancestor); err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				real = filepath.Join(real, suffix[i])
+			}
+			return real
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return p
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = parent
+	}
+}
+func goalScopePath(scope string) string {
+	if i := strings.IndexAny(scope, "*?["); i >= 0 {
+		if slash := strings.LastIndex(scope[:i], "/"); slash >= 0 {
+			return filepath.Join(goalPath(scope[:slash+1]), scope[slash+1:])
+		}
+	}
+	return goalPath(scope)
+}
+func goalScopeReason(in hookInput) string {
+	if !goalEditTool.MatchString(in.tool()) {
+		return ""
+	}
+	g, e := activeGoalFor(os.Getenv("HERDR_PANE_ID"))
+	if e != nil || g == nil {
+		return ""
+	}
+	var fields map[string]any
+	raw := in.ToolInput
+	if len(raw) == 0 && in.ToolCall != nil {
+		raw = in.ToolCall.Args
+	}
+	_ = json.Unmarshal(raw, &fields)
+	p, _ := fields["file_path"].(string)
+	if p == "" {
+		p, _ = fields["notebook_path"].(string)
+	}
+	if p == "" {
+		return ""
+	}
+	p = goalPath(p)
+	home, _ := os.UserHomeDir()
+	for _, base := range []string{orchHome(), filepath.Join(home, ".orch"), filepath.Join(home, ".claude"), "/tmp", "/private/tmp"} {
+		base = goalPath(base)
+		if p == base || strings.HasPrefix(p, base+string(filepath.Separator)) {
+			return ""
+		}
+	}
+	for _, scope := range g.Scope {
+		if globMatch(goalScopePath(scope), p) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("path is outside the active goal's Scope (%s). If it is needed for a criterion, finish it within scope; otherwise record it with orch goal note", g.ID)
+}
+
+var goalPrompt = regexp.MustCompile(`(?m)^\s*/goal\b`)
+
+func goalPromptHook(data []byte, stdout io.Writer) int {
+	if os.Getenv("HERDR_ENV") != "1" || envOrch("ROLE") == "worker" {
+		return 0
+	}
+	var in struct {
+		Prompt string `json:"prompt"`
+	}
+	if json.Unmarshal(data, &in) != nil {
+		return 0
+	}
+	if !goalPrompt.MatchString(in.Prompt) && !strings.Contains(in.Prompt, "<command-name>/goal</command-name>") {
+		return 0
+	}
+	g, e := activeGoalFor(os.Getenv("HERDR_PANE_ID"))
+	if e != nil || g != nil {
+		return 0
+	}
+	quoted := "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "$", "\\$", "`", "\\`").Replace(in.Prompt) + "\""
+	text := fmt.Sprintf("Before any other work run orch goal new --text %s (the goal verbatim). Fill goal.md with at most 8 checkable criteria, non-goals, scope and budget, then run orch goal freeze. Pass --serves N on every spawn/do. Record anything else found with orch goal note. Treat the goal as complete when orch goal check exits 0, and as stopped (report results and backlog and ask the user whether to extend) when it exits 3.", quoted)
+	out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit", "additionalContext": text}})
+	fmt.Fprintln(stdout, string(out))
+	return 0
 }

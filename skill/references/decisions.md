@@ -23,6 +23,10 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 | D15 | Length picks the channel, not the owner: inside Herdr, a one-off task expected to take 5+ minutes (or of unknown length) and every independent review go to a pane worker; `orch ask`/`orch do` keep bounded tasks under 5 minutes and print a `hint:` line when a task ran 5+ minutes without a pane. The hook's Head pane rule treats backslash-escaped `; & |` as literal and lets plain `--help`/`-h` lookups through; it does not parse quotes (two review rounds showed a quote heuristic keeps opening false negatives) | 2026-10-06: Heads routed reviews and phase-sized work through `orch ask`/`orch do` (39 of 110 ad-hoc tasks ran 5+ minutes), so the user saw no panes; D11's "regardless of length" was read as "never a pane". Hook false positives: a `--help` lookup on pane split, and a grep pattern whose quoted `\|` alternation was read as a pipe |
 | D13 | D3 stays: built-in subagents remain blocked inside Herdr. The cheap path is `orch ask`/`orch do`, which keeps the model catalog and `ORCH_ROLE=worker` injection | Model pinning is kept while a light path exists |
 
+## D16. Goal guard (2026-10-15)
+
+Thirty-hour `/goal` sessions can grow through open-ended goal text, repeated review/fix loops, and side quests. A goal is now separate from runs, owned by one Head pane, with a frozen list of at most eight checkable criteria, Scope globs, hours/worker budgets, and per-shard fix caps. Spawn/do admission requires `--serves`; ask/test stay free. Runs link to the active goal for bookkeeping. The goal worker cap counts admitted spawn/do in `goal.json`, reserved at admission and refunded if spawn/do fails before starting. `run new --goal` must name an existing goal. Extra findings go to a backlog instead of expanding the list. Budget exhaustion stops new work and requires a report and user decision before a logged extension. Criteria cannot be amended in place. Claude gets a `/goal` setup prompt and edit-tool scope hook; Bash writes and Codex/agy prompt hooks are outside this guard. The guard is a speed bump, not a security boundary.
+
 ## Changes from the design doc
 
 1. **`orch` is a standalone tool that does not depend on cr code** (per user instruction).
@@ -122,3 +126,4 @@ Changes made:
 2026-09-30: neutral lane optional in full when no user-facing surface; clean merges need no model; no third attempt after 2 fix iterations, Head classifies the cause; full+ adds a design challenge after design.
 
 2026-09-30: the Head owns design (claude-high-m only condenses evidence); design_check reviews the Head's design with a different family; QA defaults to the lightest other-family key: author OpenAI -> claude-medium-m, otherwise codex-high-l; textual merge conflicts and Head-Claude design checks use codex-high-l.
+

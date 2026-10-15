@@ -49,7 +49,10 @@ Maintenance
   orch doctor
   orch install [--repo DIR] [--dry-run]   install constitution, hooks, skill, and playbooks (after backup)
   orch playbook check [DIR]
-  orch hook claude|codex|agy              PreToolUse guard (stdin JSON)
+  orch goal new|freeze|status|check|note|extend|end  Frozen goals and budgets
+  orch spawn ... --serves N[,M] [--fix-of SHARD]  Work for an active goal
+  orch do ... --serves N[,M] [--fix-of SHARD]     Work for an active goal
+  orch hook claude|claude-prompt|codex|agy       Claude prompts / PreToolUse (stdin JSON)
 
 roles: recon design produce integrate verify-mech verify-critical verify-neutral verify-adversarial
 `
@@ -111,6 +114,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cmd, rest := args[0], args[1:]
 	// A worker may only read: every command that changes runs or panes is Head-only.
 	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist"}, cmd) ||
+		(cmd == "goal" && len(rest) > 0 && (rest[0] == "status" || rest[0] == "check")) ||
 		(cmd == "run" && len(rest) > 0 && rest[0] == "list") ||
 		(cmd == "dag" && len(rest) > 0 && (rest[0] == "check" || rest[0] == "status"))
 	if envOrch("ROLE") == "worker" && !readOnly {
@@ -145,7 +149,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return reapCommand(*runFlag, stderr)
 	case "hook":
 		if len(rest) != 1 {
-			return fail(fmt.Errorf("usage: orch hook claude|codex|agy"))
+			return fail(fmt.Errorf("usage: orch hook claude|claude-prompt|codex|agy"))
 		}
 		return runHook(rest[0], stdin, stdout, stderr)
 
@@ -204,6 +208,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 			if *playbook != "" && !fileExists(filepath.Join(orchHome(), "playbooks", *playbook+".yaml")) {
 				return fail(fmt.Errorf("playbook %s not found", *playbook))
+			}
+			if *goal != "" {
+				if _, err := loadGoal(*goal); err != nil {
+					return fail(fmt.Errorf("unknown goal %s", *goal))
+				}
 			}
 			r, err := createRun(req, *mode, *playbook, *goal)
 			if err != nil {
@@ -288,7 +297,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, p)
 		return 0
 
+	case "goal":
+		return goalCommand(rest, stdin, stdout, stderr)
+
 	case "spawn":
+		servesFlag := fs.String("serves", "", "goal criteria, comma-separated")
+		fixOf := fs.String("fix-of", "", "fix shard")
 		key := fs.String("model", "", "catalog key")
 		name := fs.String("name", "", "worker name")
 		role := fs.String("role", "", "role")
@@ -301,7 +315,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if _, err := parse(fs, rest); err != nil {
 			return 2
 		}
-		w, err := spawn(spawnOpts{Run: *runFlag, Key: *key, Name: *name, Role: *role, Purpose: *purpose,
+		serves, err := parseServes(*servesFlag)
+		if err != nil {
+			fmt.Fprintln(stderr, "orch:", err)
+			return 2
+		}
+		w, err := spawn(spawnOpts{Serves: serves, FixOf: *fixOf, Run: *runFlag, Key: *key, Name: *name, Role: *role, Purpose: *purpose,
 			Reviews: splitList(*reviews), AuthorFamilies: splitList(*authorFam), Cwd: *cwd, Worktree: *wt, Account: *account})
 		if err != nil {
 			return fail(err)

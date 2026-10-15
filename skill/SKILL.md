@@ -74,6 +74,32 @@ Adjustment: if scope turns out small, downgrade immediately and close unneeded w
 
 Work coming from `/goal` or another command follows the same rule. A command sets the goal and iteration style; this document decides who does it. If a command instructs a subagent, parallel agents, or a Workflow, run it through `orch` instead: a single read-only subagent maps to `orch ask`, a single writing one to `orch do`, and parallel or long-running ones to pane workers.
 
+## 1a. Goals (`/goal`)
+
+Compile a `/goal` before starting work: run `orch goal new --text "<goal verbatim>"` (or `--request FILE|-`), fill the printed `goal.md`, then run `orch goal freeze`. Claude's UserPromptSubmit hook reminds the Head to do this inside Herdr when no goal is active; Codex and agy have no prompt hook.
+
+The goal file has `## Request`, `## Criteria`, `## Non-goals`, `## Scope`, and `## Budget`. Use 1–8 numbered criteria, each immediately followed by an indented `- check: <shell command>` line. Every criterion must be finite and checkable; open-ended words such as `perfect`, `everything`, `all remaining`, `완벽`, and `끝까지` are rejected. Scope is one absolute or `~/` glob per bullet (`**` includes subdirectories). Budget bullets are `hours: 4`, `max-workers: 20`, and `fix-rounds: 2` by default. The template is deliberately incomplete until criteria and scope are filled.
+
+```markdown
+## Criteria
+1. The requested behavior passes its regression test
+   - check: go test ./...
+## Scope
+- ~/Projects/example/**
+## Budget
+- hours: 4
+- max-workers: 20
+- fix-rounds: 2
+```
+
+Freeze closes the criteria list and hashes its text and checks. Do not amend criteria during execution: end the goal and start another to change them. `orch goal status` shows elapsed time, admitted spawn/do reservations in goal.json, fixes per shard, and backlog size; it fails loudly if criteria changed. New runs and ad-hoc task runs automatically link to the active goal of the Head pane. The worker cap counts admitted spawn/do in `goal.json`, reserved at admission and refunded if spawn/do fails before starting. `run new --goal` must name an existing goal.
+
+Pass `--serves N[,M]` on every spawn and do. Work without an existing criterion is refused. Put discoveries outside the list in `orch goal note "..."`; report `backlog.md` at the end without working those items. DAG nodes may specify `serves: [1, 2]` and `fix_of: api`. Fix work uses `--fix-of SHARD`; spawn names such as `fix-api` or `fix2-api` also count against the shard's cap. Once the cap is used, mark the shard blocked, note it, and report it. Fallback respawns do not spend another fix round. Ask and test remain free and do not count toward the worker limit.
+
+Run `orch goal check` in the project working directory. Each criterion command runs through `sh -c` with a ten-minute timeout. Exit codes: **0** goal met; **1** a check failed; **2** no active goal or bad file; **3** goal stopped because the hours or worker budget was reached; **4** criteria tampered. At exit 3 stop starting work, report results and backlog, and ask the user whether to extend. Only after the user agrees, run `orch goal extend --hours N --max-workers N --reason "user: <approval>"`; limits are increased and the reason is logged. `orch goal end` ends the goal and prints its backlog.
+
+Claude's edit-tool hook restricts Edit, Write, MultiEdit, and NotebookEdit to frozen Scope globs, always permitting `~/.orch`, `~/.claude`, `/tmp`, and `/private/tmp`. Bash writes are not checked. These guards are speed bumps, not a security boundary; the Head still owns scope and user approval.
+
 ## 2. Flow
 
 ```bash

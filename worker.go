@@ -18,6 +18,8 @@ import (
 var nameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 type spawnOpts struct {
+	Serves  []int
+	FixOf   string
 	Run     string
 	Key     string
 	Name    string
@@ -155,6 +157,19 @@ func spawn(o spawnOpts) (*Worker, error) {
 		}
 	} else if _, ok := chains[o.Role]; ok {
 		o.Purpose = o.Role
+	}
+	release := func() {}
+	committed := false
+	defer func() {
+		if !committed {
+			release()
+		}
+	}()
+	if o.Fallback == "" {
+		var err error
+		if release, err = admit(os.Getenv("HERDR_PANE_ID"), admission{"spawn", o.Name, o.Serves, o.FixOf}); err != nil {
+			return nil, err
+		}
 	}
 	head := os.Getenv("HERDR_PANE_ID")
 	runID, err := resolveRun(o.Run)
@@ -318,6 +333,7 @@ func spawn(o spawnOpts) (*Worker, error) {
 	}
 	// Finished panes close even if the Head never runs its wait (one reaper per run).
 	ensureReaper(runID)
+	committed = true
 	return w, nil
 }
 

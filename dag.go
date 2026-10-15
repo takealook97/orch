@@ -18,6 +18,8 @@ import (
 // A DAG (design §11.3) lives in <run>/dag.yaml. Each node is one contract; needs are the
 // result files it waits for. Reviews imply needs. A node starts only when every need is done.
 type DagNode struct {
+	Serves       []int    `yaml:"serves"`
+	FixOf        string   `yaml:"fix_of"`
 	Name         string   `yaml:"name"`
 	Model        string   `yaml:"model"`
 	Role         string   `yaml:"role"`
@@ -369,7 +371,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 		for _, name := range dagReady(d, st) {
 			n := d.node(name)
 			w, err := spawn(spawnOpts{
-				Run: runID, Key: n.Model, Name: n.Name, Role: n.Role, Purpose: n.Purpose,
+				Serves: n.Serves, FixOf: n.FixOf, Run: runID, Key: n.Model, Name: n.Name, Role: n.Role, Purpose: n.Purpose,
 				Reviews: currentWorkers(st, n.Reviews), AuthorFamilies: n.AuthorFamily,
 				Cwd: n.Cwd, Worktree: n.Worktree, Account: n.Account,
 			})

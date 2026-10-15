@@ -257,6 +257,11 @@ func createRun(request, mode, playbook, goal string) (*Run, error) {
 // newRun creates a run directory. An ad-hoc run (one-off tasks) is closed from its first
 // save, so no other orch call can ever resolve it as the active run.
 func newRun(request, mode, playbook, goal string, adhoc bool) (*Run, error) {
+	if goal == "" {
+		if g, err := activeGoal(os.Getenv("HERDR_PANE_ID")); err == nil && g != nil {
+			goal = g.ID
+		}
+	}
 	r := &Run{
 		ID:        newRunID(),
 		Created:   time.Now(),

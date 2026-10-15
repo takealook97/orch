@@ -835,12 +835,22 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	account := fs.String("account", "same", "same|hook")
 	asJSON := fs.Bool("json", false, "JSON output")
 	maxLines := fs.Int("max-lines", 40, "test excerpt lines")
+	var servesFlag, fixOf string
+	if kind == "do" {
+		fs.StringVar(&servesFlag, "serves", "", "goal criteria, comma-separated")
+		fs.StringVar(&fixOf, "fix-of", "", "fix shard")
+	}
 	pos, err := parseTask(fs, args)
 	if err != nil {
 		var unknown errUnknownTaskFlag
 		if errors.As(err, &unknown) {
 			fmt.Fprintln(stderr, err)
 		}
+		return 2
+	}
+	serves, err := parseServes(servesFlag)
+	if err != nil {
+		fmt.Fprintln(stderr, "orch:", err)
 		return 2
 	}
 	if len(pos) != 1 {
@@ -881,11 +891,26 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch: --own is required")
 		return 2
 	}
+	release := func() {}
+	committed := false
+	defer func() {
+		if !committed {
+			release()
+		}
+	}()
+	if kind == "do" {
+		if release, err = admit(os.Getenv("HERDR_PANE_ID"), admission{"do", "", serves, fixOf}); err != nil {
+			fmt.Fprintln(stderr, "orch:", err)
+			return 1
+		}
+	}
 	t, err := newTask(kind, *key, pos[0], *cwd)
 	if err != nil {
 		fmt.Fprintln(stderr, "orch:", err)
 		return 1
 	}
+	// newTask has recorded the task in its run; it remains counted from here.
+	committed = true
 	t.Own = splitOwned(strings.Join(own, ","))
 	t.TestCmd = *testCmd
 	t.TimeoutMS = *timeout

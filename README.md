@@ -112,3 +112,11 @@ git config core.hooksPath .githooks
 ```
 
 Commits use an English `type: imperative summary` subject of at most 72 characters. The local hook enforces the format. Allowed types: `feat`, `fix`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `perf`, `security`, `revert`.
+
+## Goals
+
+Long `/goal` sessions can use a frozen criteria list and a budget. Start with `orch goal new --text "<goal verbatim>"`, fill `goal.md` with 1–8 numbered criteria and a `- check: CMD` for each, non-goals, absolute Scope globs, and hours/max-workers/fix-rounds budgets. Then run `orch goal freeze`.
+
+Every spawn/do needs `--serves N[,M]`; fixes use `--fix-of SHARD` (or spawn names `fix-api` / `fix2-api`) and default to two rounds per shard. New runs link automatically to the active goal of the Head pane. Discoveries outside the list go to `orch goal note "..."`, not more work. Inspect progress with `orch goal status` and finish with `orch goal check`: exit 0 means met, 1 checks failed, 2 bad file/no active goal, 3 budget stopped, and 4 criteria tampered. At the budget stop, report results and backlog and ask the user before `orch goal extend --hours N --max-workers N --reason "user: ..."`. `orch goal end` prints the backlog.
+
+Claude hooks inject this setup for `/goal` and restrict edit tools to the goal's Scope, allowing orch/Claude configuration and temporary files. Bash writes remain the Head's responsibility. See the skill's Goals section for the full file format and flow.
