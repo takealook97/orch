@@ -192,8 +192,13 @@ func newTask(kind, key, text, cwd string) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newTaskIn(id, kind, key, text, cwd)
+}
+
+// newTaskIn registers a one-off task in run id.
+func newTaskIn(id, kind, key, text, cwd string) (*Task, error) {
 	var t *Task
-	err = withRun(id, func(r *Run) error {
+	err := withRun(id, func(r *Run) error {
 		max := 0
 		for _, x := range r.Tasks {
 			if n, e := strconv.Atoi(strings.TrimPrefix(x.ID, "task-")); e == nil && n > max {

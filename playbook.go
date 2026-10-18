@@ -11,8 +11,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// A lane with run is a model-less DAG run node (orch runs the commands); its model only
+// reads a failure. A lane with pane: false is a DAG node that runs through orch ask.
 type Lane struct {
 	Model    string   `yaml:"model"`
+	Run      bool     `yaml:"run"`
+	Pane     *bool    `yaml:"pane"`
 	Required bool     `yaml:"required"`
 	When     string   `yaml:"when"`
 	Withhold []string `yaml:"withhold"`
@@ -99,6 +103,9 @@ func validatePlaybook(p Playbook) []string {
 			}
 			if lname == "critical" && lane.Model != "" && !strings.HasPrefix(lane.Model, "other_family") {
 				bad("critical lane must use other_family(author)")
+			}
+			if lane.Run && lname != "mechanical" {
+				bad("lane %s: only the mechanical lane can be a run lane", lname)
 			}
 		}
 	}

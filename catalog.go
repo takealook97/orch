@@ -32,7 +32,7 @@ var catalog = []Model{
 	{"codex-high-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", "gpt-6.1-sol", "low"},
 	{"codex-high-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", "gpt-6.1-sol", "medium"},
 	{"claude-high-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", "opus", "medium"},
-	{"claude-medium-m", "claude", familyAnthropic, "medium", "docs and writing, alternative implementation, code review, scenario QA", "sonnet", "medium"},
+	{"claude-medium-m", "claude", familyAnthropic, "low+", "docs and writing, alternative implementation, code review, scenario QA", "sonnet", "medium"},
 	{"gemini-medium-m", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks", "gemini-3.8-flash-medium", ""},
 }
 
@@ -128,7 +128,7 @@ var chains = map[string][]string{
 	"impl":        {"codex-high-m", "claude-high-m", "claude-medium-m"},
 	"hard-impl":   {"claude-high-m", "codex-high-m", "claude-medium-m"},
 	"alt":         {"claude-medium-m", "codex-high-m", "claude-high-m"},
-	"docs":        {"claude-medium-m", "claude-high-m", "codex-high-m"},
+	"docs":        {"claude-medium-m", "codex-high-m", "claude-high-m"},
 	"analysis":    {"codex-high-m", "claude-high-m", "claude-medium-m"},
 	"integrate":   {"codex-high-m", "claude-high-m"},
 	"image":       {"codex-high-m"},

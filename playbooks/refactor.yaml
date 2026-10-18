@@ -23,12 +23,12 @@ stages:
   verify:
     start: per_shard
     lanes:
-      mechanical: { model: codex-medium-h, required: true }
-      critical: { model: other_family(author), required: true }
+      mechanical: { run: true, model: codex-medium-h, required: true }
+      critical: { model: other_family(author), pane: false, required: true }
       adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
   integrate:
     owner: head
     mechanics: head
     escalate_to: codex-high-l
-    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge one worktree at a time; full test suite after each merge."
+    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge all clean worktrees in one pass, then run the full suite and the interface contract tests once; on failure, find the culprit by reverting merges newest first. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema)."
 retry_limit: 2

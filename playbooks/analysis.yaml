@@ -14,9 +14,9 @@ stages:
   verify:
     start: after_produce
     lanes:
-      mechanical: { model: codex-medium-h, required: true }
-      critical: { model: other_family(author), required: true }
-      neutral: { model: gemini-medium-m, required: false, withhold: [self_assessment] }
+      mechanical: { run: true, model: codex-medium-h, required: true }
+      critical: { model: other_family(author), pane: false, required: true }
+      neutral: { model: gemini-medium-m, pane: false, required: false, withhold: [self_assessment] }
   integrate:
     owner: head
 retry_limit: 2

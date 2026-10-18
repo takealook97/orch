@@ -15,8 +15,8 @@ stages:
   verify:
     start: per_shard
     lanes:
-      mechanical: { model: codex-medium-h, required: true }
-      critical: { model: other_family(author), required: true }
+      mechanical: { run: true, model: codex-medium-h, required: true }
+      critical: { model: other_family(author), pane: false, required: true }
       adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
   integrate:
     owner: head

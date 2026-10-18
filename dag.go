@@ -17,11 +17,16 @@ import (
 
 // A DAG (design §11.3) lives in <run>/dag.yaml. Each node is one contract; needs are the
 // result files it waits for. Reviews imply needs. A node starts only when every need is done.
+// A node with run is a model-less mechanical gate: orch runs the command itself. A node with
+// pane: false runs its contract through the read-only one-off task path (orch ask) instead
+// of a pane, so it takes no row. Neither can be reviewed.
 type DagNode struct {
 	Serves       []int    `yaml:"serves"`
 	FixOf        string   `yaml:"fix_of"`
 	Name         string   `yaml:"name"`
 	Model        string   `yaml:"model"`
+	Run          string   `yaml:"run"`
+	Pane         *bool    `yaml:"pane"`
 	Role         string   `yaml:"role"`
 	Purpose      string   `yaml:"purpose"`
 	Contract     string   `yaml:"contract"` // relative to the run dir; default contracts/<name>.md
@@ -35,6 +40,25 @@ type DagNode struct {
 
 type Dag struct {
 	Nodes []DagNode `yaml:"nodes"`
+}
+
+// inline reports whether orch runs the node itself instead of spawning a pane.
+func (n DagNode) inline() bool { return n.Run != "" || n.Pane != nil && !*n.Pane }
+
+// dir is where the node runs: the worktree, else cwd, else the Head's directory.
+func (n DagNode) dir() string {
+	d := n.Cwd
+	if n.Worktree != "" {
+		d = n.Worktree
+	}
+	if d == "" {
+		d, _ = os.Getwd()
+	}
+	d, _ = filepath.Abs(d)
+	if real, err := filepath.EvalSymlinks(d); err == nil {
+		d = real
+	}
+	return d
 }
 
 // Node states: pending, running, done, partial, blocked, failed, skipped, attention.
@@ -63,7 +87,7 @@ func loadDag(r *Run) (Dag, error) {
 	}
 	for i := range d.Nodes {
 		n := &d.Nodes[i]
-		if n.Contract == "" {
+		if n.Contract == "" && n.Run == "" {
 			n.Contract = filepath.Join("contracts", n.Name+".md")
 		}
 		for _, rv := range n.Reviews {
@@ -103,10 +127,35 @@ func validateDag(r *Run, d Dag) []string {
 		seen[n.Name] = true
 	}
 	for _, n := range d.Nodes {
+		for _, rv := range n.Reviews {
+			if t := d.node(rv); t != nil && t.inline() {
+				bad("%s: reviews %s, which has no pane worker (run or pane: false)", n.Name, rv)
+			}
+		}
+		if n.Run != "" {
+			if n.Model != "" || n.Contract != "" {
+				bad("%s: a run node takes no model or contract", n.Name)
+			}
+			if n.Role != roleMech {
+				bad("%s: a run node must have role %s", n.Name, roleMech)
+			}
+			if n.Worktree != "" && n.Cwd != "" {
+				bad("%s: set cwd or worktree, not both", n.Name)
+			}
+			for _, need := range n.Needs {
+				if !seen[need] {
+					bad("%s: depends on missing node %q", n.Name, need)
+				}
+			}
+			continue
+		}
 		m, err := modelByKey(n.Model)
 		if err != nil {
 			bad("%s: %v", n.Name, err)
 			continue
+		}
+		if n.inline() && n.Role != roleRecon && !isVerifyRole(n.Role) {
+			bad("%s: pane: false is read-only; only recon and verify-* nodes can use it", n.Name)
 		}
 		if !slices.Contains(roles, n.Role) {
 			bad("%s: unknown role %q", n.Name, n.Role)
@@ -326,25 +375,73 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 	}
 	st := loadDagState(r, d)
 	// Nodes left "running" by an interrupted runner are re-attached if their worker is known.
+	// Inline nodes died with that runner, so they start over.
+	for _, n := range d.Nodes {
+		if ns := st.Nodes[n.Name]; ns.Status == "running" && n.inline() {
+			ns.Status, ns.Worker, ns.Detail = "pending", "", ""
+		}
+	}
 	deadline := time.Now().Add(timeout)
+	inlineDone := make(chan inlineResult, len(d.Nodes))
+	inflight := 0
+	interrupted := false
+	record := func(res inlineResult) {
+		inflight--
+		ns := st.Nodes[res.node]
+		if res.worker != "" {
+			ns.Worker = res.worker
+		}
+		if res.interrupted {
+			// Not a verdict: the node starts over when the DAG run is resumed.
+			interrupted = true
+			ns.Status, ns.Detail = "pending", "interrupted"
+			fmt.Fprintf(out, "%s\tinterrupted\n", res.node)
+			return
+		}
+		ns.Status, ns.Detail, ns.Ended = res.status, res.detail, time.Now()
+		fmt.Fprintf(out, "%s\t%s\t%s\n", res.node, res.status, res.detail)
+	}
+	drain := func() {
+		for {
+			select {
+			case res := <-inlineDone:
+				record(res)
+			default:
+				return
+			}
+		}
+	}
 	// collect polls running nodes once (or up to wait) and records finished ones, so a
 	// finished worker's pane is closed promptly even while other nodes are being started.
 	collect := func(wait time.Duration) error {
 		var running []string
 		byWorker := map[string]string{}
 		for _, n := range d.Nodes {
-			if ns := st.Nodes[n.Name]; ns.Status == "running" {
+			if ns := st.Nodes[n.Name]; ns.Status == "running" && !n.inline() {
 				running = append(running, ns.Worker)
 				byWorker[ns.Worker] = n.Name
 			}
 		}
 		if len(running) == 0 {
-			return nil
+			if inflight > 0 {
+				select {
+				case res := <-inlineDone:
+					record(res)
+				case <-time.After(wait):
+				}
+			}
+			drain()
+			return saveDagState(r, st)
+		}
+		if inflight > 0 {
+			// An inline gate that finishes must not wait out a long pane poll.
+			wait = min(wait, timings.DagPoll)
 		}
 		outs, err := waitWorkers(runID, running, wait, true)
 		if err != nil {
 			return err
 		}
+		drain()
 		for _, o := range outs {
 			node := byWorker[o.Name]
 			if node == "" {
@@ -368,8 +465,34 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 		return saveDagState(r, st)
 	}
 	for {
+		if interrupted {
+			for inflight > 0 {
+				record(<-inlineDone)
+			}
+			_ = saveDagState(r, st)
+			return st, errors.New("DAG run interrupted; run orch dag run again to resume")
+		}
+		full := false
 		for _, name := range dagReady(d, st) {
 			n := d.node(name)
+			if n.inline() {
+				if err := startInline(runID, d, st, n, time.Until(deadline), inlineDone); err != nil {
+					st.Nodes[name].Status, st.Nodes[name].Detail = "failed", err.Error()
+					fmt.Fprintf(out, "%s\tfailed\t%v\n", name, err)
+					continue
+				}
+				inflight++
+				st.Nodes[name].Status, st.Nodes[name].Started = "running", time.Now()
+				what := "run"
+				if n.Run == "" {
+					what = n.Model + ", no pane"
+				}
+				fmt.Fprintf(out, "%s\tstarted\t%s (%s)\n", name, st.Nodes[name].Worker, what)
+				continue
+			}
+			if full {
+				continue // no row; inline nodes behind it still start
+			}
 			w, err := spawn(spawnOpts{
 				Serves: n.Serves, FixOf: n.FixOf, Run: runID, Key: n.Model, Name: n.Name, Role: n.Role, Purpose: n.Purpose,
 				Reviews: currentWorkers(st, n.Reviews), AuthorFamilies: n.AuthorFamily,
@@ -377,7 +500,8 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 			})
 			if err != nil {
 				if strings.Contains(err.Error(), "is full") {
-					break // wait for a free row; critical path first on the next round
+					full = true // wait for a free row; critical path first on the next round
+					continue
 				}
 				st.Nodes[name].Status, st.Nodes[name].Detail = "failed", err.Error()
 				fmt.Fprintf(out, "%s\tfailed\tspawn: %v\n", name, err)
@@ -400,7 +524,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 		var running []string
 		for _, n := range d.Nodes {
 			if ns := st.Nodes[n.Name]; ns.Status == "running" {
-				running = append(running, ns.Worker)
+				running = append(running, n.Name)
 			}
 		}
 		if len(running) == 0 {
