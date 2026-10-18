@@ -28,6 +28,8 @@ func overflowFixture(t *testing.T) (*Run, *overflowHerd) {
 	t.Setenv("ORCH_ROLE", "")
 	t.Setenv("ORCH_RUN", "")
 	t.Setenv("ORCH_MAX_WORKERS", "")
+	t.Setenv("ORCH_MIN_ROW_HEIGHT", "8")
+	t.Setenv("ORCH_MAX_ROWS", "6")
 	t.Setenv("HERDR_ENV", "1")
 	t.Setenv("HERDR_PANE_ID", "head")
 	t.Setenv("HERDR_TAB_ID", "head-tab")

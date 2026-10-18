@@ -223,7 +223,7 @@ Each model x effort combination gets its own key. Head picks only by key.
 - Closing the last worker and letting Head take the full width back is allowed. The next spawn splits back to 1/3.
 
 **Row cap (D5)**
-- Each tab holds at most terminal height / 8 worker rows, clamped to 1 through 6. The Head keeps the same left-third layout; extra workers use unfocused overflow tabs owned by the run.
+- Each tab holds at most terminal height / `ORCH_MIN_ROW_HEIGHT` (default 2) worker rows, clamped to 1 through `ORCH_MAX_ROWS` (default 20). The Head keeps the same left-third layout; extra workers use unfocused overflow tabs owned by the run.
 - `ORCH_MAX_WORKERS` sets a separate live pane-worker cap per run (positive integer, default 12). At that cap spawn reports "is full", and DAG ready workers queue in critical-path order. Closed/lost workers and nodes without panes do not count. Goal admission budgets remain an additional limit.
 - `orch layout`, reaper, wait/collect/close, run end, and gc include overflow panes. Workers need not be visible in the focused tab.
 
@@ -793,7 +793,7 @@ retry_limit: 2
 | D2 | Scope of orch application on the Claude side | Deepeet-only / global | Global. Adjust with the mode (direct/light/full) |
 | D3 | Built-in Agent exception | block everywhere / allow read-only Explore only | Block everywhere at first. Allow Explore only if that proves too restrictive |
 | D4 | Who handles image generation | Codex's image tool / agy's (Gemini) image tool / external | Decide after checking each CLI's image-generation support. Also decide whether to add it to the catalog |
-| D5 | Row cap for the right column, and overflow handling | fixed N / based on terminal height | terminal height / 8, clamped to 1-6 rows per tab. Extra workers use unfocused overflow tabs; queue at `ORCH_MAX_WORKERS` (default 12), never use the left column (§5.5) |
+| D5 | Row cap for the right column, and overflow handling | fixed N / based on terminal height | terminal height / `ORCH_MIN_ROW_HEIGHT` (default 2), clamped to 1-`ORCH_MAX_ROWS` (default 20) rows per tab. Extra workers use unfocused overflow tabs; queue at `ORCH_MAX_WORKERS` (default 12), never use the left column (§5.5) |
 | D6 | Location of the run directory | `~/.orch/runs` / a hidden directory inside the repo | `~/.orch/runs`, with only a link in the repo |
 | D7 | Location and sync of the constitution source | one file + symlinks / a generator script | One shared block in one file, inserted into all three files by a script (since each file also has content of its own) |
 | D8 | Copies of orch's skill | two copies / one + symlink | One + symlink. Handle the naming difference between Codex's `hd` and Claude's `herdr` in wording only |

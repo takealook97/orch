@@ -103,7 +103,7 @@ Keys follow `<cli>-<tier>-<effort initial>` (`h`/`m`/`l`), where the tier is the
 
 `orch` only closes panes it spawned. If a tab has a user pane, it stops spawning.
 
-The Head tab holds at most terminal height / 8 worker rows (minimum 1, maximum 6). Additional workers use unfocused overflow tabs, stacked in equal full-width rows with the same per-tab row cap. `ORCH_MAX_WORKERS` sets the live pane-worker cap per run (positive integer, default 12); ready DAG workers queue at that cap. Goal admission budgets still apply separately. `orch layout` rebalances all owned tabs, and closing the last worker in an overflow tab removes that tab.
+The Head tab holds at most terminal height / `ORCH_MIN_ROW_HEIGHT` (default 2) worker rows (minimum 1, maximum `ORCH_MAX_ROWS`, default 20). Additional workers use unfocused overflow tabs, stacked in equal full-width rows with the same per-tab row cap. `ORCH_MAX_WORKERS` sets the live pane-worker cap per run (positive integer, default 12); ready DAG workers queue at that cap. Goal admission budgets still apply separately. `orch layout` rebalances all owned tabs, and closing the last worker in an overflow tab removes that tab.
 
 A finished worker's pane closes even if the Head never calls `orch wait`: `orch spawn` starts one reaper per run (`orch __reap`, log in `~/.orch/runs/<id>/reaper.log`) that closes a pane once its result file has a status line and the agent has stopped working, then exits when the run has no live workers.
 

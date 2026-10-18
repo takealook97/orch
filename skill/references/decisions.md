@@ -10,7 +10,7 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 | D2 | Head rules apply globally, but are enforced only inside Herdr (`HERDR_ENV=1`) | `orch` does not work without Herdr |
 | D3 | Inside Herdr, all built-in Agent/Workflow/subagents are blocked (no exceptions) | User's choice |
 | D4 | Image generation uses Codex `image_generation` (`codex-high-m`, purpose `image`) | It is a stable feature, and `~/.codex/generated_images` shows real usage traces |
-| D5 | Each tab holds terminal height / 8 rows (minimum 1, maximum 6). Further workers use unfocused overflow tabs; queue at the per-run worker cap (`ORCH_MAX_WORKERS`, default 12) | Updated by D18 (2026-10-18) |
+| D5 | Each tab holds terminal height / `ORCH_MIN_ROW_HEIGHT` rows (default 2; minimum 1, maximum `ORCH_MAX_ROWS`, default 20). Further workers use unfocused overflow tabs; queue at the per-run worker cap (`ORCH_MAX_WORKERS`, default 12) | Updated by D18 (2026-10-18) |
 | D6 | The run directory is `~/.orch/runs/<id>` | Keeps the repo clean |
 | D7 | The constitution source lives in one place, `constitution/orch-block.md`, and `orch install` inserts it between markers in all three files | The three files carry different content alongside it |
 | D8 | The skill has one source, `skill/SKILL.md`, and `~/.claude/skills/orch` and `~/.codex/skills/orch` point to it via symlink. The name is `orch` | The two copies had already drifted apart |
