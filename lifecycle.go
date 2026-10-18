@@ -125,7 +125,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 						continue
 					} else {
 						detail += " · pane closure confirmed"
-						_ = normalizeLayout(os.Getenv("HERDR_PANE_ID"))
+						_ = normalizeOwnedLayouts(os.Getenv("HERDR_PANE_ID"))
 					}
 				}
 				markReported(runID, name)
@@ -394,6 +394,7 @@ func collectWorker(runFlag, name string) (string, string, error) {
 			fmt.Fprintf(&b, "pane close failed: %v\n", closeErr)
 		} else {
 			fmt.Fprintf(&b, "pane closure confirmed\n")
+			_ = normalizeOwnedLayouts(r.HeadPane)
 		}
 	}
 	markReported(runID, name)
@@ -445,8 +446,13 @@ func closeWorker(runID, name string) error { return closeWorkerAs(runID, name, "
 // closeWorkerAs closes name's pane. A non-empty expect is the pane the caller observed: if the
 // name now points at another pane (the worker was closed and the name reused), nothing is closed.
 func closeWorkerAs(runID, name, expect string, reap bool) error {
+	unlock, err := lockHead(os.Getenv("HERDR_PANE_ID"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	var pane string
-	err := withRun(runID, func(r *Run) error {
+	err = withRun(runID, func(r *Run) error {
 		if err := ownRun(r); err != nil {
 			return err
 		}
@@ -464,7 +470,8 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 		return nil // the name was reused for a new worker; never close its pane
 	}
 	if pane == "" {
-		return nil // already closed (by the reaper or an earlier call); nothing to record
+		cleanRunOverflowWarning(runID)
+		return nil
 	}
 	var cerr error
 	if pane != "" {
@@ -494,7 +501,34 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 		}
 		return nil
 	})
+	if cerr == nil {
+		cleanRunOverflowWarning(runID)
+		return nil
+	}
 	return cerr
+}
+
+// A confirmed pane close succeeds even if tab cleanup needs a later retry.
+func cleanRunOverflowWarning(runID string) {
+	if err := cleanRunOverflow(runID); err != nil {
+		fmt.Fprintln(os.Stderr, "orch: warning: overflow cleanup:", err)
+	}
+}
+
+// cleanRunOverflow persists partial cleanup even when another tab cannot be closed.
+func cleanRunOverflow(runID string) error {
+	var cleanupErr error
+	err := withRun(runID, func(r *Run) error {
+		cleanupErr = cleanupOverflowTabs(r)
+		if cleanupErr != nil {
+			r.event("overflow cleanup warning: %v", cleanupErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return cleanupErr
 }
 
 // closeRun closes every recorded pane of a run, verifies removal and reports leftovers.
@@ -511,6 +545,15 @@ func closeRun(runID string, end bool) ([]string, error) {
 		if err := closeWorker(runID, w.Name); err != nil {
 			failed = append(failed, w.Name)
 		}
+	}
+	unlock, err := lockHead(r.HeadPane)
+	if err != nil {
+		return nil, err
+	}
+	cleanupErr := cleanRunOverflow(runID)
+	unlock()
+	if cleanupErr != nil {
+		failed = append(failed, cleanupErr.Error())
 	}
 	var notes []string
 	r, _ = loadRun(runID)
@@ -590,6 +633,14 @@ func gc(orphans bool) ([]string, error) {
 				return nil
 			})
 		}
+		unlock, err := lockHead(r.HeadPane)
+		if err != nil {
+			return report, err
+		}
+		if err := cleanRunOverflow(r.ID); err != nil {
+			report = append(report, fmt.Sprintf("%s: %v", r.ID, err))
+		}
+		unlock()
 		if r.Status == "active" {
 			_ = withRun(r.ID, func(r *Run) error {
 				r.Status = "closed"

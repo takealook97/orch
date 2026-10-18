@@ -12,9 +12,9 @@ import (
 //
 //	I1 the left column holds only the Head pane at full height
 //	I2 the root split is left/right with the Head at 1/3 of the width
-//	I3 workers live only in the right 2/3 column, stacked top to bottom
+//	I3 Head-tab workers live in the right 2/3 column; overflow tabs hold full-width rows
 //	I4 right rows differ in height by at most one terminal row
-//	I5 every spawn uses --no-focus
+//	I5 splits use --no-focus and overflow tabs omit --focus
 //	I6 panes the user opened are never moved or closed
 const headRatio = 1.0 / 3.0
 

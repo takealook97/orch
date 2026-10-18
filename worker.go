@@ -226,7 +226,20 @@ func spawn(o spawnOpts) (*Worker, error) {
 			fmt.Fprintln(os.Stderr, "orch: warning:", w)
 		}
 
-		// Layout preconditions (I1, I6, row cap).
+		if err := withRun(r.ID, func(current *Run) error {
+			refreshOverflow(current)
+			r = current
+			return nil
+		}); err != nil {
+			return nil, "", err
+		}
+
+		// The run cap is independent of the number of visible rows.
+		if err := workerCapacity(r); err != nil {
+			return nil, "", err
+		}
+
+		// Layout preconditions (I1, I6).
 		l, err := getLayout(head)
 		if err != nil {
 			return nil, "", err
@@ -239,9 +252,6 @@ func spawn(o spawnOpts) (*Worker, error) {
 			if p.ID != head && !slices.Contains(owned, p.ID) {
 				return nil, "", fmt.Errorf("I6: pane %s in this tab was not created by orch. Spawn stopped because user panes must not be moved or closed (start Head in an empty tab)", p.ID)
 			}
-		}
-		if len(owned) >= rowCap(l) {
-			return nil, "", fmt.Errorf("right column is full (%d/%d rows); queue the worker until a row is free", len(owned), rowCap(l))
 		}
 
 		acc, err := pickAccount(o.Account, m.Kind, o.Exclude)
@@ -264,20 +274,7 @@ func spawn(o spawnOpts) (*Worker, error) {
 		noDaemon = envHas(env, "CR_CODEX_NO_DAEMON=1")
 		workerEnv = env
 
-		var pane string
-		if len(owned) == 0 {
-			pane, err = splitPane(head, "right", headRatio, cwd, env)
-		} else {
-			bottom := owned[len(owned)-1]
-			if l2, ok := findPane(l, bottom); ok {
-				for _, id := range owned {
-					if p, ok := findPane(l, id); ok && p.Rect.Y > l2.Rect.Y {
-						bottom, l2 = id, p
-					}
-				}
-			}
-			pane, err = splitPane(bottom, "down", 0, cwd, env)
-		}
+		pane, tab, err := placeWorker(r, l, cwd, env)
 		if err != nil {
 			return nil, "", err
 		}
@@ -286,7 +283,7 @@ func spawn(o spawnOpts) (*Worker, error) {
 			triedAcc = append(triedAcc, acc.Label)
 		}
 		w := &Worker{
-			Name: o.Name, Key: m.Key, Family: m.Family, Kind: m.Kind, Pane: pane, Role: o.Role,
+			Name: o.Name, Key: m.Key, Family: m.Family, Kind: m.Kind, Pane: pane, Tab: tab, Role: o.Role,
 			Purpose: o.Purpose, Reviews: o.Reviews, Account: acc.Label, Cwd: cwd, Worktree: o.Worktree,
 			Result: r.resultPath(o.Name), Status: "spawned", Started: time.Now(),
 			FallbackOf: o.Fallback, Tried: append(slices.Clone(o.Tried), m.Key), TriedAccounts: triedAcc,
@@ -297,14 +294,27 @@ func spawn(o spawnOpts) (*Worker, error) {
 				return err
 			}
 			r.Workers = append(r.Workers, w)
+			if tab != "" && tab != r.Tab && !slices.Contains(r.OverflowTabs, tab) {
+				r.OverflowTabs = append(r.OverflowTabs, tab)
+			}
 			r.event("spawn %s key=%s role=%s pane=%s account=%s", w.Name, w.Key, w.Role, w.Pane, w.Account)
 			return nil
 		}); err != nil {
 			_ = closePane(pane)
+			// Reload ownership under the run lock; the pre-split snapshot is stale.
+			_ = withRun(r.ID, func(current *Run) error {
+				if tab != current.Tab && !slices.Contains(current.OverflowTabs, tab) {
+					current.OverflowTabs = append(current.OverflowTabs, tab)
+				}
+				if cleanupErr := cleanupOverflowTabs(current); cleanupErr != nil {
+					current.event("overflow cleanup warning: %v", cleanupErr)
+				}
+				return nil
+			})
 			return nil, "", err
 		}
 		// A layout that cannot be restored stops the spawn (and removes the new pane).
-		if err := normalizeLayout(head); err != nil {
+		if err := normalizeOwnedLayouts(head); err != nil {
 			return w, pane, fmt.Errorf("layout: %w", err)
 		}
 		return w, pane, nil

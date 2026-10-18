@@ -168,7 +168,7 @@ Each model x effort combination gets its own key. Head picks only by key.
 | `codex-high-l` | codex | `--model $CODEX_HIGH_L -c model_reasoning_effort="low"` | OpenAI | medium | implementation from a file-level plan in the contract, mechanical integration, bulk repetitive edits |
 | `codex-high-m` | codex | `--model $CODEX_HIGH_M -c model_reasoning_effort="medium"` | OpenAI | medium+ | general implementation, debugging, verification that needs tool execution, technical review |
 | `claude-high-m` | claude | `--model $CLAUDE_HIGH_M --effort medium` (see D1; medium or low only, never high) | Anthropic | highest | hard implementation, ambiguous design, changes that cross multiple areas, hard debugging, deep review |
-| `claude-medium-m` | claude | `--model $CLAUDE_MEDIUM_M --effort <D1>` | Anthropic | medium | independent implementation, alternative approaches, docs/writing, code review, scenario QA |
+| `claude-medium-m` | claude | `--model $CLAUDE_MEDIUM_M --effort <D1>` | Anthropic | low+ | independent implementation, alternative approaches, docs/writing, code review, scenario QA |
 | `gemini-medium-m` | agy | `--model $GEMINI_MEDIUM_M` | Google | low | requirements checklist, broad document/web/multimodal reading, user-perspective QA |
 
 **Claude high tier effort: medium or low only; never high.**
@@ -201,31 +201,31 @@ Each model x effort combination gets its own key. Head picks only by key.
 **Invariants (must never break)**
 - **I1.** The left column holds exactly one pane: Head. It spans the full height, and no other pane is ever created in the left column or splits Head vertically.
 - **I2.** The root split is always left/right, with Head at a 1/3 ratio.
-- **I3.** Workers only ever appear in the right column, stacked top to bottom. No left/right split happens inside the right column.
+- **I3.** In the Head tab, workers appear only in the right column, stacked top to bottom. Overflow tabs contain full-width worker rows. No left/right split happens inside either worker stack.
 - **I4.** Row heights in the right column differ by at most one line.
-- **I5.** Every spawn uses `--no-focus`. Focus stays on Head.
+- **I5.** Pane splits use `--no-focus`; overflow tab creation omits `--focus`. Spawning never changes the user's focus.
 - **I6.** Panes the user opened by hand are never moved or closed.
 
 **Creation rules**
 - Zero workers: `herdr pane split --pane $HERDR_PANE_ID --direction right --ratio 0.3333 ...`.
-- One or more workers: split **the last worker in the right column** with `--direction down`.
+- While the Head column has room, split **the last worker in the right column** with `--direction down`. When full, split the bottom worker in a run-owned overflow tab with room, or create an unfocused overflow tab and use its initial pane.
 - Splitting Head's pane with `--current` or `--direction down` is **refused** by `orch`. That code path does not exist.
-- Read the pane ID straight from the split response's `.result.pane.pane_id` and record it in the run state.
+- Read pane/tab IDs from the Herdr response (`pane split`: `.result.pane`; `tab create`: `.result.tab` and `.result.root_pane`). Record each worker's tab and the run's overflow tab IDs in run state. Never move workers between tabs after spawning.
 
 **Post-change verification (after every spawn, close, resize)**
-1. `herdr pane zoom --pane $HERDR_PANE_ID --off`.
+1. Read zoom state; unzoom only when explicitly repairing a zoomed Head layout. Spawn refuses a zoomed Head layout to preserve focus.
 2. Read the tree with `herdr pane layout --pane $HERDR_PANE_ID`.
 3. Check I1-I4. If any is broken, restore the ratio with `herdr pane resize`. `--amount` is a ratio delta, not a count of cells.
 4. Check again after restoring. If two attempts fail to fix it, stop spawning and report to Head. Never keep spawning into a broken layout.
 
 **On close**
-- After closing a worker, rebalance the remaining right-column rows evenly.
+- After closing a worker, rebalance remaining rows in the Head and overflow tabs evenly. Close an overflow tab once its last worker pane is removed, confirm removal, and keep failed cleanup IDs for retry. Preserve user panes added to an overflow tab.
 - Closing the last worker and letting Head take the full width back is allowed. The next spawn splits back to 1/3.
 
 **Row cap (D5)**
-- The right column's maximum row count is set so **each row keeps a minimum height** (recommended 8 lines): terminal height / 8, capped at 6.
-- Once the cap is hit, **do not fall back to a new tab or the left column.** Queue the request and spawn it once a row frees up, in critical-path order.
-- No invisible execution (running in the background with no pane). Every worker is visible in the right column.
+- Each tab holds at most terminal height / 8 worker rows, clamped to 1 through 6. The Head keeps the same left-third layout; extra workers use unfocused overflow tabs owned by the run.
+- `ORCH_MAX_WORKERS` sets a separate live pane-worker cap per run (positive integer, default 12). At that cap spawn reports "is full", and DAG ready workers queue in critical-path order. Closed/lost workers and nodes without panes do not count. Goal admission budgets remain an additional limit.
+- `orch layout`, reaper, wait/collect/close, run end, and gc include overflow panes. Workers need not be visible in the focused tab.
 
 ### 5.6 The run directory (single source of truth for state and evidence)
 
@@ -501,10 +501,10 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 
 | Lane / purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Mechanical: rerun tests, builds, lint | `codex-medium-h` | Environment setup is complex -> `codex-high-m` | Run it and record it exactly |
+| Mechanical: rerun tests, builds, lint | no model (DAG `run` node or `orch test`); `codex-medium-h` reads a failure | Environment setup is complex -> `codex-high-m` | Run it and record it exactly |
 | Mechanical: run repro scenarios, recompute | `codex-medium-h` | — | — |
 | Mechanical: inspect rendered output, produced files | `gemini-medium-m` | — | Multimodal |
-| Critical: general code review | Author is OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `codex-high-l` (or `claude-high-m` if complex) | — | A different family; QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect |
+| Critical: general code review | Author is OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `claude-medium-m` (or `claude-high-m` if complex) | — | A different family; QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect |
 | Critical: complex change or one crossing multiple areas | Author is OpenAI/Google -> `claude-high-m` · Anthropic -> `codex-high-m` | — | Depth + a different family |
 | Critical: confirm one narrow, explicit claim | `codex-high-l` (author isn't OpenAI) | Author is OpenAI -> `claude-medium-m` | — |
 | Critical: fact/source rebuttal (research) | `claude-high-m` | `claude-high-m` wrote the synthesis -> `codex-high-m` | — |
@@ -585,13 +585,14 @@ There are exactly three families: OpenAI (`codex-*`), Anthropic (`claude-high-m`
 - The author's own test runs and self-review are supporting evidence only — **they never count as independent verification.**
 - A different session of the same model is not a different perspective. When a genuinely different viewpoint is needed, change the family.
 - **The mechanical lane is the first gate.** If it fails, don't spin up the LLM lanes (critical, neutral, adversarial) — send it straight back for a fix. Once it passes, launch the LLM lanes **at the same time.** For deliverables with nothing to execute (writing, research), launch the LLM lanes right away.
+- **Rows are for writers.** The mechanical gate runs as a `run` node (no model, no pane). Critical and neutral lanes default to `pane: false`: they run through `orch ask` with read-only tools, so the contract carries the diff path and the mechanical result. A reviewer gets a pane only when it must run code to reproduce a finding; adversarial lanes keep their pane.
 - Give LLM reviewers test-execution permission too, and require every finding to cite evidence (file:line, a repro command).
 
 ### 10.2 Lane definitions
 
 | Lane | Character | Who | Input | Output |
 |---|---|---|---|---|
-| **Mechanical** | fact-checking | `codex-medium-h` (not the author) or Head directly | the deliverable, list of commands to run | commands, inputs, exit codes, output excerpts, list of failures |
+| **Mechanical** | fact-checking | no model: a DAG `run` node or `orch test`; `codex-medium-h` (not the author) when the checks need judgment | the deliverable, list of commands to run | commands, inputs, exit codes, output excerpts, list of failures |
 | **Critical** | find defects | a different family from the author | original request, acceptance criteria, the diff/deliverable, mechanical results | list of defects (location, repro scenario, severity) |
 | **Neutral** | check against requirements | `gemini-medium-m` | original request, acceptance criteria, the deliverable, evidence of actual behavior. **Never given the author's self-assessment** | requirements checklist |
 | **Adversarial** | try to break it | see §9.3 | a specific attack target (concurrency, data loss, security, fact/source, accessibility, or operational failure) | a counterexample, or evidence the attack failed |
@@ -657,7 +658,7 @@ In full, skip the neutral lane when the change has no user-facing surface; recor
 1. There are 2+ independent deliverables.
 2. Each deliverable's owned-file glob doesn't overlap another's.
 3. The interface between shards is already fixed in the decision log (§7.1).
-4. Concurrent writers <= 4.
+4. Concurrent writers <= the worker cap (`ORCH_MAX_WORKERS`, default 12).
 
 If it doesn't pass, one writer proceeds at a time. Recon and verification prep still run in parallel in the meantime.
 
@@ -684,7 +685,7 @@ If it doesn't pass, one writer proceeds at a time. Recon and verification prep s
 - If a read-only worker shares a checkout with a writer, the writer that changes its input must not run at the same time — or hand the reader a snapshot (a worktree or commit hash) as input.
 - If several shards must change a shared file (config, a lock file, a schema), give that file to **exactly one worker** and have the rest wait for its result. This is a legitimate case for serialization.
 - Even after every shard's verification passes, **run one full verification pass on the integrated result.** Shard-level verification can't catch interactions between shards.
-- **Merge worktrees one at a time.** Run the build, type check, and full test suite at every merge. Worktrees only prevent file conflicts, not semantic conflicts (§17 C2). Run interface contract tests against the merged tree.
+- **Merge clean worktrees in one pass, verify once.** Run the build, type check, full test suite, and interface contract tests against the merged tree. Worktrees only prevent file conflicts, not semantic conflicts (§17 C2), and those contract tests are what catch them. On failure, revert merges newest first to find the culprit. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema).
 
 ### 11.5 Example flow
 
@@ -748,15 +749,15 @@ stages:
   verify:
     start: per_shard          # start as soon as a shard finishes
     lanes:
-      mechanical: { model: codex-medium-h, required: true }
-      critical:   { model: other_family(author), required: true }
-      neutral:    { model: gemini-medium-m, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
+      mechanical: { run: true, model: codex-medium-h, required: true }   # run node; the model only reads a failure
+      critical:   { model: other_family(author), pane: false, required: true }
+      neutral:    { model: gemini-medium-m, pane: false, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
       adversarial:{ model: other_family(author, critical), when: "mode == full+" }
   integrate:
     owner: head
     mechanics: head
     escalate_to: codex-high-l
-    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge one worktree at a time; full test suite after each merge."
+    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge all clean worktrees in one pass, then run the full suite and the interface contract tests once; on failure, find the culprit by reverting merges newest first. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema)."
 retry_limit: 2
 ```
 
@@ -792,7 +793,7 @@ retry_limit: 2
 | D2 | Scope of orch application on the Claude side | Deepeet-only / global | Global. Adjust with the mode (direct/light/full) |
 | D3 | Built-in Agent exception | block everywhere / allow read-only Explore only | Block everywhere at first. Allow Explore only if that proves too restrictive |
 | D4 | Who handles image generation | Codex's image tool / agy's (Gemini) image tool / external | Decide after checking each CLI's image-generation support. Also decide whether to add it to the catalog |
-| D5 | Row cap for the right column, and overflow handling | fixed N / based on terminal height | terminal height / 8, capped at 6. Overflow queues. Never use a new tab or the left column (§5.5) |
+| D5 | Row cap for the right column, and overflow handling | fixed N / based on terminal height | terminal height / 8, clamped to 1-6 rows per tab. Extra workers use unfocused overflow tabs; queue at `ORCH_MAX_WORKERS` (default 12), never use the left column (§5.5) |
 | D6 | Location of the run directory | `~/.orch/runs` / a hidden directory inside the repo | `~/.orch/runs`, with only a link in the repo |
 | D7 | Location and sync of the constitution source | one file + symlinks / a generator script | One shared block in one file, inserted into all three files by a script (since each file also has content of its own) |
 | D8 | Copies of orch's skill | two copies / one + symlink | One + symlink. Handle the naming difference between Codex's `hd` and Claude's `herdr` in wording only |
@@ -854,7 +855,7 @@ Legend: **verified** = opened the original source directly · **search only** = 
 | # | Evidence | Source | Where it's applied |
 |---|---|---|---|
 | C1 | On sequential-reasoning tasks, every multi-agent variant was 39-70% worse. Once single-agent performance passes about 45%, coordination gains shrink or turn negative. Errors amplify 17.2x without central coordination, 4.4x with it | arxiv.org/abs/2512.08296 | §8 thresholds, §11.1 write gate, the Head-centered structure |
-| C2 | Across 107,000+ agent PRs, merge-conflict rate was 27.67% (Codex 32.31%, Claude Code 26.86%). Worktrees don't prevent semantic conflicts | arxiv.org/abs/2604.03551 | §11.1 write gate, §11.4 merge one at a time |
+| C2 | Across 107,000+ agent PRs, merge-conflict rate was 27.67% (Codex 32.31%, Claude Code 26.86%). Worktrees don't prevent semantic conflicts | arxiv.org/abs/2604.03551 | §11.1 write gate, §11.4 verify the merged tree |
 | C3 | If implicit decisions aren't shared, parallel workers build conflicting assumptions | Cognition blog | §7.1 decision log |
 | C4 | Cross-review is asymmetric: Claude reviewing Codex went 71.6%->89.7%; Codex reviewing Claude went 91.4%->82.8% (p=.046). Reviewers couldn't run tests in that setup | arxiv.org/abs/2607.21656 | §10.5 only proven findings get applied, no veto. §10.1 give reviewers test-execution permission |
 | C5 | Same-family preference bias is 3.4-8.4 points. Reordering flips 55.4% of verdicts. Self-preference bias doesn't shrink as the model improves, but splitting the rubric into separate dimensions cuts it by about 31.5% on average | arxiv.org/abs/2609.17857, arxiv.org/abs/2604.22891, arxiv.org/abs/2410.21819 | §9.3 family constraint, §10.3 one verdict per item plus order shuffling |

@@ -38,11 +38,12 @@ Delegation
   orch close <name> | --run ID | --all
 
 DAG (dag.yaml in the run directory)
-  orch dag check|run|status [--run ID] [--timeout MS]   spawn ready nodes in critical-path order and run to completion
+  orch dag check|run|status [--run ID] [--timeout MS]   start ready nodes in critical-path order (run: gates and pane: false nodes need no row) and run to completion
   orch checklist [--shuffle] [--seed N]   create neutral-lane checklist from acceptance.md (full+ shuffles item order)
 
 Maintenance
-  orch layout                             Head 1/3 · restore equal rows on the right
+  orch layout                             Head 1/3 · restore equal rows in Head and overflow tabs
+                                          ORCH_MAX_WORKERS: live pane workers per run (default 12)
   orch resume --run ID                    resume /goal: make this pane Head and mark missing workers
   orch gc [--orphans]                     clean panes spawned by this Head for closed runs
                                         --orphans: also clean runs whose Head disappeared (abnormal exit)
@@ -442,7 +443,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		if head != "" {
 			if left, _ := ownedPanes(head); len(left) > 0 {
-				if err := normalizeLayout(head); err != nil {
+				if err := normalizeOwnedLayouts(head); err != nil {
 					fmt.Fprintln(stderr, "orch: layout:", err)
 				}
 			}
@@ -483,10 +484,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if head == "" {
 			return fail(fmt.Errorf("HERDR_PANE_ID missing"))
 		}
-		if err := normalizeLayout(head); err != nil {
+		if err := normalizeOwnedLayouts(head); err != nil {
 			return fail(err)
 		}
-		fmt.Fprintln(stdout, "layout valid (Head 1/3, equal rows on the right)")
+		fmt.Fprintln(stdout, "layout valid (Head 1/3, equal rows in Head and overflow tabs)")
 		return 0
 
 	case "resume":

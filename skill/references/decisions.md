@@ -10,7 +10,7 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 | D2 | Head rules apply globally, but are enforced only inside Herdr (`HERDR_ENV=1`) | `orch` does not work without Herdr |
 | D3 | Inside Herdr, all built-in Agent/Workflow/subagents are blocked (no exceptions) | User's choice |
 | D4 | Image generation uses Codex `image_generation` (`codex-high-m`, purpose `image`) | It is a stable feature, and `~/.codex/generated_images` shows real usage traces |
-| D5 | The right column's row count is terminal height / 8, capped at 6 rows. Over that, spawn is refused and queued | Design-doc recommendation |
+| D5 | Each tab holds terminal height / 8 rows (minimum 1, maximum 6). Further workers use unfocused overflow tabs; queue at the per-run worker cap (`ORCH_MAX_WORKERS`, default 12) | Updated by D18 (2026-10-18) |
 | D6 | The run directory is `~/.orch/runs/<id>` | Keeps the repo clean |
 | D7 | The constitution source lives in one place, `constitution/orch-block.md`, and `orch install` inserts it between markers in all three files | The three files carry different content alongside it |
 | D8 | The skill has one source, `skill/SKILL.md`, and `~/.claude/skills/orch` and `~/.codex/skills/orch` point to it via symlink. The name is `orch` | The two copies had already drifted apart |
@@ -132,3 +132,11 @@ Changes made:
 ## D17. Codex native goal compilation (2026-10-15)
 
 Codex 0.162 does not fire UserPromptSubmit for native `/goal <objective>`. PreToolUse now reads complete `thread_goal_updated` rollout events, caching the last state and byte offset atomically under ORCH_HOME/codex-goal-cache. Active native goals block Head tools inside Herdr until the pane has a frozen orch goal (drafts do not count). Compilation permits command-position orch goal/help/models/status shell commands and edits wholly under ORCH_HOME. Paused, cleared, and other non-active goal states release this guard. Workers and sessions outside Herdr are unaffected, as are Claude transcripts without these events. The codex-prompt hook still covers plain prompts starting with `/goal` text. Existing raw-Herdr bypass ordering is preserved.
+2026-09-30: claude-medium-m (sonnet) is rated low+: about Luna level, below Sol. Critical lane for a Google author defaults to claude-medium-m; the docs fallback chain tries codex-high-m before claude-high-m.
+2026-09-30: removed pipeline bottlenecks without changing model preferences. Mechanical gates run as model-less DAG run nodes; critical and neutral lanes default to pane: false (orch ask, read-only, no row); clean worktrees merge in one pass with one full verification.
+
+## D18. Overflow worker tabs and per-run cap (2026-10-18)
+
+Keep the Head full-height on the left third and at most rowCap workers on the right. Additional pane workers use run-owned overflow tabs created without focus, with full-width, equal-height rows and the same row cap. Reuse a tab with room before creating another; never move workers after spawn. Persist worker tab IDs and run-owned overflow tabs so reaper, wait/collect/close, run end, gc, and layout include them. Remove empty overflow tabs and confirm removal; never close a tab containing user panes.
+
+`ORCH_MAX_WORKERS` is a positive integer with default 12 (invalid/non-positive values use the default). Count live workers of the run that have panes, excluding closed/lost workers. Spawn at the cap fails with "is full" so DAG workers queue only at the worker cap, rather than the visible row cap. Goal admission budgets remain separate. The concurrent-writer gate follows this worker cap instead of a fixed 4; the other parallel-write gates still apply.

@@ -19,6 +19,7 @@ type Worker struct {
 	Family     string   `json:"family"`
 	Kind       string   `json:"kind"`
 	Pane       string   `json:"pane"`
+	Tab        string   `json:"tab,omitempty"`
 	Role       string   `json:"role"`
 	Purpose    string   `json:"purpose,omitempty"`
 	Reviews    []string `json:"reviews,omitempty"`
@@ -48,19 +49,21 @@ type Event struct {
 }
 
 type Run struct {
-	ID        string    `json:"id"`
-	Created   time.Time `json:"created"`
-	HeadPane  string    `json:"head_pane"`
-	Workspace string    `json:"workspace"`
-	Tab       string    `json:"tab"`
-	Mode      string    `json:"mode"`
-	Playbook  string    `json:"playbook,omitempty"`
-	Goal      string    `json:"goal,omitempty"`
-	Status    string    `json:"status"` // active, closed
-	Adhoc     bool      `json:"adhoc,omitempty"`
-	Workers   []*Worker `json:"workers"`
-	Tasks     []*Task   `json:"tasks,omitempty"`
-	Events    []Event   `json:"events"`
+	ID           string    `json:"id"`
+	Created      time.Time `json:"created"`
+	HeadPane     string    `json:"head_pane"`
+	Workspace    string    `json:"workspace"`
+	Tab          string    `json:"tab"`
+	Mode         string    `json:"mode"`
+	Playbook     string    `json:"playbook,omitempty"`
+	Goal         string    `json:"goal,omitempty"`
+	Status       string    `json:"status"` // active, closed
+	Adhoc        bool      `json:"adhoc,omitempty"`
+	OverflowTabs []string  `json:"overflow_tabs,omitempty"`
+	OverflowSeq  int       `json:"overflow_seq,omitempty"`
+	Workers      []*Worker `json:"workers"`
+	Tasks        []*Task   `json:"tasks,omitempty"`
+	Events       []Event   `json:"events"`
 }
 
 // envOrch reads ORCH_<key>.

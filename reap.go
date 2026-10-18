@@ -130,7 +130,7 @@ func (rp *reaper) once(log io.Writer) (bool, error) {
 	}
 	if closed {
 		if left, _ := ownedPanes(r.HeadPane); len(left) > 0 {
-			if err := normalizeLayout(r.HeadPane); err != nil {
+			if err := normalizeOwnedLayouts(r.HeadPane); err != nil {
 				fmt.Fprintf(log, "%s layout: %v\n", time.Now().Format(time.RFC3339), err)
 			}
 		}

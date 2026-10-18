@@ -125,12 +125,12 @@ orch run end                                                  # close every pane
   nodes:
     - {name: recon-api, model: codex-medium-h, role: recon, purpose: explore}
     - {name: impl-api, model: codex-high-m, role: produce, purpose: impl, needs: [recon-api], worktree: ../wt-api}
-    - {name: mech-api, model: codex-medium-h, role: verify-mech, needs: [impl-api]}
-    - {name: crit-api, model: claude-medium-m, role: verify-critical, reviews: [impl-api], needs: [mech-api]}
-    - {name: neu-api, model: gemini-medium-m, role: verify-neutral, reviews: [impl-api], needs: [mech-api]}
+    - {name: mech-api, run: "go vet ./... && go test ./...", role: verify-mech, worktree: ../wt-api, needs: [impl-api]}
+    - {name: crit-api, model: claude-medium-m, role: verify-critical, reviews: [impl-api], needs: [mech-api], pane: false}
+    - {name: neu-api, model: gemini-medium-m, role: verify-neutral, reviews: [impl-api], needs: [mech-api], pane: false}
   ```
-  Contracts default to `contracts/<name>.md`. `reviews` also implies `needs`. Output the Head wrote is `author_family: [head]`.
-- If the right column is full (terminal height / 8, max 6 rows), spawn is refused. Nodes are spawned in critical-path order as rows free up.
+  Contracts default to `contracts/<name>.md`. `reviews` also implies `needs`. Output the Head wrote is `author_family: [head]`. A `run` node has no model or contract: orch runs the command in its `cwd`/`worktree`, writes the summary as its result file, and fails the node (skipping everything behind it) on a nonzero exit. A `pane: false` node (recon or verify-* only) runs its contract through `orch ask` and saves the final message as its result file. Neither takes a row, and neither can be reviewed.
+- The Head tab keeps at most terminal height / 8 visible worker rows (minimum 1, maximum 6). Further pane workers use unfocused overflow tabs, stacked in equal rows with the same per-tab row cap. `ORCH_MAX_WORKERS` sets the live pane-worker cap per run (positive integer, default 12); only that cap queues ready DAG workers, in critical-path order. Closed/lost workers and nodes without panes do not count. Goal admission budgets still apply separately.
 - **A finished worker pane must be closed immediately.** orch guarantees this without the Head: `orch spawn` starts a per-run reaper that closes a pane as soon as its result file has a status line (and the agent is no longer working), and exits when the run has no live workers. `orch wait` also closes the pane the moment it sees the status line and confirms removal. Same for `orch collect`, fallback, and `orch run end`. Panes are never reused; the next contract gets a new worker. A worker that stalled with no result (`idle-no-result`) is also closed right away with `orch close <name>` once you've made a judgment call.
 - Don't read a worker's conversation transcript. Use `orch read` only when the result file is missing or something is stuck.
 - Run `orch wait` in the foreground by default. While the user is waiting for progress, keep it in the foreground; do not send it to a background task. Never detach it with `&`, `nohup`, or `setsid`: a detached process fails the Head identity check and exits at once.
@@ -188,12 +188,12 @@ Plan verification at the same time you assign the production work. An author's o
 
 | Lane | `--role` | Who | Input | Output |
 |---|---|---|---|---|
-| Mechanical | verify-mech | `codex-medium-h` (not the author) or the Head directly | Deliverables, commands to run | Commands, exit codes, output excerpts, failure list |
+| Mechanical | verify-mech | No model: a DAG `run` node (or `orch test`) runs the commands. `codex-medium-h` only reads a failure the excerpt doesn't explain | Deliverables, commands to run | Commands, exit codes, output excerpts, failure list |
 | Critical | verify-critical | A **different family** from the author (enforced via `--reviews`) | Original request, acceptance criteria, diff, mechanical results | Defect list (location, repro, severity) |
 | Neutral | verify-neutral | `gemini-medium-m` (never given the author's self-assessment) | Original request, acceptance criteria, deliverables, evidence of actual behavior | Requirements checklist |
 | Adversarial | verify-adversarial | A different family from the author, `gemini-medium-m` forbidden. Default `claude-high-m`; `codex-high-m` if the author is Anthropic | One concrete attack target | A counterexample or grounds for refuting it |
 
-Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `codex-high-l` (or `claude-high-m` if complex). QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect.
+Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `claude-medium-m` (or `claude-high-m` if complex). QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect.
 
 | Mode | Mechanical | Critical | Neutral | Adversarial |
 |---|---|---|---|---|
@@ -205,7 +205,8 @@ Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-
 In full, skip the neutral lane when the change has no user-facing surface; record the skip in the final report.
 
 - **The mechanical lane is the gate.** If it fails, don't spawn LLM lanes; send it back for a fix. If it passes, spawn the rest concurrently.
-- Give LLM reviewers permission to run tests too, and require evidence (file:line, repro command) for every finding.
+- Critical and neutral lanes run without a pane by default (`pane: false`): they take no row and skip pane startup, but get read-only tools. Save the diff to `evidence/` and put its path and the mechanical result in the contract. Give a reviewer a pane only when it must run code to reproduce a finding; adversarial lanes keep their pane.
+- Require evidence (file:line, repro command) for every finding.
 - Build the neutral checklist template with `orch checklist` (generated from acceptance.md). For full+'s second judgment, shuffle the order with `orch checklist --shuffle`.
 - The neutral checklist format is fixed: `| # | Acceptance criterion | Verdict (met/not met/cannot confirm from evidence) | Evidence location | Notes |` plus "added but not requested" and "confusing from the user's perspective". One verdict per item. For items confirmable by script, carry over the mechanical-lane result. In full+, shuffle the order and judge once more; the Head confirms the remaining items directly.
 
@@ -214,10 +215,10 @@ In full, skip the neutral lane when the change has no user-facing surface; recor
 ## 6. Parallelism
 
 - Reads (investigation, review, verification) are always parallel.
-- Writes are parallel only when **all parallel-write gates** pass: 2+ independent deliverables · owned-file globs don't overlap · the interface is already locked in decisions.md · concurrent writers <= 4. Otherwise, use a single sequential writer.
+- Writes are parallel only when **all parallel-write gates** pass: 2+ independent deliverables · owned-file globs don't overlap · the interface is already locked in decisions.md · concurrent writers <= the worker cap (`ORCH_MAX_WORKERS`, default 12). Otherwise, use a single sequential writer.
 - Stages are not barriers. As soon as one piece's investigation finishes, start that piece's production; as soon as production finishes, start that piece's verification.
 - One writer per checkout. Split concurrent writers with `--worktree`. Shared files (config, lockfiles, schema) belong to a single worker.
-- Merge worktrees one at a time, running build, typecheck, and the full test suite at each merge. Even if per-piece verification passed, run full verification again after integration. A clean merge needs no model.
+- Merge all clean worktrees in one pass, then run build, typecheck, the full suite, and the interface contract tests once (`orch test`). On failure, revert merges newest first to find the culprit. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema). Even if per-piece verification passed, run full verification again after integration. A clean merge needs no model.
 
 ## 7. Cleanup and reporting
 
