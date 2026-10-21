@@ -29,7 +29,7 @@ Delegation
   orch models                             six catalog keys
   orch contract new <name> --role R --model K [--run ID]    create contract template
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
-           [--cwd D|--worktree D] [--account same|hook] [--run ID]
+           [--cwd D|--worktree D] [--account auto|cr|same|hook] [--run ID]
   orch prompt <name> [--contract FILE] [--wait] [--timeout MS]
   orch wait [name...] [--timeout MS] [--no-fallback]      detect completion from the result file status line
   orch collect <name>                     inspect result and check owned-file scope
@@ -312,7 +312,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		authorFam := fs.String("author-family", "", "author outside the run: openai|anthropic|google|head")
 		cwd := fs.String("cwd", "", "working directory")
 		wt := fs.String("worktree", "", "worktree path")
-		account := fs.String("account", "same", "same|hook")
+		account := fs.String("account", "auto", "pane launch: auto|cr|same|hook (auto uses CR when available)")
 		if _, err := parse(fs, rest); err != nil {
 			return 2
 		}

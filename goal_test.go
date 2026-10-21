@@ -351,7 +351,7 @@ func TestGoalServesFlags(t *testing.T) {
 func TestGoalAdmissionWiring(t *testing.T) {
 	g := frozenTestGoal(t)
 	// Both entry points must reject before attempting Herdr RPC or an agent CLI.
-	_, e := spawn(spawnOpts{Key: "codex-high-l", Name: "impl", Role: "produce"})
+	_, e := spawn(spawnOpts{Account: "same", Key: "codex-high-l", Name: "impl", Role: "produce"})
 	if e == nil || !strings.Contains(e.Error(), "--serves") {
 		t.Fatal(e)
 	}

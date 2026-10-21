@@ -559,13 +559,13 @@ func TestRunStateAndResolve(t *testing.T) {
 
 func TestSpawnRefusesWorker(t *testing.T) {
 	t.Setenv("ORCH_ROLE", "worker")
-	if _, err := spawn(spawnOpts{Key: "claude-high-m", Name: "x", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "worker") {
+	if _, err := spawn(spawnOpts{Account: "same", Key: "claude-high-m", Name: "x", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "worker") {
 		t.Fatalf("err = %v", err)
 	}
 	t.Setenv("ORCH_ROLE", "")
 	t.Setenv("HERDR_ENV", "1")
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
-	if _, err := spawn(spawnOpts{Key: "gpt-5", Name: "x", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "catalog") {
+	if _, err := spawn(spawnOpts{Account: "same", Key: "gpt-5", Name: "x", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "catalog") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -732,7 +732,7 @@ func TestSpawnRefusesOtherHeadsRun(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	r, _ := createRun("x", "light", "", "")
 	t.Setenv("HERDR_PANE_ID", "w1:p9")
-	_, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "x", Role: roleProduce})
+	_, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "x", Role: roleProduce})
 	if err == nil || !strings.Contains(err.Error(), "another Head") {
 		t.Fatalf("err = %v", err)
 	}

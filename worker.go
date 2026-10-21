@@ -191,6 +191,7 @@ func spawn(o spawnOpts) (*Worker, error) {
 	}
 	var noDaemon bool
 	var workerEnv []string
+	var crPath string
 	w, pane, err := func() (*Worker, string, error) {
 		defer unlock()
 		r, err := loadRun(runID)
@@ -254,7 +255,8 @@ func spawn(o spawnOpts) (*Worker, error) {
 			}
 		}
 
-		acc, err := pickAccount(o.Account, m.Kind, o.Exclude)
+		acc, path, err := paneAccount(o.Account, m.Kind, o.Exclude)
+		crPath = path
 		if err != nil {
 			return nil, "", err
 		}
@@ -337,7 +339,12 @@ func spawn(o spawnOpts) (*Worker, error) {
 		return nil, err
 	}
 	args := append([]string{"agent", "start", o.Name, "--kind", m.Kind, "--pane", pane, "--"}, append(launch, trustArgs...)...)
-	if err := startWorkerAgent(o.Name, pane, w.Cwd, args); err != nil {
+	if crPath != "" {
+		err = startCRWorker(o.Name, pane, w.Cwd, crPaneCommand(crPath, m.Kind, w.Cwd, workerEnv, append(launch, trustArgs...)))
+	} else {
+		err = startWorkerAgent(o.Name, pane, w.Cwd, args)
+	}
+	if err != nil {
 		abortWorker(runID, o.Name, err)
 		return nil, fmt.Errorf("agent start failed (pane cleanup attempted): %w", err)
 	}

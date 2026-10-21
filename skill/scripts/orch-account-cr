@@ -6,7 +6,11 @@ account protocol:  orch-account-cr <kind> <comma-separated excluded labels>
   stdout: KEY=VALUE lines for the worker pane, plus LABEL=<id>; exit 1 if no account fits.
 
 Enable:  export ORCH_ACCOUNT_CMD=~/.claude/skills/orch/scripts/orch-account-cr
-Pick:    usable accounts (state ready, 5h and weekly remaining > 0), most headroom first.
+Default same inherits the Head login; this adapter is used only by the optional hook.
+Pick:    usable accounts (state ready, 5h and weekly remaining > 0). With custom
+priority, nonzero rank ascending (zero/missing last), then email local part and full
+email; capacity mode does not affect this order. Other priorities keep the legacy
+headroom order: minimum remaining descending, then weekly remaining descending.
 Labels are hashed so run.json never stores e-mail addresses.
 """
 import hashlib
@@ -163,7 +167,15 @@ def main(argv):
     if not candidates:
         print(f"orch-account-cr: no available {provider} account", file=sys.stderr)
         return 1
-    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    if registry.get("priority") == "custom":
+        candidates.sort(key=lambda c: (
+            (c[2].get("rank") or 0) == 0,
+            c[2].get("rank") or 0,
+            c[2]["email"].split("@", 1)[0],
+            c[2]["email"],
+        ))
+    else:
+        candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
     acc = candidates[0][2]
     home = acc.get("home") or ""
     if provider == "codex":

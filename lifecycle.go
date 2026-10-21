@@ -250,9 +250,9 @@ func doFallback(runID, name, reason string) (string, error) {
 	}
 	authors, _ := familiesOf(r, w.Reviews)
 	critics := criticsOf(r, w.Reviews)
-	key, account := "", "same"
+	key, account := "", fallbackAccount(w)
 	var exclude []string
-	if envOrch("ACCOUNT_CMD") != "" && w.Account != "" {
+	if envOrch("ACCOUNT_CMD") != "" && w.Account != "" && w.Account != "cr" {
 		// Exclude every account this key has already used in the lineage.
 		exclude = append(slices.Clone(w.TriedAccounts), w.Account)
 		if _, err := hookAccount(w.Kind, exclude); err == nil {
@@ -273,6 +273,15 @@ func doFallback(runID, name, reason string) (string, error) {
 			return "", fmt.Errorf("%s: all models in fallback chain (%s) are unavailable", name, purpose)
 		}
 		key = m.Key
+	}
+	if account == "cr" {
+		next, err := modelByKey(key)
+		if err != nil {
+			return "", err
+		}
+		if next.Kind != "codex" && next.Kind != "claude" {
+			account = "same"
+		}
 	}
 	// Record why it was replaced, then free the row so the replacement fits under the row cap.
 	failStatus := "failed"

@@ -172,7 +172,7 @@ func (f *overflowHerd) run(args ...string) ([]byte, error) {
 func TestOverflowTwelveWorkersAndCleanup(t *testing.T) {
 	r, f := overflowFixture(t)
 	for i := 0; i < 12; i++ {
-		w, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce})
+		w, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce})
 		if err != nil {
 			t.Fatalf("spawn %d: %v", i, err)
 		}
@@ -189,7 +189,7 @@ func TestOverflowTwelveWorkersAndCleanup(t *testing.T) {
 			t.Fatalf("rows in %s: %v", tab, f.tabs[tab])
 		}
 	}
-	if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "thirteenth", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "is full") {
+	if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "thirteenth", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "is full") {
 		t.Fatalf("cap: %v", err)
 	}
 	if err := normalizeOwnedLayouts(r.HeadPane); err != nil {
@@ -229,7 +229,7 @@ func TestOverflowLastWorkerClosesTabAndProtectsUserPane(t *testing.T) {
 		t.Run(fmt.Sprint(userPane), func(t *testing.T) {
 			r, f := overflowFixture(t)
 			for i := 0; i < 5; i++ {
-				if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
+				if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -261,7 +261,7 @@ func TestOverflowReaperAndGC(t *testing.T) {
 		t.Run(fmt.Sprint(reap), func(t *testing.T) {
 			r, f := overflowFixture(t)
 			for i := 0; i < 4; i++ {
-				if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
+				if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -347,7 +347,7 @@ func testNormalizeOverflowUneven(t *testing.T, owned []string) {
 func TestOverflowCleanupRetryAndReuse(t *testing.T) {
 	r, f := overflowFixture(t)
 	for i := 0; i < 5; i++ {
-		if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
+		if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -356,7 +356,7 @@ func TestOverflowCleanupRetryAndReuse(t *testing.T) {
 	if err := closeWorker(r.ID, "worker-3"); err != nil {
 		t.Fatal(err)
 	}
-	w, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "replacement", Role: roleProduce})
+	w, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "replacement", Role: roleProduce})
 	if err != nil || w.Tab != tab || len(f.created) != 1 {
 		t.Fatalf("reuse: worker=%+v err=%v created=%v", w, err, f.created)
 	}
@@ -389,10 +389,10 @@ func TestOverflowCleanupRetryAndReuse(t *testing.T) {
 func TestSpawnConfiguredCapAndZoomedHead(t *testing.T) {
 	r, f := overflowFixture(t)
 	t.Setenv("ORCH_MAX_WORKERS", "1")
-	if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "first", Role: roleProduce}); err != nil {
+	if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "first", Role: roleProduce}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "second", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "is full") {
+	if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "second", Role: roleProduce}); err == nil || !strings.Contains(err.Error(), "is full") {
 		t.Fatalf("configured cap: %v", err)
 	}
 	t.Setenv("ORCH_MAX_WORKERS", "12")
@@ -411,7 +411,7 @@ func TestOverflowWaitAndCollectCleanup(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			r, f := overflowFixture(t)
 			for i := 0; i < 4; i++ {
-				if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
+				if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("worker-%d", i), Role: roleProduce}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -441,7 +441,7 @@ func TestOverflowWaitAndCollectCleanup(t *testing.T) {
 func spawnOverflowN(t *testing.T, r *Run, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("w%d", i), Role: roleProduce}); err != nil {
+		if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: fmt.Sprintf("w%d", i), Role: roleProduce}); err != nil {
 			t.Fatalf("spawn %d: %v", i, err)
 		}
 	}
@@ -472,7 +472,7 @@ func TestReproStaleOverflowPaneBlocksSpawn(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			w, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "next", Role: roleProduce})
+			w, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "next", Role: roleProduce})
 			if err != nil {
 				t.Fatalf("spawn after missing overflow pane: %v", err)
 			}
@@ -526,7 +526,7 @@ func TestOverflowMalformedCreateCleanupAndMonotonicLabels(t *testing.T) {
 				}
 				return b, err
 			}
-			if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "bad", Role: roleProduce}); err == nil {
+			if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "bad", Role: roleProduce}); err == nil {
 				t.Fatal("malformed response accepted")
 			}
 			if len(f.tabs) != 1 || len(f.closed) != 1 {
@@ -535,7 +535,7 @@ func TestOverflowMalformedCreateCleanupAndMonotonicLabels(t *testing.T) {
 			herdrRun = original
 			spawnOne := func(name string) *Worker {
 				t.Helper()
-				w, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: name, Role: roleProduce})
+				w, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: name, Role: roleProduce})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -571,7 +571,7 @@ func TestOverflowLayoutFailureDoesNotAbortHeadSpawn(t *testing.T) {
 		}
 		return original(args...)
 	}
-	if _, err := spawn(spawnOpts{Run: r.ID, Key: "codex-high-m", Name: "next", Role: roleProduce}); err != nil {
+	if _, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-high-m", Name: "next", Role: roleProduce}); err != nil {
 		t.Fatal(err)
 	}
 	if got0(r).worker("w3").Status == "lost" {
