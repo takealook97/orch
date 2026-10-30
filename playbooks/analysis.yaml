@@ -4,7 +4,7 @@ default_mode: full
 stages:
   recon:
     parallel: by_source
-    model: codex-medium-h
+    model: codex-low-h
     purpose: extract
   produce:
     model: codex-high-m
@@ -14,7 +14,7 @@ stages:
   verify:
     start: after_produce
     lanes:
-      mechanical: { run: true, model: codex-medium-h, required: true }
+      mechanical: { run: true, model: codex-low-h, required: true }
       critical: { model: other_family(author), pane: false, required: true }
       neutral: { model: gemini-medium-m, pane: false, required: false, withhold: [self_assessment] }
   integrate:

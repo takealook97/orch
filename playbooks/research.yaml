@@ -7,7 +7,7 @@ stages:
     model: gemini-medium-m
     purpose: web
     output: results/recon-<question>.md
-    notes: Run local code/data recon in parallel with codex-medium-h(extract). Every claim needs a source URL/path and a quote
+    notes: Run local code/data recon in parallel with codex-low-h(extract). Every claim needs a source URL/path and a quote
   produce:
     model: claude-medium-m
     purpose: docs

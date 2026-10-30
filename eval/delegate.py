@@ -15,7 +15,9 @@ import tasks
 # to 1 and charge output more heavily. Keep all model assumptions in one table.
 COST = {
     "claude-high-m": (1.0, 5.0),
-    "codex-medium-h": (0.25, 1.0),
+    "codex-low-h": (0.25, 1.0),
+    "codex-medium-h": (0.25, 1.0),  # Legacy Luna records.
+    "codex-medium-m": (0.35, 1.4),
     "codex-high-l": (0.50, 2.0),
     "codex-high-m": (0.70, 2.8),
 }
@@ -27,8 +29,11 @@ HEAD_SAVING_THRESHOLD = 0.50
 
 def worker_key(task):
     if task["mode"] == "ask":
-        return "codex-medium-h"
-    return "codex-high-m" if task["type"] in ("test_fix", "build_fix") else "codex-high-l"
+        return "codex-low-h"
+    # These fixtures specify tiny single-file implementations/fixes and constrained drafts.
+    if task["type"] in ("implementation", "build_fix", "refactor", "doc_draft"):
+        return "codex-medium-m"
+    return "codex-high-m" if task["type"] == "test_fix" else "codex-high-l"
 
 
 def write_files(directory, files):
@@ -189,7 +194,7 @@ def invoke(task, workspace, arm, orch):
 def render(root, meta):
     rows = meta.get("delegate", [])
     out = ["# Head direct versus lower-key delegation", "",
-           "A uses claude-high-m; B uses codex-medium-h for read-only work and codex-high-l or codex-high-m for writing tasks.",
+           "A uses claude-high-m; B uses codex-low-h for read-only work and Terra for scoped writing/fixes and Sol for larger planned implementation or test fixes.",
            "Head input/output for A come from CLI usage. B estimates Head prompt and printed report at 4 characters/token, plus 128 input and 64 output review tokens.",
            "A's context-growth proxy is its measured input plus output; B's is the estimated Head instruction, report and review tokens. These proxies are not actual context-window deltas.",
            "Weighted costs use relative input/output factors: " + ", ".join(f"{k}={v[0]}/{v[1]}" for k, v in COST.items()) + ". They are assumptions, not prices.", "",

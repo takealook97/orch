@@ -14,13 +14,27 @@ import (
 )
 
 func TestCatalogFixed(t *testing.T) {
-	if len(catalog) != 6 {
-		t.Fatalf("catalog has %d keys, want 6", len(catalog))
+	want := map[string]struct{ model, effort string }{
+		"codex-low-h":     {"gpt-6-luna", "high"},
+		"codex-medium-m":  {"gpt-6.1-terra", "medium"},
+		"codex-high-l":    {"gpt-6.1-sol", "low"},
+		"codex-high-m":    {"gpt-6.1-sol", "medium"},
+		"claude-high-m":   {"opus", "medium"},
+		"claude-medium-m": {"sonnet", "medium"},
+		"gemini-medium-m": {"gemini-3.8-flash-medium", ""},
 	}
-	// Build the retired key in parts so reference audits only find its decision history.
-	retired := "codex-medium-" + "m"
-	if _, err := modelByKey(retired); err == nil || !strings.Contains(err.Error(), "not in catalog") {
-		t.Fatalf("retired key accepted or unexpected error: %v", err)
+	if len(catalog) != len(want) {
+		t.Fatalf("catalog has %d keys, want seven", len(catalog))
+	}
+	for _, m := range catalog {
+		w, ok := want[m.Key]
+		if !ok || m.Default != w.model || m.Effort != w.effort {
+			t.Errorf("unexpected catalog entry: %+v", m)
+		}
+		delete(want, m.Key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing keys: %v", want)
 	}
 	families := map[string]bool{}
 	vars := map[string]bool{}
@@ -59,6 +73,7 @@ func joinArgs(t *testing.T, m Model, noDaemon bool) string {
 }
 
 func TestLaunchArgs(t *testing.T) {
+	t.Setenv("CODEX_MEDIUM_H", "")
 	for _, m := range catalog {
 		t.Setenv(modelVar(m), "")
 	}
@@ -79,6 +94,7 @@ func TestLaunchArgs(t *testing.T) {
 }
 
 func TestModelOverride(t *testing.T) {
+	t.Setenv("CODEX_LOW_H", "")
 	t.Setenv("CODEX_MEDIUM_H", "gpt-7-mini")
 	t.Setenv("CODEX_HIGH_L", "")
 	t.Setenv("CODEX_HIGH_M", "gpt-7-sol")
@@ -115,6 +131,9 @@ func TestLaneConstraints(t *testing.T) {
 	}{
 		{roleCritical, "claude-medium-m", []string{familyOpenAI}, nil, false, false},
 		{roleCritical, "codex-high-m", []string{familyOpenAI}, nil, true, false},
+		{roleCritical, "codex-medium-m", []string{familyOpenAI}, nil, true, false},
+		{roleNeutral, "codex-medium-m", []string{familyOpenAI}, nil, true, false},
+		{roleAdversarial, "codex-medium-m", []string{familyOpenAI}, nil, true, false},
 		{roleCritical, "claude-high-m", []string{familyOpenAI, familyAnthropic}, nil, true, false},
 		{roleCritical, "gemini-medium-m", nil, nil, true, false}, // needs --reviews
 		{roleNeutral, "gemini-medium-m", []string{familyOpenAI}, nil, false, false},
@@ -123,7 +142,7 @@ func TestLaneConstraints(t *testing.T) {
 		{roleAdversarial, "gemini-medium-m", []string{familyOpenAI}, nil, true, false},
 		{roleAdversarial, "claude-high-m", []string{familyOpenAI}, []string{familyAnthropic}, false, true},
 		{roleAdversarial, "codex-high-m", []string{familyAnthropic}, []string{familyOpenAI}, false, true},
-		{roleMech, "codex-medium-h", nil, nil, false, false},
+		{roleMech, "codex-low-h", nil, nil, false, false},
 		{roleProduce, "gemini-medium-m", nil, nil, false, false},
 	}
 	for _, c := range cases {
@@ -597,7 +616,7 @@ func TestCloseRefusesOtherHeadsRun(t *testing.T) {
 
 func TestFallbackContractRewrite(t *testing.T) {
 	r := &Run{ID: "x"}
-	body := contractTemplate(r, "fb", roleRecon, "codex-medium-h")
+	body := contractTemplate(r, "fb", roleRecon, "codex-low-h")
 	note := "\n## Fallback handoff\n- previous partial result: " + r.resultPath("fb") + "\n"
 	got := fallbackContract(r, body, "fb", "fb-f1", note)
 	if !strings.Contains(got, "# Contract: fb-f1") || !strings.Contains(got, "# Result: fb-f1\n") {
@@ -771,7 +790,7 @@ func TestFallbackLineageIsBounded(t *testing.T) {
 	r, _ := createRun("x", "light", "", "")
 	_ = withRun(r.ID, func(r *Run) error {
 		r.Workers = append(r.Workers, &Worker{Name: "a", Key: "codex-medium-h", Purpose: "explore", Contract: "c.md",
-			Tried: []string{"codex-medium-h", "gemini-medium-m"}, TriedAccounts: []string{"A", "B", "C", "D"}})
+			Tried: []string{"codex-medium-h", "codex-medium-m", "gemini-medium-m"}, TriedAccounts: []string{"A", "B", "C", "D"}})
 		return nil
 	})
 	if _, err := doFallback(r.ID, "a", "quota exhausted"); err == nil || !strings.Contains(err.Error(), "fallback limit") {
@@ -947,5 +966,112 @@ func TestHookBlocksOrchForWorkers(t *testing.T) {
 	}
 	if !ownHook.MatchString("'/Users/x/.local/bin/orch' hook agy") {
 		t.Error("own hook detection")
+	}
+}
+
+func TestLunaAliasAndOverridePrecedence(t *testing.T) {
+	if key("codex-medium-h") != key("codex-low-h") {
+		t.Fatal("legacy key did not resolve to canonical Luna")
+	}
+	for _, tc := range []struct {
+		canonical, legacy, want string
+		invalid                 bool
+	}{
+		{"", "", "gpt-6-luna", false},
+		{"  ", " legacy-luna ", "legacy-luna", false},
+		{" canonical-luna ", "legacy-luna", "canonical-luna", false},
+		{"canonical-luna", "--invalid", "canonical-luna", false},
+		{"--invalid", "legacy-luna", "", true},
+		{"", "bad id", "", true},
+		{"", `bad"id`, "", true},
+		{"", "--invalid", "", true},
+	} {
+		t.Setenv("CODEX_LOW_H", tc.canonical)
+		t.Setenv("CODEX_MEDIUM_H", tc.legacy)
+		for _, k := range []string{"codex-low-h", "codex-medium-h"} {
+			got, err := modelID(key(k))
+			if (err != nil) != tc.invalid || got != tc.want {
+				t.Errorf("%s (%q,%q): %q %v", k, tc.canonical, tc.legacy, got, err)
+			}
+		}
+	}
+	t.Setenv("CODEX_LOW_H", "canonical-luna")
+	t.Setenv("CODEX_MEDIUM_H", "legacy-luna")
+	t.Setenv("CODEX_MEDIUM_M", "custom-terra")
+	t.Setenv("CODEX_HIGH_L", "")
+	t.Setenv("CODEX_HIGH_M", "")
+	if got, err := modelID(key("codex-medium-m")); got != "custom-terra" || err != nil {
+		t.Fatalf("Terra override: %q %v", got, err)
+	}
+	for _, k := range []string{"codex-high-l", "codex-high-m"} {
+		if got, err := modelID(key(k)); got != "gpt-6.1-sol" || err != nil {
+			t.Fatalf("Sol affected: %q %v", got, err)
+		}
+	}
+	if got, err := modelID(key("codex-low-h")); got != "canonical-luna" || err != nil {
+		t.Fatalf("Terra affected Luna: %q %v", got, err)
+	}
+	t.Setenv("CODEX_MEDIUM_M", "bad id")
+	if _, err := modelID(key("codex-medium-m")); err == nil {
+		t.Fatal("invalid Terra override accepted")
+	}
+}
+
+func TestTierFallbacksAndAliases(t *testing.T) {
+	for _, tc := range []struct {
+		purpose, current string
+		tried            []string
+		want             string
+	}{
+		{"explore", "codex-low-h", nil, "codex-medium-m"},
+		{"explore", "codex-medium-h", nil, "codex-medium-m"},
+		{"explore", "codex-medium-m", nil, "gemini-medium-m"},
+		{"extract", "codex-medium-h", nil, "codex-medium-m"},
+		{"extract", "codex-medium-m", nil, "codex-high-m"},
+		{"extract", "codex-high-m", nil, "claude-medium-m"},
+		{"mech-impl", "", nil, "codex-medium-m"},
+		{"mech-impl", "codex-medium-m", nil, "codex-high-l"},
+		{"mech-impl", "codex-high-l", nil, "codex-high-m"},
+		{"mech-impl", "codex-high-m", nil, "claude-medium-m"},
+		{"explore", "", []string{"codex-medium-h"}, "codex-medium-m"},
+		{"explore", "", []string{"codex-low-h", "codex-medium-m"}, "gemini-medium-m"},
+		{"explore", "codex-medium-h", []string{"codex-low-h", "codex-medium-m", "gemini-medium-m"}, ""},
+		{"verify-mech", "codex-medium-m", nil, "codex-high-m"},
+	} {
+		before := slices.Clone(tc.tried)
+		m, ok := nextFallback(tc.purpose, tc.current, roleProduce, nil, nil, tc.tried)
+		if m.Key != tc.want || ok != (tc.want != "") {
+			t.Errorf("%s/%s tried %v: %q %v, want %q", tc.purpose, tc.current, tc.tried, m.Key, ok, tc.want)
+		}
+		if !slices.Equal(before, tc.tried) {
+			t.Fatal("mutated caller tried slice")
+		}
+	}
+}
+
+func TestModelsCanonicalListing(t *testing.T) {
+	for _, m := range catalog {
+		t.Setenv(modelVar(m), "")
+	}
+	t.Setenv("CODEX_MEDIUM_H", "")
+	var out, errout bytes.Buffer
+	if code := run([]string{"models"}, strings.NewReader(""), &out, &errout); code != 0 {
+		t.Fatalf("models: %d %s", code, errout.String())
+	}
+	rows := 0
+	for _, line := range strings.Split(out.String(), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && (strings.HasPrefix(fields[0], "codex-") || strings.HasPrefix(fields[0], "claude-") || fields[0] == "gemini-medium-m") {
+			rows++
+			if fields[0] == "codex-medium-h" {
+				t.Fatal("alias exposed as canonical catalog row")
+			}
+			if fields[0] == "codex-medium-m" && (!strings.Contains(line, "gpt-6.1-terra") || !strings.Contains(line, `model_reasoning_effort="medium"`)) {
+				t.Fatalf("Terra args missing: %s", line)
+			}
+		}
+	}
+	if rows != 7 || !strings.Contains(out.String(), "CODEX_LOW_H takes precedence over CODEX_MEDIUM_H") {
+		t.Fatalf("listing: %s", out.String())
 	}
 }

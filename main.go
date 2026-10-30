@@ -26,7 +26,7 @@ Delegation
   orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
-  orch models                             six catalog keys
+  orch models                             seven canonical keys (codex-medium-h: deprecated Luna alias)
   orch contract new <name> --role R --model K [--run ID]    create contract template
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
            [--cwd D|--worktree D] [--account auto|cr|same|hook] [--run ID]
@@ -166,6 +166,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Key, m.Kind, m.Family, m.Cost, shown, modelVar(m), m.Summary)
 		}
 		tw.Flush()
+		fmt.Fprintln(stdout, "\nOpenAI tiers: Luna < Terra < Sol (independent of effort). Deprecated alias: codex-medium-h -> codex-low-h; CODEX_LOW_H takes precedence over CODEX_MEDIUM_H.")
 		fmt.Fprintf(stdout, "\npurposes(fallback chain): %s\n", strings.Join(purposeNames(), " "))
 		return 0
 

@@ -4,18 +4,19 @@ default_mode: light
 stages:
   recon:
     parallel: by_hypothesis
-    model: codex-medium-h
+    model: codex-low-h
     purpose: extract
     notes: Repro command, logs, root-cause candidates. Use codex-high-m if candidates are entangled. Use claude-high-m(synthesis) if evidence conflicts
   produce:
     model: codex-high-m
     purpose: impl
+    notes: Tiny one-file known fixes may explicitly use codex-medium-m with purpose mech-impl; larger complete plans use codex-high-l
     escalate_to: claude-high-m
     escalate_when: ["failed_once", "multi_layer_cause", "flaky_repro"]
   verify:
     start: per_shard
     lanes:
-      mechanical: { run: true, model: codex-medium-h, required: true }
+      mechanical: { run: true, model: codex-low-h, required: true }
       critical: { model: other_family(author), pane: false, required: true }
       adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
   integrate:

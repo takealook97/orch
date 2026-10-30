@@ -28,7 +28,8 @@ const (
 )
 
 var catalog = []Model{
-	{"codex-medium-h", "codex", familyOpenAI, "low", "exploration, bulk classification, precise extraction, log and test analysis, focused verification", "gpt-6-luna", "high"},
+	{"codex-low-h", "codex", familyOpenAI, "low", "exploration, bulk classification, precise extraction, log and test analysis, focused verification", "gpt-6-luna", "high"},
+	{"codex-medium-m", "codex", familyOpenAI, "low+", "constrained writing, scoped code fixes, mechanical extraction; screen work candidate", "gpt-6.1-terra", "medium"},
 	{"codex-high-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", "gpt-6.1-sol", "low"},
 	{"codex-high-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", "gpt-6.1-sol", "medium"},
 	{"claude-high-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", "opus", "medium"},
@@ -42,12 +43,17 @@ func modelVar(m Model) string { return strings.ToUpper(strings.ReplaceAll(m.Key,
 
 // modelID returns the model id for m, preferring its environment variable over the default.
 func modelID(m Model) (string, error) {
-	id := strings.TrimSpace(os.Getenv(modelVar(m)))
+	override := modelVar(m)
+	id := strings.TrimSpace(os.Getenv(override))
+	if id == "" && m.Key == "codex-low-h" {
+		override = "CODEX_MEDIUM_H" // Deprecated Luna override, only if canonical is empty.
+		id = strings.TrimSpace(os.Getenv(override))
+	}
 	if id == "" {
 		return m.Default, nil
 	}
 	if strings.HasPrefix(id, "-") || strings.ContainsAny(id, " \t\n\"'") {
-		return "", fmt.Errorf("%s=%q is not a valid model id", modelVar(m), id)
+		return "", fmt.Errorf("%s=%q is not a valid model id", override, id)
 	}
 	return id, nil
 }
@@ -69,7 +75,16 @@ func modelArgs(m Model) ([]string, error) {
 	return args, nil
 }
 
+// canonicalModelKey preserves saved runs and requests using the former Luna key.
+func canonicalModelKey(key string) string {
+	if key == "codex-medium-h" {
+		return "codex-low-h"
+	}
+	return key
+}
+
 func modelByKey(key string) (Model, error) {
+	key = canonicalModelKey(key)
 	for _, m := range catalog {
 		if m.Key == key {
 			return m, nil
@@ -120,11 +135,11 @@ func isVerifyRole(role string) bool { return strings.HasPrefix(role, "verify-") 
 
 // Fallback chains by purpose (design §9.4). The first entry is the primary key.
 var chains = map[string][]string{
-	"explore":     {"codex-medium-h", "gemini-medium-m"},
-	"extract":     {"codex-medium-h", "codex-high-m", "claude-medium-m"},
+	"explore":     {"codex-low-h", "codex-medium-m", "gemini-medium-m"},
+	"extract":     {"codex-low-h", "codex-medium-m", "codex-high-m", "claude-medium-m"},
 	"web":         {"gemini-medium-m", "claude-medium-m", "claude-high-m"},
 	"synthesis":   {"claude-high-m", "codex-high-m", "claude-medium-m"},
-	"mech-impl":   {"codex-high-l", "codex-high-m", "claude-medium-m"},
+	"mech-impl":   {"codex-medium-m", "codex-high-l", "codex-high-m", "claude-medium-m"},
 	"impl":        {"codex-high-m", "claude-high-m", "claude-medium-m"},
 	"hard-impl":   {"claude-high-m", "codex-high-m", "claude-medium-m"},
 	"alt":         {"claude-medium-m", "codex-high-m", "claude-high-m"},
@@ -132,7 +147,7 @@ var chains = map[string][]string{
 	"analysis":    {"codex-high-m", "claude-high-m", "claude-medium-m"},
 	"integrate":   {"codex-high-m", "claude-high-m"},
 	"image":       {"codex-high-m"},
-	"verify-mech": {"codex-medium-h", "codex-high-m", "claude-medium-m"},
+	"verify-mech": {"codex-low-h", "codex-high-m", "claude-medium-m"},
 	// Verification chains are filtered by family constraints at spawn time.
 	"verify-critical":    {"claude-medium-m", "claude-high-m", "codex-high-l", "codex-high-m"},
 	"verify-neutral":     {"gemini-medium-m", "claude-medium-m", "codex-high-m"},
@@ -187,9 +202,14 @@ func checkLane(role string, m Model, authors, critics []string) (warnings []stri
 // nextFallback returns the next key in the purpose chain after current that passes lane checks.
 func nextFallback(purpose, current, role string, authors, critics []string, tried []string) (Model, bool) {
 	chain := chains[purpose]
-	start := slices.Index(chain, current) + 1
+	start := slices.Index(chain, canonicalModelKey(current)) + 1
+	// Normalize into fresh storage: callers may retain saved legacy keys.
+	triedCanonical := make([]string, 0, len(tried))
+	for _, key := range tried {
+		triedCanonical = append(triedCanonical, canonicalModelKey(key))
+	}
 	for _, key := range chain[start:] {
-		if slices.Contains(tried, key) {
+		if slices.Contains(triedCanonical, key) || (canonicalModelKey(current) == "codex-medium-m" && key == "codex-low-h") {
 			continue
 		}
 		m, err := modelByKey(key)

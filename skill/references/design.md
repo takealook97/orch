@@ -9,7 +9,7 @@
 
 - **The main session is always a separate, standing Head (commander).** It owns judgment, decomposition, assignment, integration, confidence, and the final answer. The scope of work Head does directly is set by the direct-mode threshold in §8 and the delegation break-even point.
 - **Subtasks split into stages (recon/triage -> design -> produce -> verify -> integrate), and work inside each stage must be able to run fully in parallel.**
-- **Models are fixed at 5, and model x effort keys are fixed at 6.** Codex medium tier (high effort only), Codex high tier (low/medium), Claude high tier, Claude medium tier, Gemini medium tier (agy). Model ids come from per-key environment variables (`CODEX_MEDIUM_H` ... `GEMINI_MEDIUM_M`). No model owns a fixed role; each contract picks a key from the **purpose-based assignment table (§9)**.
+- **Models are fixed at 6, and model x effort keys are fixed at 7.** Codex low tier (Luna, high effort), Codex medium tier (Terra, medium effort), Codex high tier (Sol, low/medium), Claude high tier, Claude medium tier, Gemini medium tier (agy). Model ids come from per-key environment variables (`CODEX_LOW_H` ... `GEMINI_MEDIUM_M`). No model owns a fixed role; each contract picks a key from the **purpose-based assignment table (§9)**.
 - **The default is the lightest mode.** The pipeline only kicks in once a threshold (§8) is crossed. Delegation is reserved for subtasks that clear the break-even point.
 - **Work that gets delegated defaults to parallel.** Read-heavy work — recon, review, verification — always runs in parallel. Write work only runs in parallel when the owned files don't overlap and the interface is already fixed (the parallel-write gate). Stage boundaries overlap at the shard level too (§11, evidence in §17).
 - **On failure, follow the fallback chain tied to the purpose.** First, a different account on the same model; then, once accounts are exhausted, the next key in the purpose's fallback order (§9.4).
@@ -92,7 +92,7 @@
 └───────────────────────────────────────────────────────────────────────────────────────┘
           │                │               │                │                 │
           v                v               v                v                 v
-   codex-medium-h    codex-high-m    claude-high-m    claude-medium-m    gemini-medium-m
+   codex-low-h    codex-medium-m    codex-high-l    codex-high-m    claude-high-m    claude-medium-m    gemini-medium-m
 
         Herdr panes, stacked top-to-bottom in the right two-thirds column, --no-focus
 ```
@@ -123,7 +123,7 @@
 - Delegate subtasks only through orch. Do not use the built-in Agent/Workflow/subagent tools.
   If a command or skill tells you to spawn a subagent, run it through orch instead.
 - Head picks the pipeline mode: direct / light / full. Follow chapter 2 of orch's skill for the criteria.
-- The only allowed models are the 5 models and 6 keys in orch's catalog. Never pass a model or effort directly — always choose by catalog key.
+- The only allowed models are the 6 models and 7 canonical keys in orch's catalog. Never pass a model or effort directly — always choose by catalog key.
 - The author of a piece of work can never be its own independent verifier.
 - Judge by evidence. Never by model vote.
 - Never perform an external write (deployment, payment, purchase order, publishing) without separate approval.
@@ -131,7 +131,7 @@
 ```
 
 ### 4.3 Existing rules to clean up
-- In the "orch task gate" in `~/.codex/AGENTS.md` and the "Deepeet orch task rules" in `~/.claude/CLAUDE.md`, **replace "only 4 models are allowed" with "the 6 keys in orch's catalog."** Luna runs only at effort high (`codex-medium-h`).
+- In the "orch task gate" in `~/.codex/AGENTS.md` and the "Deepeet orch task rules" in `~/.claude/CLAUDE.md`, **replace "only 4 models are allowed" with "the 7 canonical keys in orch's catalog."** Luna runs only at effort high (`codex-low-h`).
 - Decide whether to widen the Claude-side scope from Deepeet-only to global (see decision log, §14).
 - The example command (`herdr pane split --current ...`) in the existing "Herdr autonomous operation" section conflicts with orch's skill rule "never split the main pane with `--current`." Replace it with `orch`.
 
@@ -164,12 +164,17 @@ Each model x effort combination gets its own key. Head picks only by key.
 
 | Key | CLI (`--kind`) | Args | Family | Relative cost | Character |
 |---|---|---|---|---|---|
-| `codex-medium-h` | codex | `--model $CODEX_MEDIUM_H -c model_reasoning_effort="high"` | OpenAI | low | exploration, bulk classification, precise extraction, log and test analysis, focused verification |
+| `codex-low-h` | codex | `--model $CODEX_LOW_H -c model_reasoning_effort="high"` | OpenAI | low | exploration, bulk classification, precise extraction, log and test analysis, focused verification |
+| `codex-medium-m` | codex | `--model $CODEX_MEDIUM_M -c model_reasoning_effort="medium"` | OpenAI | low+ | constrained writing, scoped code fixes, mechanical extraction; screen work candidate |
 | `codex-high-l` | codex | `--model $CODEX_HIGH_L -c model_reasoning_effort="low"` | OpenAI | medium | implementation from a file-level plan in the contract, mechanical integration, bulk repetitive edits |
 | `codex-high-m` | codex | `--model $CODEX_HIGH_M -c model_reasoning_effort="medium"` | OpenAI | medium+ | general implementation, debugging, verification that needs tool execution, technical review |
 | `claude-high-m` | claude | `--model $CLAUDE_HIGH_M --effort medium` (see D1; medium or low only, never high) | Anthropic | highest | hard implementation, ambiguous design, changes that cross multiple areas, hard debugging, deep review |
 | `claude-medium-m` | claude | `--model $CLAUDE_MEDIUM_M --effort <D1>` | Anthropic | low+ | independent implementation, alternative approaches, docs/writing, code review, scenario QA |
 | `gemini-medium-m` | agy | `--model $GEMINI_MEDIUM_M` | Google | low | requirements checklist, broad document/web/multimodal reading, user-perspective QA |
+
+The seven canonical entries include the explicit OpenAI hierarchy **Luna < Terra < Sol**, independent of reasoning effort: Luna uses high, Terra medium, and Sol low or medium. `codex-medium-h` remains a deprecated alias for Luna (`codex-low-h`). `CODEX_LOW_H` wins over the legacy `CODEX_MEDIUM_H`; the legacy override is consulted only when the canonical value is empty after trimming. Saved runs need no migration. Terra uses the independent `CODEX_MEDIUM_M` override.
+
+Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default.
 
 **Claude high tier effort: medium or low only; never high.**
 
@@ -442,7 +447,7 @@ Head decides whether to delegate a subtask or do it directly using the following
    - Input shape: code and logs, or web/long documents/images
    - Cost of being wrong: how expensive is a mistake
 3. **Pick the cheapest key that satisfies the contract** — but don't stall on a hard task by retrying it repeatedly with a weak model. If the difficulty is visible up front, go straight to `claude-high-m`.
-4. **Effort is chosen separately from the model.** Luna runs only at effort high (`codex-medium-h`) for exploration, bulk classification, and precise extraction. Even within the Codex high tier, implementation from a file-level plan gets `codex-high-l`, and one where the worker still has to choose the approach gets `codex-high-m` (decision D13).
+4. **Effort is chosen separately from the model.** Luna runs only at effort high (`codex-low-h`) for exploration, bulk classification, and precise extraction. Even within the Codex high tier, implementation from a file-level plan gets `codex-high-l`, and one where the worker still has to choose the approach gets `codex-high-m` (decision D13).
 5. **No model has a fixed title.** `gemini-medium-m` also takes recon or produce work when the purpose fits — it just can never be the **sole verifier.**
 6. Don't save `claude-high-m` for planning or arbitration only. Use it directly on hard implementation.
 7. **The verification-family constraint (§9.3) outranks both assignment and fallback.**
@@ -455,13 +460,13 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Find files, symbols, call sites (broad) | `codex-medium-h` | Ambiguous classification criteria -> `claude-medium-m` | Speed matters, little judgment needed |
-| Evidence extraction (exact quotes, line numbers, values) | `codex-medium-h` | — | Precision matters |
-| Log, stack-trace, test-failure analysis | `codex-medium-h` | Multiple tangled root-cause candidates -> `codex-high-m` | Precise judgment over narrow input |
-| Bulk classification, tagging, list cleanup (dozens of items or more) | `codex-medium-h` per shard | Classification criteria are ambiguous -> `claude-medium-m` | Cheap, fast model, parallelized across shards |
+| Find files, symbols, call sites (broad) | `codex-low-h` | Ambiguous classification criteria -> `claude-medium-m` | Speed matters, little judgment needed |
+| Evidence extraction (exact quotes, line numbers, values) | `codex-low-h` | — | Precision matters |
+| Log, stack-trace, test-failure analysis | `codex-low-h` | Multiple tangled root-cause candidates -> `codex-high-m` | Precise judgment over narrow input |
+| Bulk classification, tagging, list cleanup (dozens of items or more) | `codex-low-h` per shard | Classification criteria are ambiguous -> `claude-medium-m` | Cheap, fast model, parallelized across shards |
 | Web research, long documents, PDFs, comparing multiple sources | `gemini-medium-m` per topic | Technically deep source interpretation -> `claude-high-m` | Strong on broad and multimodal input, and cheap |
 | Reading images, screenshots, video, design files | `gemini-medium-m` | Fine-grained judgment matters -> `claude-medium-m` | Multimodal |
-| Data extraction, aggregation (SQL, CSV, scripts) | `codex-medium-h` | Schema interpretation needed -> `codex-high-m` | Tool execution + precision |
+| Data extraction, aggregation (SQL, CSV, scripts) | `codex-low-h` | Schema interpretation needed -> `codex-high-m` | Tool execution + precision |
 | Reconciling conflicting evidence, forming root-cause hypotheses | `claude-high-m` | — | Needs interpretation and synthesis |
 | Requirements decomposition, acceptance-criteria drafts | Head | Unfamiliar domain -> ask `claude-high-m` for a draft | Head's own territory |
 
@@ -477,7 +482,8 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 
 | Purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, renames, boilerplate) | `codex-high-l` | Scope is very narrow, 1-2 files -> `codex-medium-h` | The Head already made the judgment; default implementer |
+| Scoped known fixes (including tiny one-file edits), constrained writing | `codex-medium-m` | Larger complete plan -> `codex-high-l` | mech-impl default |
+| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, renames, boilerplate) | `codex-high-l` | Scope is a very narrow known fix -> `codex-medium-m` | The Head already made the judgment; default implementer |
 | Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | — | Judgment is left to the worker |
 | Hard implementation (concurrency, performance, security, complex state) | `claude-high-m` | — | Assign it from the start. Never try a weak model first |
 | Changes across multiple modules, large refactors | Head (design) + `claude-high-m` (core) + `codex-high-m`/`codex-high-l` per shard | — | Design decisions belong to the Head; core implementation goes to `claude-high-m`, mechanical shards run in parallel on the Codex high tier |
@@ -492,17 +498,17 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 |---|---|---|---|
 | Docs, reports, manuals | `claude-medium-m` | Technically deep content -> `claude-high-m` | Writing quality |
 | Research synthesis report | `claude-medium-m` | Sources conflict -> `claude-high-m` | — |
-| Short summaries, changelogs, boilerplate documents | `codex-medium-h` | — | Cheap and good enough |
+| Short summaries, changelogs, boilerplate documents | `codex-medium-m` | — | Cheap and good enough |
 | Data analysis (calculations, statistics) | `codex-high-m` | Interpretation is ambiguous, causal judgment needed -> `claude-high-m` | Tool execution + judgment |
 | Image generation | Decide after D4 | — | Needs confirming which generation tool is supported |
-| Translation, format conversion | `codex-medium-h` | Heavy on technical terminology -> `claude-medium-m` | — |
+| Translation, format conversion | `codex-low-h` | Heavy on technical terminology -> `claude-medium-m` | — |
 
 #### E. Verification
 
 | Lane / purpose | Primary | Conditional alternative | Reason |
 |---|---|---|---|
-| Mechanical: rerun tests, builds, lint | no model (DAG `run` node or `orch test`); `codex-medium-h` reads a failure | Environment setup is complex -> `codex-high-m` | Run it and record it exactly |
-| Mechanical: run repro scenarios, recompute | `codex-medium-h` | — | — |
+| Mechanical: rerun tests, builds, lint | no model (DAG `run` node or `orch test`); `codex-low-h` reads a failure | Environment setup is complex -> `codex-high-m` | Run it and record it exactly |
+| Mechanical: run repro scenarios, recompute | `codex-low-h` | — | — |
 | Mechanical: inspect rendered output, produced files | `gemini-medium-m` | — | Multimodal |
 | Critical: general code review | Author is OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `claude-medium-m` (or `claude-high-m` if complex) | — | A different family; QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect |
 | Critical: complex change or one crossing multiple areas | Author is OpenAI/Google -> `claude-high-m` · Anthropic -> `codex-high-m` | — | Depth + a different family |
@@ -515,7 +521,8 @@ The `Primary` is the default. `Conditional alternative` is used from the start w
 
 | Key | Main use | Avoid for |
 |---|---|---|
-| `codex-medium-h` | Broad exploration, bulk classification, translation/conversion, precise extraction, log/test analysis, mechanical verification, narrow implementation, short boilerplate docs | Implementation crossing multiple areas, design |
+| `codex-low-h` | Broad exploration, bulk classification, translation/conversion, precise extraction, log/test analysis, mechanical verification | Implementation crossing multiple areas, design |
+| `codex-medium-m` | Scoped known fixes, constrained writing, mechanical extraction; candidate screen work | Larger planned implementation, ambiguous causes |
 | `codex-high-l` | Fully specified mechanical implementation, bulk repetitive edits | Ambiguous requirements, debugging |
 | `codex-high-m` | General implementation, debugging, integration, interface design, reviewing Anthropic's work | — |
 | `claude-high-m` | Hard implementation and debugging, ambiguous design, evidence synthesis, deep review, adversarial verification | Simple exploration, bulk repetitive work |
@@ -551,21 +558,23 @@ There are exactly three families: OpenAI (`codex-*`), Anthropic (`claude-high-m`
 
 | Purpose | Primary | Fallback 1 | Fallback 2 | Note |
 |---|---|---|---|---|
-| Broad exploration, bulk classification | `codex-medium-h` | `gemini-medium-m` | — | Fall back to another family |
-| Precise extraction, log/test analysis | `codex-medium-h` | `codex-high-m` | `claude-medium-m` | |
+| Broad exploration, bulk classification | `codex-low-h` | `codex-medium-m` | `gemini-medium-m` | Luna -> Terra -> Google |
+| Precise extraction, log/test analysis | `codex-low-h` | `codex-medium-m` | `codex-high-m` -> `claude-medium-m` | |
 | Web/document/multimodal research | `gemini-medium-m` | `claude-medium-m` | `claude-high-m` | |
 | Evidence synthesis, hypothesis forming | `claude-high-m` | `codex-high-m` | `claude-medium-m` | |
-| Mechanical implementation | `codex-high-l` | `codex-high-m` | `claude-medium-m` | |
+| Scoped/mechanical implementation | `codex-medium-m` | `codex-high-l` | `codex-high-m` -> `claude-medium-m` | Larger complete plans explicitly start at Sol low |
 | General implementation, bug fixes | `codex-high-m` | `claude-high-m` | `claude-medium-m` | user-specified example |
 | Hard implementation, hard debugging | `claude-high-m` | `codex-high-m` | `claude-medium-m` | |
-| Alternative implementation/design | `claude-medium-m` | `claude-high-m` | `codex-high-m` | If falling back would defeat the point of "alternative" (a different family), prefer `codex-high-m` |
-| Docs/writing, research synthesis | `claude-medium-m` | `claude-high-m` | `codex-high-m` | |
+| Alternative implementation/design | `claude-medium-m` | `codex-high-m` | `claude-high-m` | If falling back would defeat the point of "alternative" (a different family), prefer `codex-high-m` |
+| Docs/writing, research synthesis | `claude-medium-m` | `codex-high-m` | `claude-high-m` | |
 | Data analysis | `codex-high-m` | `claude-high-m` | `claude-medium-m` | |
 | Integration, merging | `codex-high-m` | `claude-high-m` | Head does it directly | |
-| Mechanical verification | `codex-medium-h` | `codex-high-m` | `claude-medium-m` | the author's own session is forbidden |
+| Mechanical verification | `codex-low-h` | `codex-high-m` | `claude-medium-m` | the author's own session is forbidden |
 | Critical review | assignment table E | swap within the same **different family** (`claude-medium-m`<->`claude-high-m`, and `codex-high-l`<->`codex-high-m` rather than `codex-high-m`<->`claude-high-m`) | whatever's left in a family different from the author | **The family constraint wins.** Never fall back into the author's family |
 | Neutral verification | `gemini-medium-m` | `claude-medium-m` (or `codex-high-m` if the author is Anthropic) | any other different family | Keep the output format (the checklist). Mark it "gemini-medium-m substitute" in the report |
 | Adversarial verification | assignment table E | a session in a different family from both the author and the critical reviewer | — | Never fall back to `gemini-medium-m` |
+
+Legacy alias keys are normalized before fallback, including attempted-key records; caller records are not rewritten. Terra never falls back to Luna.
 
 #### If the whole fallback chain is blocked
 - Mark that shard `blocked` and **keep the other shards moving.** Don't stop everything.
@@ -592,7 +601,7 @@ There are exactly three families: OpenAI (`codex-*`), Anthropic (`claude-high-m`
 
 | Lane | Character | Who | Input | Output |
 |---|---|---|---|---|
-| **Mechanical** | fact-checking | no model: a DAG `run` node or `orch test`; `codex-medium-h` (not the author) when the checks need judgment | the deliverable, list of commands to run | commands, inputs, exit codes, output excerpts, list of failures |
+| **Mechanical** | fact-checking | no model: a DAG `run` node or `orch test`; `codex-low-h` (not the author) when the checks need judgment | the deliverable, list of commands to run | commands, inputs, exit codes, output excerpts, list of failures |
 | **Critical** | find defects | a different family from the author | original request, acceptance criteria, the diff/deliverable, mechanical results | list of defects (location, repro scenario, severity) |
 | **Neutral** | check against requirements | `gemini-medium-m` | original request, acceptance criteria, the deliverable, evidence of actual behavior. **Never given the author's self-assessment** | requirements checklist |
 | **Adversarial** | try to break it | see §9.3 | a specific attack target (concurrency, data loss, security, fact/source, accessibility, or operational failure) | a counterexample, or evidence the attack failed |
@@ -691,14 +700,14 @@ If it doesn't pass, one writer proceeds at a time. Recon and verification prep s
 
 ```
 time ->
-recon        [codex-medium-h:A][codex-medium-h:logs][gemini-medium-m:docs]                ← start together
+recon        [codex-low-h:A][codex-low-h:logs][gemini-medium-m:docs]                ← start together
 design            [Head: fix the interface]                     ← waits only on recon A
-verify-prep       [gemini-medium-m: checklist template][codex-medium-h: test scenarios]  ← alongside design
+verify-prep       [gemini-medium-m: checklist template][codex-low-h: test scenarios]  ← alongside design
 produce                 [codex-high-m:1 wt1][codex-high-l:2 wt2][claude-high-m:3 wt3][claude-medium-m:docs]
-verify                        [codex-medium-h mech:1][claude-medium-m critical:1][gemini-medium-m neutral:1]  ← as soon as shard 1 finishes
-                                    [codex-medium-h mech:2][claude-medium-m critical:2][gemini-medium-m neutral:2]
-                                         [codex-medium-h mech:3][codex-high-m critical:3][gemini-medium-m neutral:3]
-integrate                                                    [codex-high-m merge][codex-medium-h full tests][gemini-medium-m full checklist]
+verify                        [codex-low-h mech:1][claude-medium-m critical:1][gemini-medium-m neutral:1]  ← as soon as shard 1 finishes
+                                    [codex-low-h mech:2][claude-medium-m critical:2][gemini-medium-m neutral:2]
+                                         [codex-low-h mech:3][codex-high-m critical:3][gemini-medium-m neutral:3]
+integrate                                                    [codex-high-m merge][codex-low-h full tests][gemini-medium-m full checklist]
 verdict                                                                         [Head]
 ```
 
@@ -712,14 +721,14 @@ Playbooks live at `~/.orch/playbooks/<type>.yaml`. Head picks a type, adjusts it
 
 | Type | Default mode | Recon | Produce | Verify |
 |---|---|---|---|---|
-| Feature development | full | `codex-medium-h` per area | `codex-high-m` (or `claude-high-m` if hard; mechanical shards go to `codex-high-l`) per worktree | mechanical `codex-medium-h` + critical (different family) + neutral `gemini-medium-m` if user-facing output changed |
-| Bug fix | light -> full | `codex-medium-h` (repro, logs, candidate causes) | `codex-high-m` (`claude-high-m` if the cause spans multiple layers) | mechanical (repro is gone + regression test) + critical |
-| Investigation/research | full | `gemini-medium-m` (broad) + `codex-medium-h` (code, data) in parallel | `claude-medium-m` synthesizes | neutral `gemini-medium-m` (source cross-check, a different session) + critical `claude-high-m` (fact rebuttal) |
-| Documentation | light | `codex-medium-h`/`gemini-medium-m` gather material | `claude-medium-m` | neutral `gemini-medium-m` + critical `codex-high-m` (facts, consistency) |
-| Analysis | full | `codex-medium-h` (data extraction) | `codex-high-m`/`claude-high-m` | mechanical `codex-medium-h` (recompute) + critical (different family) |
+| Feature development | full | `codex-low-h` per area | `codex-high-m` (or `claude-high-m` if hard; mechanical shards go to `codex-high-l`) per worktree | mechanical `codex-low-h` + critical (different family) + neutral `gemini-medium-m` if user-facing output changed |
+| Bug fix | light -> full | `codex-low-h` (repro, logs, candidate causes) | `codex-high-m` (`claude-high-m` if the cause spans multiple layers) | mechanical (repro is gone + regression test) + critical |
+| Investigation/research | full | `gemini-medium-m` (broad) + `codex-low-h` (code, data) in parallel | `claude-medium-m` synthesizes | neutral `gemini-medium-m` (source cross-check, a different session) + critical `claude-high-m` (fact rebuttal) |
+| Documentation | light | `codex-low-h`/`gemini-medium-m` gather material | `claude-medium-m` | neutral `gemini-medium-m` + critical `codex-high-m` (facts, consistency) |
+| Analysis | full | `codex-low-h` (data extraction) | `codex-high-m`/`claude-high-m` | mechanical `codex-low-h` (recompute) + critical (different family) |
 | Image generation | light | `gemini-medium-m` (references, style analysis) | whichever CLI has generation tooling (D4) | neutral `gemini-medium-m` (requirements check) + critical `claude-medium-m` (visual quality) |
-| Refactoring | full | `codex-medium-h` (impact scope) | `claude-high-m` (core) + `codex-high-l` per mechanical shard | mechanical (full tests, same behavior) + critical `claude-high-m` |
-| Design/architecture review | full | `codex-medium-h` + `gemini-medium-m` | `claude-high-m` | critical `codex-high-m` + neutral `gemini-medium-m` if user-facing output changed |
+| Refactoring | full | `codex-low-h` (impact scope) | `claude-high-m` (core) + `codex-high-l` per mechanical shard | mechanical (full tests, same behavior) + critical `claude-high-m` |
+| Design/architecture review | full | `codex-low-h` + `gemini-medium-m` | `claude-high-m` | critical `codex-high-m` + neutral `gemini-medium-m` if user-facing output changed |
 | Simple question, single-file edit | direct | — | Head | Head directly, if needed |
 
 ### 12.2 Playbook example (`feature.yaml`)
@@ -730,7 +739,7 @@ default_mode: full
 stages:
   recon:
     parallel: by_area
-    model: codex-medium-h
+    model: codex-low-h
     output: results/recon-<area>.md
   design:
     when: "ambiguous || cross_module"
@@ -749,7 +758,7 @@ stages:
   verify:
     start: per_shard          # start as soon as a shard finishes
     lanes:
-      mechanical: { run: true, model: codex-medium-h, required: true }   # run node; the model only reads a failure
+      mechanical: { run: true, model: codex-low-h, required: true }   # run node; the model only reads a failure
       critical:   { model: other_family(author), pane: false, required: true }
       neutral:    { model: gemini-medium-m, pane: false, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
       adversarial:{ model: other_family(author, critical), when: "mode == full+" }
@@ -763,7 +772,7 @@ retry_limit: 2
 
 ### 12.3 Example research flow
 1. Head splits the question into 3-6 subquestions and lists what `acceptance.md` needs answered.
-2. Recon (parallel): `gemini-medium-m` per subquestion (web, documents), `codex-medium-h` for local code and data. Every result must carry **a source URL or path plus a quote.**
+2. Recon (parallel): `gemini-medium-m` per subquestion (web, documents), `codex-low-h` for local code and data. Every result must carry **a source URL or path plus a quote.**
 3. Produce: `claude-medium-m` writes the synthesis report. Every claim gets a source number.
 4. Verify (parallel):
    - Neutral `gemini-medium-m` (a session that didn't do the recon): item-by-item satisfaction and claim-to-source cross-check
@@ -807,7 +816,7 @@ retry_limit: 2
 | Stage | Content | Done when |
 |---|---|---|
 | P0 | Settle decisions D1-D10 | reflected in this document |
-| P1 | Minimal `orch models/spawn/prompt/wait/collect/close/status`. Catalog, account env, `ORCH_ROLE` injection, run directory | `make check` passes. spawn -> prompt -> collect -> close actually works for each of the 5 models. spawn rejects a model outside the catalog and any spawn while `ORCH_ROLE=worker` |
+| P1 | Minimal `orch models/spawn/prompt/wait/collect/close/status`. Catalog, account env, `ORCH_ROLE` injection, run directory | `make check` passes. spawn -> prompt -> collect -> close actually works for each of the seven canonical keys. spawn rejects a model outside the catalog and any spawn while `ORCH_ROLE=worker` |
 | P2 | Write the constitution block and apply it to all three files. Replace the existing "4 models" rule | Freshly started Claude, Codex, and agy sessions answer role-determination questions per the rule |
 | P3 | Claude hooks (block Agent/Workflow, block a worker from creating panes) | Head's Agent calls are blocked with a guidance message. A worker's `herdr pane split` is blocked |
 | P4 | Revise orch's skill (trim it to an operating manual, the 6-key assignment table, verification lanes, modes) and merge the copies | both paths point at the same file |

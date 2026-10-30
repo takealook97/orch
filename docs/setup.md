@@ -10,7 +10,7 @@ This guide takes a machine from nothing to a working `orch` Head. It covers prer
 | Go 1.27+ | builds the `orch` binary | `go version` |
 | Herdr (tested with 0.8.2) | every worker runs in a Herdr pane | `command -v herdr` |
 | `git` | contract scope checks and changed-file detection | `git --version` |
-| `codex` CLI, logged in | runs `codex-medium-h` `codex-high-l` `codex-high-m` | `command -v codex` |
+| `codex` CLI, logged in | runs `codex-low-h` `codex-medium-m` `codex-high-l` `codex-high-m` | `command -v codex` |
 | `claude` CLI, logged in | runs `claude-high-m` `claude-medium-m` | `command -v claude` |
 | `agy` CLI, logged in | runs `gemini-medium-m` | `command -v agy` |
 | `python3` (optional) | only for the cr account adapter and the eval harness | `python3 --version` |
@@ -75,10 +75,10 @@ Run it from a pane inside Herdr; outside Herdr the "Herdr session" check fails b
 Smoke test from a Head pane:
 
 ```bash
-orch models                                   # the 6 catalog keys
+orch models                                   # the 7 canonical catalog keys
 orch run new --text "smoke test" --mode light
-orch contract new probe --role recon --model codex-medium-h
-orch spawn --model codex-medium-h --name probe --role recon --purpose explore
+orch contract new probe --role recon --model codex-low-h
+orch spawn --model codex-low-h --name probe --role recon --purpose explore
 orch prompt probe && orch wait probe
 orch run end                                  # closes every pane this run opened
 ```
@@ -87,7 +87,7 @@ One-off tasks need no run and no pane (they also work outside Herdr):
 
 ```bash
 orch test "go version"                        # no model: exit 0, no failures
-orch ask --model codex-medium-h "what does this repository build?"
+orch ask --model codex-low-h "what does this repository build?"
 ```
 
 ## 4. Accounts (optional)
@@ -114,7 +114,7 @@ Any other adapter works if it follows the same protocol: it is called as `<cmd> 
 | `ORCH_HOME` | you (optional) | state directory, default `~/.orch` (runs, locks, backups, playbooks) |
 | `ORCH_ACCOUNT_CMD` | you (optional) | account adapter for `--account hook` |
 | `ORCH_DEBUG=1` | you (optional) | verbose worker diagnostics on stderr |
-| `CODEX_MEDIUM_H`, `CODEX_HIGH_L`, `CODEX_HIGH_M`, `CLAUDE_HIGH_M`, `CLAUDE_MEDIUM_M`, `GEMINI_MEDIUM_M` | you (optional) | model id passed to `--model` for one key, read by `orch spawn` in the Head's shell. See the model catalog in the README for the key mapping and defaults. Keys and efforts stay fixed; `orch models` shows the resolved arguments |
+| `CODEX_LOW_H`, `CODEX_MEDIUM_M`, `CODEX_HIGH_L`, `CODEX_HIGH_M`, `CLAUDE_HIGH_M`, `CLAUDE_MEDIUM_M`, `GEMINI_MEDIUM_M` | you (optional) | model id passed to `--model` for one key, read by `orch spawn` in the Head's shell. See the model catalog in the README for the key mapping and defaults. Keys and efforts stay fixed; `orch models` shows the resolved arguments |
 | `ORCH_RAW_HERDR=1` | you, per command | lets one plain `herdr` command through the hook, for non-delegation panes such as builds or log tails. Close the pane when done |
 | `ORCH_ROLE`, `ORCH_RUN`, `ORCH_WORKER`, `ORCH_MODEL` | `orch spawn`, `orch ask`, `orch do` | injected into worker panes and one-off task processes. Never set these in the Head |
 
@@ -163,3 +163,9 @@ Close any open runs first with `orch run end` or `orch gc --orphans`.
 | `orch spawn` stops with a user-pane message | the tab has a pane `orch` did not open | spawn from a tab with only the Head, or close your pane |
 | layout drifted after manual resizing | panes resized by hand | `orch layout` |
 | panes left behind after a crash | Head exited abnormally | `orch gc --orphans` |
+
+## Model tiers and compatibility
+
+The seven canonical entries include the explicit OpenAI hierarchy **Luna < Terra < Sol**, independent of reasoning effort: Luna uses high, Terra medium, and Sol low or medium. `codex-medium-h` remains a deprecated alias for Luna (`codex-low-h`). `CODEX_LOW_H` wins over the legacy `CODEX_MEDIUM_H`; the legacy override is consulted only when the canonical value is empty after trimming. Saved runs need no migration. Terra uses the independent `CODEX_MEDIUM_M` override.
+
+Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default.

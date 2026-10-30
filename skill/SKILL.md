@@ -123,7 +123,7 @@ orch run end                                                  # close every pane
 
   ```yaml
   nodes:
-    - {name: recon-api, model: codex-medium-h, role: recon, purpose: explore}
+    - {name: recon-api, model: codex-low-h, role: recon, purpose: explore}
     - {name: impl-api, model: codex-high-m, role: produce, purpose: impl, needs: [recon-api], worktree: ../wt-api}
     - {name: mech-api, run: "go vet ./... && go test ./...", role: verify-mech, worktree: ../wt-api, needs: [impl-api]}
     - {name: crit-api, model: claude-medium-m, role: verify-critical, reviews: [impl-api], needs: [mech-api], pane: false}
@@ -161,26 +161,31 @@ The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest 
 
 | Purpose | Primary | Conditional alternative | `--purpose` |
 |---|---|---|---|
-| Broad file/symbol search, bulk classification, translation | `codex-medium-h` | ambiguous classification criteria -> `claude-medium-m` | explore |
-| Evidence extraction, log/test-failure analysis, data extraction | `codex-medium-h` | tangled root-cause candidates or schema interpretation -> `codex-high-m` | extract |
+| Broad file/symbol search, bulk classification, translation | `codex-low-h` | ambiguous classification criteria -> `claude-medium-m` | explore |
+| Evidence extraction, log/test-failure analysis, data extraction | `codex-low-h` | tangled root-cause candidates or schema interpretation -> `codex-high-m` | extract |
 | Web, long documents, PDFs, reading images/screenshots | `gemini-medium-m` | deep technical interpretation -> `claude-high-m`; visual detail -> `claude-medium-m` | web |
 | Condensing large or conflicting evidence for the Head, root-cause hypotheses | `claude-high-m` | -- | synthesis |
 | Drafting interfaces/schemas | `codex-high-m` | wide blast radius -> `claude-high-m` | impl |
-| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, test code, mechanical edits) | `codex-high-l` | very narrow, 1-2 files -> `codex-medium-h` | mech-impl |
+| Scoped known fixes (including tiny one-file edits), constrained writing and mechanical extraction | `codex-medium-m` | larger file-level plan -> `codex-high-l`; ambiguous cause -> `codex-high-m` | mech-impl |
+| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, test code, mechanical edits) | `codex-high-l` | very narrow known fix -> `codex-medium-m` | mech-impl |
 | Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | -- | impl |
 | Hard implementation/debugging (concurrency, performance, security, complex state, flaky repro) | `claude-high-m` | reliable repro, localized cause -> `codex-high-m` | hard-impl |
 | Alternative implementation/design (for comparison) | `claude-medium-m` | primary is Anthropic -> `codex-high-m` | alt |
 | Docs, reports, research synthesis | `claude-medium-m` | deep technical content or conflicting sources -> `claude-high-m` | docs |
-| Short summaries, changelogs | `codex-medium-h` | -- | extract |
+| Short summaries, changelogs | `codex-medium-m` | -- | extract |
 | Data analysis | `codex-high-m` | ambiguous interpretation or causal judgment -> `claude-high-m` | analysis |
 | Merge/integration mechanics | Head directly (git + `orch test`) for clean merges; `codex-high-l` for textual conflicts | semantic conflicts -> `claude-high-m` | integrate |
 | Image generation | `codex-high-m` (Codex image_generation) | -- | image |
 
 Design is the Head's job: the Head writes decisions.md and the plans in each contract. A worker may condense evidence for it, never decide it.
 
-Luna runs only at effort high (`codex-medium-h`). Effort is chosen separately from the model (precise extraction: `codex-medium-h`; planned implementation: `codex-high-l`; mixed judgment: `codex-high-m`). For implementation, write the plan into the contract and hand it to `codex-high-l`; the `mech-impl` chain escalates to `codex-high-m` on failure. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
+The seven canonical entries include the explicit OpenAI hierarchy **Luna < Terra < Sol**, independent of reasoning effort: Luna uses high, Terra medium, and Sol low or medium. `codex-medium-h` remains a deprecated alias for Luna (`codex-low-h`). `CODEX_LOW_H` wins over the legacy `CODEX_MEDIUM_H`; the legacy override is consulted only when the canonical value is empty after trimming. Saved runs need no migration. Terra uses the independent `CODEX_MEDIUM_M` override.
 
-**Fallback**: if `orch wait` detects capacity exhaustion in the output, CR workers leave account rotation to CR and advance to the next key on the same CR route for supported providers. Native workers first try a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`codex-high-m` -> `claude-high-m`, `codex-medium-h` -> `codex-high-m`). For `orch do`: if a task fails its test or scope check twice at one key, rerun it one key higher; if it fails at `claude-high-m`, settle the missing judgment yourself and delegate again, or take it over.
+Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default. For implementation, put the plan into the contract: `mech-impl` defaults to Terra for scoped fixes, then escalates through Sol low, Sol medium, and Sonnet. Larger complete plans explicitly start at `codex-high-l`. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
+
+**Fallback chains**: explore: `codex-low-h` -> `codex-medium-m` -> `gemini-medium-m`; extract: `codex-low-h` -> `codex-medium-m` -> `codex-high-m` -> `claude-medium-m`; mech-impl: `codex-medium-m` -> `codex-high-l` -> `codex-high-m` -> `claude-medium-m`. Terra never falls back to Luna; legacy aliases count as the same attempted key.
+
+**Fallback**: if `orch wait` detects capacity exhaustion in the output, CR workers leave account rotation to CR and advance to the next key on the same CR route for supported providers. Native workers first try a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`codex-high-m` -> `claude-high-m`, `codex-low-h` -> `codex-medium-m` -> `codex-high-m`). For `orch do`: if a task fails its test or scope check twice at one key, rerun it one key higher; if it fails at `claude-high-m`, settle the missing judgment yourself and delegate again, or take it over.
 
 ## 5. Verification lanes
 
@@ -188,7 +193,7 @@ Plan verification at the same time you assign the production work. An author's o
 
 | Lane | `--role` | Who | Input | Output |
 |---|---|---|---|---|
-| Mechanical | verify-mech | No model: a DAG `run` node (or `orch test`) runs the commands. `codex-medium-h` only reads a failure the excerpt doesn't explain | Deliverables, commands to run | Commands, exit codes, output excerpts, failure list |
+| Mechanical | verify-mech | No model: a DAG `run` node (or `orch test`) runs the commands. `codex-low-h` only reads a failure the excerpt doesn't explain | Deliverables, commands to run | Commands, exit codes, output excerpts, failure list |
 | Critical | verify-critical | A **different family** from the author (enforced via `--reviews`) | Original request, acceptance criteria, diff, mechanical results | Defect list (location, repro, severity) |
 | Neutral | verify-neutral | `gemini-medium-m` (never given the author's self-assessment) | Original request, acceptance criteria, deliverables, evidence of actual behavior | Requirements checklist |
 | Adversarial | verify-adversarial | A different family from the author, `gemini-medium-m` forbidden. Default `claude-high-m`; `codex-high-m` if the author is Anthropic | One concrete attack target | A counterexample or grounds for refuting it |

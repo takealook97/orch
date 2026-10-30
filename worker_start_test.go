@@ -276,7 +276,7 @@ func TestSpawnFailsWhenAgentLeavesShellOnlyPane(t *testing.T) {
 		t.Fatalf("unexpected Herdr call: %v", args)
 		return nil, nil
 	}
-	w, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-medium-h", Name: "cwd-probe", Role: roleRecon, Cwd: cwd})
+	w, err := spawn(spawnOpts{Account: "same", Run: r.ID, Key: "codex-low-h", Name: "cwd-probe", Role: roleRecon, Cwd: cwd})
 	if err == nil || w != nil {
 		t.Fatalf("spawn reported success for a shell-only pane: worker=%+v err=%v", w, err)
 	}

@@ -4,7 +4,7 @@ default_mode: full
 stages:
   recon:
     parallel: by_area
-    model: codex-medium-h
+    model: codex-low-h
     purpose: explore
     notes: Use gemini-medium-m(web) for external docs and case studies
   produce:

@@ -15,7 +15,8 @@ Review and parallel experiments run as one orch DAG, so row caps, fallback and p
 
   delegate: A proxies the top-tier Head with claude-high-m via orch ask/do and charges
             all reported usage to Head. B sends read-only/research tasks to
-            codex-medium-h, writing tasks to codex-high-l or codex-high-m via ask/do.
+            codex-low-h, scoped writing/fixes to codex-medium-m, and larger planned
+            implementation/test fixes to codex-high-l or codex-high-m via ask/do.
             B charges worker usage separately; Head tokens are estimated from
             instruction and printed orch JSON report characters / 4 plus a short
             review turn. A's usage and B's Head estimate are context-growth proxies.

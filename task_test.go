@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 )
 
-func TestDoRepeatedOwn(t *testing.T) {
+func TestDoRepeatedOwnLegacyLunaAlias(t *testing.T) {
 	taskEnv(t)
 	dir := taskRepo(t)
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0700); err != nil {
@@ -33,6 +33,7 @@ printf 'new\n' > sub/b.txt
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"SUMMARY: ok"}}'
 `)
 	var out, errout bytes.Buffer
+	// Existing saved/configured model keys remain valid through the CLI.
 	code := run([]string{"do", "--model", "codex-medium-h", "--own", "a.txt", "--own", "sub/*", "--cwd", dir, "--json", "req"}, strings.NewReader(""), &out, &errout)
 	var result Task
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil || code != 0 || result.Status != "done" || len(result.ScopeViolations) != 0 || len(result.Changed) != 2 {
@@ -45,7 +46,7 @@ func TestTaskUnknownFlag(t *testing.T) {
 		t.Run(unknown, func(t *testing.T) {
 			taskEnv(t)
 			var out, errout bytes.Buffer
-			args := []string{"do", "--model", "codex-medium-h", unknown}
+			args := []string{"do", "--model", "codex-low-h", unknown}
 			if unknown == "--purpose" {
 				args = append(args, "docs")
 			}
@@ -64,7 +65,7 @@ func TestTaskDashPrompt(t *testing.T) {
 			taskEnv(t)
 			fakeCLI(t, "codex", `echo '{"type":"item.completed","item":{"type":"agent_message","text":"SUMMARY: ok"}}'`)
 			var out, errout bytes.Buffer
-			code := run([]string{"ask", "--model", "codex-medium-h", "--cwd", t.TempDir(), "--json", prompt}, strings.NewReader(""), &out, &errout)
+			code := run([]string{"ask", "--model", "codex-low-h", "--cwd", t.TempDir(), "--json", prompt}, strings.NewReader(""), &out, &errout)
 			var result Task
 			if err := json.Unmarshal(out.Bytes(), &result); err != nil || code != 0 {
 				t.Fatalf("code=%d result=%s stderr=%s err=%v", code, out.String(), errout.String(), err)
@@ -185,7 +186,7 @@ func TestDoAndScope(t *testing.T) {
 			dir := taskRepo(t)
 			fakeCodex(t, filepath.Join(dir, tc.file))
 			var out, errout bytes.Buffer
-			code := run([]string{"do", "--model", "codex-medium-h", "--own", "owned.txt", "--cwd", dir, "--json", "change file"}, strings.NewReader(""), &out, &errout)
+			code := run([]string{"do", "--model", "codex-low-h", "--own", "owned.txt", "--cwd", dir, "--json", "change file"}, strings.NewReader(""), &out, &errout)
 			var v map[string]any
 			if e := json.Unmarshal(out.Bytes(), &v); e != nil {
 				t.Fatalf("json: %v %s %s", e, out.String(), errout.String())
@@ -215,7 +216,7 @@ func TestDoFinalTestFailure(t *testing.T) {
 	dir := taskRepo(t)
 	fakeCodex(t, filepath.Join(dir, "owned.txt"))
 	var out, errout bytes.Buffer
-	code := run([]string{"do", "--model", "codex-medium-h", "--own", "owned.txt", "--cwd", dir, "--test", "exit 1", "--json", "change"}, strings.NewReader(""), &out, &errout)
+	code := run([]string{"do", "--model", "codex-low-h", "--own", "owned.txt", "--cwd", dir, "--test", "exit 1", "--json", "change"}, strings.NewReader(""), &out, &errout)
 	if code != 1 || !strings.Contains(out.String(), `"status":"failed"`) || !strings.Contains(out.String(), `"test"`) {
 		t.Fatalf("%d %s %s", code, out.String(), errout.String())
 	}
@@ -228,7 +229,7 @@ func TestTaskWaitAndWorkerRefusal(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "")
 	dir := taskRepo(t)
 	fakeCodex(t, filepath.Join(dir, "owned.txt"))
-	task, err := newTask("do", "codex-medium-h", "change", dir)
+	task, err := newTask("do", "codex-low-h", "change", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +247,7 @@ func TestTaskWaitAndWorkerRefusal(t *testing.T) {
 	}
 	t.Setenv("ORCH_ROLE", "worker")
 	var out, errout bytes.Buffer
-	code := run([]string{"ask", "--model", "codex-medium-h", "hello"}, strings.NewReader(""), &out, &errout)
+	code := run([]string{"ask", "--model", "codex-low-h", "hello"}, strings.NewReader(""), &out, &errout)
 	if code == 0 || !strings.Contains(errout.String(), "Head only") {
 		t.Fatalf("%d %s", code, errout.String())
 	}
@@ -341,7 +342,7 @@ wait
 	done := make(chan result, 1)
 	go func() {
 		var out, errout bytes.Buffer
-		code := run([]string{"do", "--model", "codex-medium-h", "--own", "owned.txt", "--cwd", dir, "--json", "change"}, strings.NewReader(""), &out, &errout)
+		code := run([]string{"do", "--model", "codex-low-h", "--own", "owned.txt", "--cwd", dir, "--json", "change"}, strings.NewReader(""), &out, &errout)
 		done <- result{code, out.String() + errout.String()}
 	}()
 	var grandchild int
@@ -451,7 +452,7 @@ printf 'line1\nline2' > sub/new.txt
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"SUMMARY: ok"}}'
 `)
 	var out, errout bytes.Buffer
-	code := run([]string{"do", "--model", "codex-medium-h", "--own", "owned.txt,sub/*", "--cwd", dir, "--json", "change"}, strings.NewReader(""), &out, &errout)
+	code := run([]string{"do", "--model", "codex-low-h", "--own", "owned.txt,sub/*", "--cwd", dir, "--json", "change"}, strings.NewReader(""), &out, &errout)
 	var v map[string]any
 	if err := json.Unmarshal(out.Bytes(), &v); err != nil || code != 0 {
 		t.Fatalf("%d %v %s %s", code, err, out.String(), errout.String())
@@ -481,7 +482,7 @@ func TestScopeFromSubdirectory(t *testing.T) {
 			os.MkdirAll(filepath.Join(dir, "sub"), 0700)
 			fakeCodex(t, filepath.Join(dir, tc.target))
 			var out, errout bytes.Buffer
-			run([]string{"do", "--model", "codex-medium-h", "--own", "*.txt", "--cwd", filepath.Join(dir, "sub"), "--json", "change"}, strings.NewReader(""), &out, &errout)
+			run([]string{"do", "--model", "codex-low-h", "--own", "*.txt", "--cwd", filepath.Join(dir, "sub"), "--json", "change"}, strings.NewReader(""), &out, &errout)
 			var v map[string]any
 			if err := json.Unmarshal(out.Bytes(), &v); err != nil {
 				t.Fatalf("%v %s %s", err, out.String(), errout.String())

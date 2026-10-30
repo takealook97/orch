@@ -4,7 +4,7 @@ default_mode: light
 stages:
   recon:
     parallel: by_source
-    model: codex-medium-h
+    model: codex-low-h
     purpose: explore
     notes: Use gemini-medium-m(web) for web pages, long documents, and image sources
   produce:

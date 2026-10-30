@@ -25,10 +25,10 @@ func dagRunFixture(t *testing.T, yamlText string, contracts ...string) *Run {
 }
 
 const goodDag = `nodes:
-  - {name: recon, model: codex-medium-h, role: recon, purpose: explore}
+  - {name: recon, model: codex-low-h, role: recon, purpose: explore}
   - {name: impl-a, model: codex-high-m, role: produce, purpose: impl, needs: [recon]}
   - {name: impl-b, model: claude-high-m, role: produce, purpose: hard-impl, needs: [recon]}
-  - {name: mech-a, model: codex-medium-h, role: verify-mech, needs: [impl-a]}
+  - {name: mech-a, model: codex-low-h, role: verify-mech, needs: [impl-a]}
   - {name: crit-a, model: claude-medium-m, role: verify-critical, reviews: [impl-a], needs: [mech-a]}
   - {name: crit-b, model: codex-high-m, role: verify-critical, reviews: [impl-b]}
   - {name: docs, model: claude-medium-m, role: produce, purpose: docs}
@@ -54,7 +54,7 @@ func TestDagValidateRejects(t *testing.T) {
   - {name: a, model: gpt-5, role: produce, needs: [c]}
   - {name: b, model: codex-high-m, role: produce, needs: [a]}
   - {name: c, model: codex-high-m, role: produce, needs: [b]}
-  - {name: crit, model: codex-medium-h, role: verify-critical, reviews: [b]}
+  - {name: crit, model: codex-low-h, role: verify-critical, reviews: [b]}
   - {name: adv, model: gemini-medium-m, role: verify-adversarial, reviews: [b]}
   - {name: neu, model: gemini-medium-m, role: verify-neutral}
   - {name: nocontract, model: codex-high-m, role: produce, contract: contracts/missing.md}
@@ -140,7 +140,7 @@ func TestDagValidateInlineNodes(t *testing.T) {
   - {name: impl, model: codex-high-m, role: produce, purpose: impl}
   - {name: gate, run: "go test ./...", role: verify-mech, needs: [impl]}
   - {name: crit, model: claude-medium-m, role: verify-critical, reviews: [impl], needs: [gate], pane: false}
-  - {name: gated, model: codex-medium-h, run: "true", role: verify-mech}
+  - {name: gated, model: codex-low-h, run: "true", role: verify-mech}
   - {name: runprod, run: "true", role: produce}
   - {name: writer, model: codex-high-l, role: produce, pane: false}
   - {name: revgate, model: claude-medium-m, role: verify-critical, reviews: [gate]}
@@ -231,7 +231,7 @@ func TestDagInlineAskFallsBackOnQuota(t *testing.T) {
 	fakeCLI(t, "codex", `echo "ERROR: quota exceeded"; exit 1`)
 	fakeCLI(t, "agy", `printf '# Result\nfound it\nstatus: done\n'`)
 	y := `nodes:
-  - {name: recon, model: codex-medium-h, role: recon, purpose: explore, pane: false}
+  - {name: recon, model: codex-low-h, role: recon, purpose: explore, pane: false}
 `
 	r := dagRunFixture(t, y, "recon")
 	var out strings.Builder
@@ -239,7 +239,7 @@ func TestDagInlineAskFallsBackOnQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if ns := st.Nodes["recon"]; ns.Status != "done" || !strings.Contains(ns.Detail, "gemini-medium-m") || ns.Worker != "task-2" {
+	if ns := st.Nodes["recon"]; ns.Status != "done" || !strings.Contains(ns.Detail, "gemini-medium-m") || ns.Worker != "task-3" {
 		t.Fatalf("recon = %+v\n%s", ns, out.String())
 	}
 }

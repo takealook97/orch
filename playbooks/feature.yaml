@@ -4,7 +4,7 @@ default_mode: full
 stages:
   recon:
     parallel: by_area
-    model: codex-medium-h
+    model: codex-low-h
     purpose: explore
     output: results/recon-<area>.md
   design:
@@ -26,7 +26,7 @@ stages:
   verify:
     start: per_shard
     lanes:
-      mechanical: { run: true, model: codex-medium-h, required: true }
+      mechanical: { run: true, model: codex-low-h, required: true }
       critical: { model: other_family(author), pane: false, required: true }
       neutral: { model: gemini-medium-m, pane: false, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
       adversarial: { model: "other_family(author, critical)", when: "mode == full+" }
