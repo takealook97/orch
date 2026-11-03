@@ -1,6 +1,6 @@
 BIN := bin/orch
 
-.PHONY: build test check install link
+.PHONY: build test check install link herdr
 
 build:
 	go build -o $(BIN) .
@@ -19,3 +19,30 @@ link: build
 
 install: check link
 	$(HOME)/.local/bin/orch install --repo $(CURDIR)
+
+# Validate every destination before copying any files. Shipped names are reserved.
+herdr:
+	@set -eu; \
+	for mod in herdr/mods/*; do \
+		[ -d "$$mod" ] || continue; \
+		name=$${mod##*/}; \
+		case "$$name" in spaces|agents|tabs|menu|prompt|toast|help|confirm|files|changes|peek|picker|pane|worktree|workspace-chrome|workspace-status|new-menu|terminals-bar|terminals-pane|win98|machine-add) \
+			echo "Refusing to overwrite shipped Herdr mod: $$name" >&2; exit 1;; esac; \
+	done; \
+	for layout in herdr/layouts/*.json; do \
+		[ -f "$$layout" ] || continue; \
+		name=$${layout##*/}; \
+		case "$$name" in main.json|terminals.json|win98.json) \
+			echo "Refusing to overwrite shipped Herdr layout: $$name" >&2; exit 1;; esac; \
+	done; \
+	mkdir -p "$(HOME)/.config/herdr-app/mods" "$(HOME)/.config/herdr-app/layouts"; \
+	for mod in herdr/mods/*; do \
+		[ -d "$$mod" ] || continue; \
+		name=$${mod##*/}; \
+		mkdir -p "$(HOME)/.config/herdr-app/mods/$$name"; \
+		rsync -a --delete --exclude='*.test.mjs' "$$mod/" "$(HOME)/.config/herdr-app/mods/$$name/"; \
+	done; \
+	for layout in herdr/layouts/*.json; do \
+		[ -f "$$layout" ] || continue; \
+		cp "$$layout" "$(HOME)/.config/herdr-app/layouts/"; \
+	done
