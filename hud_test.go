@@ -135,7 +135,7 @@ func TestHUDProcessDiscovery(t *testing.T) {
 	}
 }
 func TestHUDRoleLabels(t *testing.T) {
-	for _, tc := range []struct{ role, purpose, want string }{{roleRecon, "", "조사"}, {roleRecon, "web", "웹조사"}, {roleDesign, "", "설계검토"}, {roleProduce, "impl", "구현"}, {roleProduce, "docs", "문서"}, {roleProduce, "image", "이미지"}, {roleIntegrate, "", "통합"}, {roleMech, "", "테스트"}, {roleCritical, "", "리뷰"}, {roleNeutral, "", "QA"}, {roleAdversarial, "", "공격검증"}, {"unknown", "", "unknown"}} {
+	for _, tc := range []struct{ role, purpose, want string }{{"head", "", "Head"}, {roleRecon, "", "Recon"}, {roleRecon, "web", "Web"}, {roleDesign, "", "Design"}, {roleProduce, "impl", "Impl"}, {roleProduce, "docs", "Docs"}, {roleProduce, "image", "Image"}, {roleIntegrate, "", "Integrate"}, {roleMech, "", "Test"}, {roleCritical, "", "Review"}, {roleNeutral, "", "QA"}, {roleAdversarial, "", "Adversarial"}, {"unknown", "", "unknown"}} {
 		if got := hudRoleLabel(tc.role, tc.purpose); got != tc.want {
 			t.Errorf("%s/%s: %q", tc.role, tc.purpose, got)
 		}
@@ -213,7 +213,7 @@ func TestHUDClaudeCacheAndBackoff(t *testing.T) {
 	t.Setenv("ORCH_HOME", t.TempDir())
 	a := HUDAccount{Provider: "claude", Home: "", Label: "default", Terminals: []string{}}
 	key := hudAccountKey(a)
-	entry := hudCacheEntry{Account: HUDAccount{FiveHour: &HUDWindow{Used: 17}}, FetchedAt: time.Now().Add(-200 * time.Second)}
+	entry := hudCacheEntry{Account: HUDAccount{FiveHour: &HUDWindow{Used: 17}}, FetchedAt: time.Now().Add(-100 * time.Second)}
 	if err := hudWriteCache(map[string]hudCacheEntry{key: entry}); err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +225,10 @@ func TestHUDClaudeCacheAndBackoff(t *testing.T) {
 	got := hudCachedUsage(context.Background(), []HUDAccount{a}, 120*time.Second, false, fetchers)
 	if calls != 0 || got[0].Stale {
 		t.Fatal("Claude minimum freshness not respected")
+	}
+	entry.FetchedAt = time.Now().Add(-200 * time.Second)
+	if err := hudWriteCache(map[string]hudCacheEntry{key: entry}); err != nil {
+		t.Fatal(err)
 	}
 	got = hudCachedUsage(context.Background(), []HUDAccount{a}, 120*time.Second, true, fetchers)
 	if calls != 1 || !got[0].Stale || got[0].Error != "HTTP 429" || got[0].FiveHour.Used != 17 {
@@ -278,7 +282,16 @@ func TestHUDPanesOutput(t *testing.T) {
 	t.Setenv("CODEX_MEDIUM_H", "")
 	// A fake hc makes this test independent of the user's running terminals.
 	bin := t.TempDir()
-	script := "#!/bin/sh\nprintf '%s\\n' '{\"terminals\":[{\"address\":\"t-head\",\"program\":\"claude\",\"argv\":[\"claude\",\"--model\",\"opus\"]}]}'\n"
+	script := `#!/bin/sh
+if [ "$1" = "ls" ]; then
+ printf '%s\n' '{"terminals":[{"address":"t-head","agent":"claude"},{"address":"t-codex","agent":"codex"},{"address":"t-shell","agent":"zsh"}]}'
+elif [ "$2" = "t-head" ]; then
+ printf '%s\n' '{"argv":["env","ORCH_ROLE=worker","/bin/sh","-c","cd /tmp && cr claude -c --model '''sonnet''' --effort '''medium'''"]}'
+else
+ printf '%s\n' '{"argv":["env","/bin/sh","-c","cd /tmp && cr codex --model gpt-fake -c model_reasoning_effort=\"low\""]}'
+fi
+`
+
 	if err := os.WriteFile(filepath.Join(bin, "hc"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -303,14 +316,17 @@ func TestHUDPanesOutput(t *testing.T) {
 		t.Fatalf("runs: %+v", out)
 	}
 	w := out.Runs[0].Workers[0]
-	if w.Status != "closed" || w.Label != "구현" || w.Model != "gpt-6-luna" || w.Effort != "high" {
+	if w.Status != "closed" || w.Label != "Impl" || w.Model != "gpt-6-luna" || w.Effort != "high" {
 		t.Fatalf("worker: %+v", w)
 	}
-	if len(out.Terminals) != 1 || out.Terminals[0].Model != "opus" {
+	if len(out.Terminals) != 2 || out.Terminals[0].Model != "sonnet" || out.Terminals[0].Effort != "medium" || out.Terminals[1].Model != "gpt-fake" || out.Terminals[1].Effort != "low" {
 		t.Fatalf("terminals: %+v", out.Terminals)
 	}
 }
 func TestHUDCommandUsage(t *testing.T) {
+	old := hudFindGemini
+	hudFindGemini = func() (string, error) { return "", errors.New("not installed") }
+	t.Cleanup(func() { hudFindGemini = old })
 	for _, args := range [][]string{nil, {"unknown"}, {"sys", "extra"}, {"panes", "extra"}, {"usage", "--max-age", "bad"}, {"usage", "--max-age", "-1s"}, {"usage", "extra"}} {
 		var stdout, stderr bytes.Buffer
 		if code := cmdHud(args, &stdout, &stderr); code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "usage:") {
@@ -426,5 +442,151 @@ func TestHUDCacheMerge(t *testing.T) {
 	wg.Wait()
 	if got := len(hudReadCache()); got != 12 {
 		t.Fatalf("concurrent cache updates lost: %d/12", got)
+	}
+}
+
+const hudGeminiFixture = `{"conversation_id":"","status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t83%\t2026-11-06T22:46:48Z\nGemini Models\tFive Hour Limit Remaining\t89%\t2026-11-03T05:00:04Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-11-10T04:21:35Z\nClaude and GPT models\tFive Hour Limit Remaining\t100%\t2026-11-03T09:21:35Z\n","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0},"command":{"name":"usage","data":{"description":"Within each group, models share a weekly limit and a 5-hour limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. The 5-hour limit smooths out aggregate demand to fairly distribute global capacity across all users, while your weekly limit is tied directly to your individual tier.","groups":[{"name":"Gemini Models","description":"Models within this group: Gemini Flash, Gemini Pro","buckets":[{"id":"gemini-weekly","name":"Weekly Limit Remaining","description":"You have used some of your weekly limit, it will fully refresh in 3 days, 18 hours.","window":"weekly","remaining_fraction":0.8309758305549622,"reset_time":"2026-11-06T22:46:48Z"},{"id":"gemini-5h","name":"Five Hour Limit Remaining","description":"You have used some of your 5-hour limit, it will fully refresh in 38 minutes.","window":"5h","remaining_fraction":0.8854683041572571,"reset_time":"2026-11-03T05:00:04Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Opus, Claude Sonnet, GPT-OSS","buckets":[{"id":"3p-weekly","name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":1,"reset_time":"2026-11-10T04:21:35Z"},{"id":"3p-5h","name":"Five Hour Limit Remaining","window":"5h","remaining_fraction":1,"reset_time":"2026-11-03T09:21:35Z"}]}]}}}`
+
+func TestHUDGeminiMapping(t *testing.T) {
+	a, err := hudParseGemini([]byte(hudGeminiFixture))
+	if err != nil || a.FiveHour == nil || a.Weekly == nil || a.FiveHour.Used != 11 || a.Weekly.Used != 17 || a.FiveHour.ResetsAt != "2026-11-03T05:00:04Z" || a.Weekly.ResetsAt != "2026-11-06T22:46:48Z" {
+		t.Fatalf("gemini: %+v %v", a, err)
+	}
+	for _, raw := range []string{"bad", "{}", strings.ReplaceAll(hudGeminiFixture, "Gemini Models", "Other Models")} {
+		if _, err := hudParseGemini([]byte(raw)); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+}
+func TestHUDEdgeDiscovery(t *testing.T) {
+	raw := "codex CODEX_HOME=/argv/wrong PATH=/bin CODEX_HOME=/Users/x/My Dir/.codex CLAUDE_CONFIG_DIR=/Users/x/Other Dir/.claude LAST=value"
+	if got := hudEnvValue(raw, "CODEX_HOME"); got != "/Users/x/My Dir/.codex" {
+		t.Fatal(got)
+	}
+	if got := hudEnvValue(raw, "CLAUDE_CONFIG_DIR"); got != "/Users/x/Other Dir/.claude" {
+		t.Fatal(got)
+	}
+	if got := hudEnvValue("CODEX_HOME=/last space", "CODEX_HOME"); got != "/last space" {
+		t.Fatal(got)
+	}
+	for _, tc := range []struct{ raw, want string }{
+		{"node /Users/x/proj/claude-notes/server.js", ""},
+		{"node server.js --prompt claude /codex", ""},
+		{"node /tools/bin/codex", "codex"},
+		{"node /tools/node_modules/@anthropic-ai/claude-code/cli.js", "claude"},
+	} {
+		if got := hudNodeProvider(tc.raw); got != tc.want {
+			t.Errorf("%q: %q", tc.raw, got)
+		}
+	}
+	procs := hudParseProcesses("100 1 /bin/zsh\n101 100 node\n102 101 claude")
+	if pid, provider := hudFindAgent(100, procs, func(int) string { return "node /proj/claude-notes/server.js" }); pid != 102 || provider != "claude" {
+		t.Fatalf("%d %s", pid, provider)
+	}
+	t.Setenv("CR_HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	accounts, err := hudDiscover(context.Background(), "remote/t1,remote/t2", true)
+	if err != nil || len(accounts) != 0 {
+		t.Fatalf("remote: %+v %v", accounts, err)
+	}
+}
+func TestHUDWrappedArgv(t *testing.T) {
+	for _, tc := range []struct {
+		argv          []string
+		model, effort string
+	}{
+		{[]string{"claude", "-c", "--model", "opus"}, "opus", ""},
+		{[]string{"claude", "-c", "--model=opus"}, "opus", ""},
+		{[]string{"codex", "-c", `model="gpt-5"`, "--config=model_reasoning_effort=high"}, "gpt-5", "high"},
+		{[]string{"env", "/bin/sh", "-c", `cd '/tmp/a b' && cr codex -c model="gpt-5" -c model_reasoning_effort="low"`}, "gpt-5", "low"},
+		{[]string{`env /bin/sh -c "cd /tmp && cr claude --model 'sonnet' --effort 'medium'"`}, "sonnet", "medium"},
+		{[]string{"env", `cd /tmp && cr claude --model 'sonnet' --effort 'medium'`}, "sonnet", "medium"},
+	} {
+		model, effort := hudArgvModel(tc.argv)
+		if model != tc.model || effort != tc.effort {
+			t.Errorf("%q: %q %q", tc.argv, model, effort)
+		}
+	}
+	got := hudShellSplit(`one 'two three' "four five" six\ seven`)
+	if strings.Join(got, "|") != "one|two three|four five|six seven" {
+		t.Fatal(got)
+	}
+}
+func TestHUDFailureBackoffAndFloors(t *testing.T) {
+	for _, provider := range []string{"codex", "claude", "gemini"} {
+		t.Run(provider, func(t *testing.T) {
+			t.Setenv("ORCH_HOME", t.TempDir())
+			a := HUDAccount{Provider: provider, ID: "fixture", Terminals: []string{}}
+			key := hudAccountKey(a)
+			calls := 0
+			fetchers := map[string]hudFetchFunc{provider: func(context.Context, string) (HUDAccount, error) {
+				calls++
+				return HUDAccount{}, errors.New("offline")
+			}}
+			for _, refresh := range []bool{false, true, false} {
+				got := hudCachedUsage(context.Background(), []HUDAccount{a}, 400*time.Second, refresh, fetchers)
+				if calls != 1 || !got[0].Stale || got[0].Error != "offline" {
+					t.Fatalf("failure: %d %+v", calls, got)
+				}
+			}
+			entry := hudReadCache()[key]
+			if entry.FailAt.IsZero() || entry.Error != "offline" {
+				t.Fatalf("missing failure: %+v", entry)
+			}
+			entry.FailAt = time.Now().Add(-201 * time.Second)
+			if err := hudWriteCache(map[string]hudCacheEntry{key: entry}); err != nil {
+				t.Fatal(err)
+			}
+			fetchers[provider] = func(context.Context, string) (HUDAccount, error) {
+				calls++
+				return HUDAccount{Weekly: &HUDWindow{Used: 3}}, nil
+			}
+			got := hudCachedUsage(context.Background(), []HUDAccount{a}, 400*time.Second, false, fetchers)
+			if calls != 2 || got[0].Stale || !hudReadCache()[key].FailAt.IsZero() {
+				t.Fatalf("recovery: %d %+v", calls, got)
+			}
+			// Even a manual refresh cannot bypass the provider floor.
+			hudCachedUsage(context.Background(), []HUDAccount{a}, 0, true, fetchers)
+			if calls != 2 {
+				t.Fatal("bypassed floor")
+			}
+			entry = hudReadCache()[key]
+			entry.FetchedAt = time.Now().Add(-hudUsageFloor(provider) - time.Second)
+			if err := hudWriteCache(map[string]hudCacheEntry{key: entry}); err != nil {
+				t.Fatal(err)
+			}
+			hudCachedUsage(context.Background(), []HUDAccount{a}, 0, true, fetchers)
+			if calls != 3 {
+				t.Fatal("floor never expired")
+			}
+		})
+	}
+	now := time.Now()
+	for _, value := range []string{"99999999999", now.Add(24 * time.Hour).UTC().Format(http.TimeFormat)} {
+		if got := hudRetryAt(value, now); got.Sub(now) != time.Hour {
+			t.Fatalf("uncapped retry: %v", got)
+		}
+	}
+}
+
+func TestHUDSysPartialAndBatchNodeArgs(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	for name, script := range map[string]string{
+		"top":    "#!/bin/sh\nprintf '%s\n' 'CPU usage: 10% user, 10% sys, 80% idle' 'PhysMem: 2G used'\n",
+		"sysctl": "#!/bin/sh\nexit 1\n",
+		"ps":     "#!/bin/sh\n[ \"$1 $2 $3 $4\" = \"-o pid=,args= -p 201,202\" ] || exit 1\nprintf '%s\n' '201 node /tools/bin/codex' '202 node /tools/@anthropic-ai/claude-code/cli.js'\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats, err := hudSys(context.Background())
+	if err == nil || stats.CPU != 20 || stats.MemUsed != 0 || stats.MemTotal != 0 {
+		t.Fatalf("partial system: %+v %v", stats, err)
+	}
+	args := hudNodeArgs(context.Background(), []hudProcess{{201, 1, "node"}, {202, 1, "/usr/bin/node"}, {203, 1, "claude"}})
+	if len(args) != 2 || hudNodeProvider(args[201]) != "codex" || hudNodeProvider(args[202]) != "claude" {
+		t.Fatalf("batch: %+v", args)
 	}
 }

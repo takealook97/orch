@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -147,12 +148,8 @@ func hudFindAgent(root int, procs []hudProcess, args func(int) string) (int, str
 			return pid, name
 		}
 		if name == "node" && args != nil {
-			s := args(pid)
-			if strings.Contains(s, "/codex") {
-				return pid, "codex"
-			}
-			if strings.Contains(s, "claude") {
-				return pid, "claude"
+			if provider := hudNodeProvider(args(pid)); provider != "" {
+				return pid, provider
 			}
 		}
 		for _, child := range children[pid] {
@@ -161,13 +158,73 @@ func hudFindAgent(root int, procs []hudProcess, args func(int) string) (int, str
 	}
 	return 0, ""
 }
-func hudEnvValue(raw, key string) string {
-	for _, f := range strings.Fields(raw) {
-		if strings.HasPrefix(f, key+"=") {
-			return strings.TrimPrefix(f, key+"=")
+func hudNodeProvider(raw string) string {
+	argv := hudShellSplit(raw)
+	if len(argv) < 2 {
+		return ""
+	}
+	script := argv[1]
+	switch filepath.Base(script) {
+	case "codex":
+		return "codex"
+	case "claude":
+		return "claude"
+	case "cli.js":
+		if strings.Contains(script, "/@anthropic-ai/claude-code/") || strings.HasSuffix(script, "/claude/cli.js") {
+			return "claude"
 		}
 	}
 	return ""
+}
+
+var hudEnvBoundary = regexp.MustCompile(`(?:^| )[A-Z_][A-Z0-9_]*=`)
+
+func hudEnvValue(raw, key string) string {
+	matches := hudEnvBoundary.FindAllStringIndex(strings.TrimSpace(raw), -1)
+	raw = strings.TrimSpace(raw)
+	value := ""
+	for i, m := range matches {
+		start := m[0]
+		if raw[start] == ' ' {
+			start++
+		}
+		if raw[start:m[1]] != key+"=" {
+			continue
+		}
+		end := len(raw)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		value = raw[m[1]:end]
+	}
+	return value
+}
+func hudNodeArgs(ctx context.Context, procs []hudProcess) map[int]string {
+	ids := []string{}
+	for _, p := range procs {
+		if filepath.Base(p.Comm) == "node" {
+			ids = append(ids, strconv.Itoa(p.PID))
+		}
+	}
+	out := map[int]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	raw, err := exec.CommandContext(ctx, "ps", "-o", "pid=,args=", "-p", strings.Join(ids, ",")).Output()
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err == nil {
+			out[pid] = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
+		}
+	}
+	return out
 }
 func hudDiscover(ctx context.Context, terminals string, specified bool) ([]HUDAccount, error) {
 	r, err := hudReadRegistry()
@@ -200,7 +257,15 @@ func hudDiscover(ctx context.Context, terminals string, specified bool) ([]HUDAc
 		}
 		return accounts, nil
 	}
-	if strings.TrimSpace(terminals) == "" {
+	local := []string{}
+	for _, address := range strings.Split(terminals, ",") {
+		address = strings.TrimSpace(address)
+		if address != "" && !strings.Contains(address, "/") {
+			local = append(local, address)
+		}
+	}
+	terminals = strings.Join(local, ",")
+	if terminals == "" {
 		return accounts, nil
 	}
 	raw, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,comm=").Output()
@@ -208,6 +273,7 @@ func hudDiscover(ctx context.Context, terminals string, specified bool) ([]HUDAc
 		return accounts, fmt.Errorf("ps: %w", err)
 	}
 	procs := hudParseProcesses(string(raw))
+	nodeArgs := hudNodeArgs(ctx, procs)
 	var failures []string
 	for _, address := range strings.Split(terminals, ",") {
 		address = strings.TrimSpace(address)
@@ -215,7 +281,6 @@ func hudDiscover(ctx context.Context, terminals string, specified bool) ([]HUDAc
 			continue
 		}
 		if strings.Contains(address, "/") {
-			failures = append(failures, "remote terminals unsupported")
 			continue
 		}
 		raw, err := exec.CommandContext(ctx, "hc", "get", address, "--json").Output()
@@ -230,10 +295,7 @@ func hudDiscover(ctx context.Context, terminals string, specified bool) ([]HUDAc
 			failures = append(failures, "terminal has no pid")
 			continue
 		}
-		pid, provider := hudFindAgent(terminal.PID, procs, func(pid int) string {
-			s, _ := exec.CommandContext(ctx, "ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
-			return string(s)
-		})
+		pid, provider := hudFindAgent(terminal.PID, procs, func(pid int) string { return nodeArgs[pid] })
 		if pid == 0 {
 			continue
 		}
@@ -258,18 +320,26 @@ type hudCacheEntry struct {
 	Account   HUDAccount `json:"account"`
 	FetchedAt time.Time  `json:"fetched_at"`
 	RetryAt   time.Time  `json:"retry_at,omitempty"`
+	FailAt    time.Time  `json:"fail_at,omitempty"`
+	Error     string     `json:"error,omitempty"`
 }
 type hudFetchFunc func(context.Context, string) (HUDAccount, error)
 type hudRateLimitError struct{ RetryAt time.Time }
 
 func (e *hudRateLimitError) Error() string { return "HTTP 429" }
+
+var hudFindGemini = hudGeminiBinary
+
 func hudUsage(ctx context.Context, terminals string, specified bool, age time.Duration, refresh bool) HUDUsage {
 	out := HUDUsage{At: time.Now(), Accounts: []HUDAccount{}}
 	accounts, err := hudDiscover(ctx, terminals, specified)
 	if err != nil {
 		out.Error = err.Error()
 	}
-	out.Accounts = hudCachedUsage(ctx, accounts, age, refresh, map[string]hudFetchFunc{"codex": fetchCodexUsage, "claude": fetchClaudeUsage})
+	if _, err := hudFindGemini(); err == nil {
+		accounts = append(accounts, HUDAccount{Provider: "gemini", ID: "agy", Terminals: []string{}})
+	}
+	out.Accounts = hudCachedUsage(ctx, accounts, age, refresh, map[string]hudFetchFunc{"codex": fetchCodexUsage, "claude": fetchClaudeUsage, "gemini": fetchGeminiUsage})
 	return out
 }
 func hudCachePath() string { return filepath.Join(orchHome(), "cache", "hud-usage.json") }
@@ -360,9 +430,20 @@ func hudCachedUsage(ctx context.Context, accounts []HUDAccount, age time.Duratio
 			entry, exists := cache[key]
 			mu.Unlock()
 			now := time.Now()
+			floor := hudUsageFloor(a.Provider)
 			maxAge := age
-			if a.Provider == "claude" && maxAge < 300*time.Second {
-				maxAge = 300 * time.Second
+			if maxAge < floor {
+				maxAge = floor
+			}
+			failureAge := maxAge / 2
+			if failureAge < time.Minute {
+				failureAge = time.Minute
+			}
+			if exists && !entry.FailAt.IsZero() && now.Sub(entry.FailAt) < failureAge {
+				a = hudOverlay(entry.Account, a)
+				a.Stale, a.Error = true, entry.Error
+				out[i] = a
+				return
 			}
 			if exists && now.Before(entry.RetryAt) {
 				a = hudOverlay(entry.Account, a)
@@ -371,7 +452,7 @@ func hudCachedUsage(ctx context.Context, accounts []HUDAccount, age time.Duratio
 				out[i] = a
 				return
 			}
-			if exists && !refresh && !entry.FetchedAt.IsZero() && now.Sub(entry.FetchedAt) >= 0 && now.Sub(entry.FetchedAt) < maxAge {
+			if exists && !entry.FetchedAt.IsZero() && now.Sub(entry.FetchedAt) >= 0 && (now.Sub(entry.FetchedAt) < floor || !refresh && now.Sub(entry.FetchedAt) < maxAge) {
 				a = hudOverlay(entry.Account, a)
 				a.Stale = false
 				a.Error = ""
@@ -392,15 +473,23 @@ func hudCachedUsage(ctx context.Context, accounts []HUDAccount, age time.Duratio
 				}
 				a.Stale = true
 				a.Error = hudSafeError(err)
+				entry.Account = a
+				entry.Account.Terminals = []string{}
+				entry.Error = a.Error
+				entry.RetryAt = time.Time{}
 				var rate *hudRateLimitError
 				if errors.As(err, &rate) {
-					entry.Account = a
-					entry.Account.Terminals = []string{}
+					entry.FailAt = time.Time{}
 					entry.RetryAt = rate.RetryAt
-					mu.Lock()
-					updates[key] = entry
-					mu.Unlock()
+					if entry.RetryAt.After(now.Add(time.Hour)) {
+						entry.RetryAt = now.Add(time.Hour)
+					}
+				} else {
+					entry.FailAt = now
 				}
+				mu.Lock()
+				updates[key] = entry
+				mu.Unlock()
 				out[i] = a
 				return
 			}
@@ -434,4 +523,16 @@ func hudSortCoupons(c *HUDCoupons) {
 	if len(c.Items) > 0 {
 		c.NextExpiresAt = c.Items[0].ExpiresAt
 	}
+}
+
+func hudUsageFloor(provider string) time.Duration {
+	switch provider {
+	case "codex":
+		return 15 * time.Second
+	case "claude":
+		return 120 * time.Second
+	case "gemini":
+		return 300 * time.Second
+	}
+	return 0
 }

@@ -120,20 +120,27 @@ A finished worker's pane closes even if the Head never calls `orch wait`: `orch 
 
 `orch hud sys` prints recent macOS CPU percentage and used/total physical memory.
 `orch hud panes` prints active runs, all their workers (including closed workers),
-Korean role labels, catalog model/effort, and terminal models reported by `hc ls` argv.
-Older `hc` versions without argv leave non-orch terminal model/effort empty.
+English role labels (Recon, Web, Design, Impl, Docs, Image, Integrate, Test,
+Review, QA, Adversarial, Head), catalog model/effort, and agent terminal models
+from `hc ls` identity plus `hc get` argv, including shell launch wrappers.
+Terminal detail reads run with concurrency 8 and a three-second timeout each.
 
-`orch hud usage [--terminals t1,t2] [--max-age 120s] [--refresh]` prints Codex/Claude
+`orch hud usage [--terminals t1,t2] [--max-age 120s] [--refresh]` prints Codex/Claude/Gemini
 usage windows and available Codex reset coupons. With terminals, it resolves local
 agent processes and their account homes; without terminals, it uses non-ignored CR
-registry accounts. An explicit empty `--terminals=` returns no accounts. Remote
-terminal addresses are skipped with an error field. Labels use registry email local
+registry accounts. Gemini is always included when `agy` is installed, including
+with an explicit empty `--terminals=`. Remote terminal addresses are skipped
+silently. Gemini uses `agy -p /usage --output-format json --print-timeout 20s`
+from the temporary directory and maps only the Gemini group. Labels use registry email local
 parts; credentials and full emails are never included.
 
 Usage is cached at `$ORCH_HOME/cache/hud-usage.json` (default `~/.orch/cache/`,
 mode 0600). Failed refreshes retain cached values with `stale` and `error` fields.
-Claude caches last at least five minutes; HTTP 429 respects `Retry-After` (five
-minutes if absent), including on `--refresh`. Tokens are never refreshed. All
+Minimum refresh intervals, including `--refresh`, are 15 seconds for Codex,
+120 seconds for Claude, and 300 seconds for Gemini. The usage bar requests a
+45-second Codex max-age. Other failures back off for at least 60 seconds or
+half the effective max-age. HTTP 429 respects `Retry-After` (five minutes if
+absent, capped at one hour), including on `--refresh`. Tokens are never refreshed. All
 three commands emit JSON and exit 0 on operational/partial errors; bad arguments
 exit 2. Usage requests have a 25-second overall budget.
 

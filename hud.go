@@ -118,8 +118,12 @@ func hudSys(ctx context.Context) (SysStats, error) {
 	}
 	raw, err = exec.CommandContext(ctx, "sysctl", "-n", "hw.memsize").Output()
 	if err != nil {
+		s.MemUsed = 0
 		return s, fmt.Errorf("sysctl: %w", err)
 	}
 	s.MemTotal, err = strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		s.MemUsed = 0
+	}
 	return s, err
 }
