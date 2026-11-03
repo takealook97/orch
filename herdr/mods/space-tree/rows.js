@@ -49,7 +49,7 @@ export function treeRow(view, row, t) {
   if (row.kind === "tab") main.child(div().text_size(11).text_color(t.dim).child(String(row.count)));
   if (row.badge) main.child(div().flex_none().px(3).rounded(4).text_size(10)
     .when(view.orchStale, el => el.opacity(0.5))
-    .text_color(row.kind === "space" ? t.accent : t.dim).child(row.badge));
+    .text_color(t.dim).child(row.badge));
   if (row.kind === "machine") {
     const machine = view.machines.find(m => m.name === row.id) ?? view.reconnecting[row.id]?.machine;
     const repair = view.reconnecting[row.id];

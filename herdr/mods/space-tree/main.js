@@ -97,6 +97,17 @@ export default class SpaceTree extends Plumbing {
       else setShared(aliasKey("pane", address), null);
     }
     if (kept.length !== known.length) setShared("space-tree.alias.pane.keys", kept);
+    const storedMachines = shared("space-tree.alias.machine.keys") ?? [];
+    // Enroll aliases created before the machine-key registry was introduced.
+    const machineKeys = [...new Set([...storedMachines, ...input.machines
+      .map(m => m.name ?? "local").filter(name => shared(aliasKey("machine", name)))])];
+    const liveMachines = new Set(["local", ...machines().map(m => m.name)]);
+    const keptMachines = machineKeys.filter(name => {
+      if (liveMachines.has(name)) return true;
+      setShared(aliasKey("machine", name), null);
+      return false;
+    });
+    if (JSON.stringify(keptMachines) !== JSON.stringify(storedMachines)) setShared("space-tree.alias.machine.keys", keptMachines);
   }
 
   select(row, cx) {
@@ -136,7 +147,7 @@ export default class SpaceTree extends Plumbing {
       this.highlight = rows[Math.max(0, Math.min(rows.length - 1, at + (e.key === "up" ? -1 : 1)))].key;
     } else if (e.key === "left" || e.key === "right") this.toggle(row, cx, e.key === "right");
     else if (e.key === "enter") this.select(row, cx);
-    else if (e.key === "f2" && renameId(row) != null) startRename(this, row.kind, renameId(row), row.name, cx);
+    else if (e.key === "f2" && renameId(row) != null) startRename(this, row.kind, renameId(row), row.data?.named ? row.data.name : row.name, cx, row.data?.named);
     else return;
     cx.stop_propagation(); cx.notify();
   }
@@ -164,7 +175,7 @@ export default class SpaceTree extends Plumbing {
         .child(button("expand-all", "chevron-down", "Expand all", (_e, cx) => this.foldAll(false, cx)))
         .child(button("collapse-all", "chevron-right", "Collapse all", (_e, cx) => this.foldAll(true, cx)))
         .child(button("new-space", "plus", "New space", () => run("space.new"))))
-      .child(v_flex().flex_1().min_h(0).px(4).pb(10).overflow_y_scrollbar().mode("always")
+      .child(v_flex().id("tree-list").flex_1().min_h(0).px(4).pb(10).overflow_y_scroll()
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
         .children(this.visible.map(row => treeRow(this, row, t))));
   }

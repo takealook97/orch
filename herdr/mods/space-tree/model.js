@@ -27,13 +27,24 @@ export function paneName(pane, indexInTab = 0, orchIndex = {}, aliases = {}) {
   const worker = orchIndex.workers?.[pane.terminal];
   if (worker) return [worker.label, worker.name].filter(Boolean).join(" · ");
   if (orchIndex.heads?.[pane.terminal]) return "Head";
-  return `${indexInTab === 0 ? "main" : `sub ${indexInTab}`} · ${programName(pane)}`;
+  return programName(pane);
 }
 
-export function paneSub(pane, orchIndex = {}) {
-  const info = orchIndex.workers?.[pane.terminal] ?? orchIndex.terminals?.[pane.terminal];
-  const model = [info?.model, info?.effort].filter(Boolean).join(" ");
-  return [model || programName(pane), pane.status || "idle"].join(" · ");
+export function paneSub(pane, orchIndex = {}, indexInTab = 0) {
+  const worker = orchIndex.workers?.[pane.terminal];
+  const info = worker?.model ? worker : orchIndex.terminals?.[pane.terminal];
+  const model = info?.model ? [info.model, info.effort].filter(Boolean).join(" ") : "";
+  return [model || (indexInTab === 0 ? "main" : `sub ${indexInTab}`), pane.status || "idle"].join(" · ");
+}
+
+// Actions omit the target id so callers can attach their space/tab id or alias key.
+export function renameAction(kind, original, value, named = false) {
+  const name = value.trim();
+  // Original is the prefilled custom name (named), alias, or displayed auto name.
+  // An untouched auto name must remain automatic, just like an untouched custom name.
+  if (name === original) return null;
+  if (kind === "space" || kind === "tab") return { command: `${kind}.rename`, args: { name } };
+  return { alias: kind, value: name || null };
 }
 
 // true means folded. Explicit stored values always override these defaults.
@@ -47,6 +58,7 @@ export function pruneFolded(folded = {}, liveIds) {
 
 export function buildTree({ machines = [], spaces = [], panes = [], orch = {}, aliases = {},
   folded = {}, activeSpaceId } = {}) {
+  activeSpaceId ??= spaces.map(e => e.w ?? e).find(s => s.active)?.id;
   const index = orchIndexes(orch), result = [];
   // Accept shipped ordered() entries ({w,i,g,tree}) or explicit {parentId}.
   let parent = null;
@@ -66,21 +78,20 @@ export function buildTree({ machines = [], spaces = [], panes = [], orch = {}, a
   };
   const addSpace = (s, depth, guide = "") => {
     const row = emit("space", s.id, depth, { name: s.name, status: s.status, guide,
-      active: s.active, data: s, badge: index.workspaces.has(s.id) ? "orch" : "" });
-    if (!row.open) return;
+      active: s.id === activeSpaceId, data: s });
     const children = entries.filter(c => c.parentId === s.id);
-    const tabs = s.tabs ?? [];
+    const tabs = row.open ? s.tabs ?? [] : [];
     tabs.forEach((tab, ti) => {
       const ps = panes.filter(p => p.tab === tab.id), run = index.tabs[tab.id];
       const tr = emit("tab", tab.id, depth + 1, { name: tab.name, data: tab, space: s.id,
         guide: ti === tabs.length - 1 && !children.length ? "└" : "├", count: ps.length,
-        status: tab.status, active: tab.active,
+        status: tab.status, active: !!tab.active && s.id === activeSpaceId,
         badge: run ? `orch ${run.mode} · ${run.done}/${run.total}` : "" });
       if (!tr.open) return;
       ps.forEach((pane, pi) => emit("pane", pane.pane, depth + 2, {
-        name: paneName(pane, pi, index, aliases), sub: paneSub(pane, index),
+        name: paneName(pane, pi, index, aliases), sub: paneSub(pane, index, pi),
         orch: !!(index.workers[pane.terminal] || index.heads[pane.terminal]),
-        data: pane, terminal: pane.terminal, status: pane.status, active: pane.focused,
+        data: pane, terminal: pane.terminal, status: pane.status, active: !!pane.focused && s.id === activeSpaceId,
         guide: pi === ps.length - 1 ? "└" : "├" }));
     });
     children.forEach((child, i) => addSpace(child, depth + 1, i === children.length - 1 ? "└" : "├"));
