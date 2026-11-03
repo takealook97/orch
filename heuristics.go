@@ -85,14 +85,20 @@ const screenTailLines = 12
 // Tool output is a line starting with │ or └, plus the indented lines that follow one or
 // follow a "• Ran" header, until a line starts at column zero again.
 func tailLines(s string) []string {
-	var kept []string
-	inTool := false
+	var window []string
 	for _, raw := range strings.Split(s, "\n") {
-		line := strings.TrimRight(raw, " \t\r")
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
+		if line := strings.TrimRight(raw, " \t\r"); strings.TrimSpace(line) != "" {
+			window = append(window, line)
 		}
+	}
+	if len(window) > screenTailLines {
+		window = window[len(window)-screenTailLines:]
+	}
+	var kept []string
+	// The tool block may have started above the window: leading indented lines belong to it.
+	inTool := len(window) > 0 && (window[0][0] == ' ' || window[0][0] == '\t')
+	for _, line := range window {
+		trimmed := strings.TrimSpace(line)
 		indented := line[0] == ' ' || line[0] == '\t'
 		switch {
 		case strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "└"):
@@ -106,9 +112,6 @@ func tailLines(s string) []string {
 			continue
 		}
 		kept = append(kept, trimmed)
-	}
-	if len(kept) > screenTailLines {
-		kept = kept[len(kept)-screenTailLines:]
 	}
 	return kept
 }

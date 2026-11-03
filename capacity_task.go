@@ -52,6 +52,23 @@ func latestSessionID(raw []byte) string {
 	return latest
 }
 
+// jsonErrorCapacity reports whether an error-type JSON event carries a capacity marker.
+func jsonErrorCapacity(raw []byte) bool {
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		var ev map[string]any
+		if json.Unmarshal(line, &ev) != nil {
+			continue
+		}
+		_, hasErr := ev["error"]
+		if typ, _ := ev["type"].(string); typ == "error" || typ == "turn.failed" || hasErr {
+			if containsMarker([]string{string(line)}, capacityMarkers) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // capacityPause remains signal-aware during long backoffs.
 func capacityPause(d time.Duration) bool {
 	sigs := make(chan os.Signal, 1)
@@ -95,6 +112,10 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 			sessionID = id
 		}
 		if err != nil || res.Timed || res.Interrupted || quotaText(string(raw)) || !capacityText(string(raw)) {
+			return
+		}
+		// A clean exit with answer text that merely mentions capacity is a success.
+		if res.Code == 0 && !jsonErrorCapacity(raw) {
 			return
 		}
 		if m.Kind == "agy" || sessionID == "" || t.CapacityRetries >= capacityMaxRetries() {

@@ -163,6 +163,9 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 
 				if readErr == nil && (info.Status == "idle" || info.Status == "done") {
 					capacityWaiting[name] = capacityText(text)
+					if !capacityWaiting[name] {
+						noteCapacityRecovered(runID, w)
+					}
 					if capacityWaiting[name] {
 						acted, exhausted, resumeErr := resumeOnCapacity(runID, w, text)
 						if resumeErr != nil {
@@ -192,6 +195,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				}
 			}
 			if info.Status == "working" {
+				noteCapacityRecovered(runID, w)
 				delete(capacityWaiting, name)
 			}
 			if capacityWaiting[name] {
@@ -302,6 +306,11 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 	critics := criticsOf(r, w.Reviews)
 	key, account := "", fallbackAccount(w)
 	var exclude []string
+	// Keys of an exhausted CLI kind stay in the lineage so later fallbacks never return to it.
+	tried := w.Tried
+	if sameKindSpent && w.Purpose != "" {
+		tried = withoutKind(w.Purpose, w.Kind, tried)
+	}
 	if !sameKindSpent && envOrch("ACCOUNT_CMD") != "" && w.Account != "" && w.Account != "cr" {
 		// Exclude every account this key has already used in the lineage.
 		exclude = append(slices.Clone(w.TriedAccounts), w.Account)
@@ -316,10 +325,6 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 		purpose := w.Purpose
 		if purpose == "" {
 			return "", fmt.Errorf("%s: purpose missing; cannot choose fallback chain", name)
-		}
-		tried := w.Tried
-		if sameKindSpent {
-			tried = withoutKind(purpose, w.Kind, tried)
 		}
 		m, ok := nextFallback(purpose, w.Key, w.Role, authors, critics, tried)
 		if !ok {
@@ -352,7 +357,7 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 	nw, err := spawn(spawnOpts{
 		Run: runID, Key: key, Name: newName, Role: w.Role, Purpose: w.Purpose, Reviews: w.Reviews,
 		AuthorFamilies: nil, Cwd: w.Cwd, Worktree: w.Worktree, Account: account, Exclude: exclude,
-		Tried: w.Tried, TriedAccounts: exclude, Fallback: name,
+		Tried: tried, TriedAccounts: exclude, Fallback: name,
 	})
 	if err != nil {
 		return "", err

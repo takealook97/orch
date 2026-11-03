@@ -16,7 +16,7 @@ import (
 
 type Worker struct {
 	CapacityRetries int       `json:"capacity_retries,omitempty"`
-	LastResume      time.Time `json:"last_resume,omitempty"`
+	CapacitySeen    time.Time `json:"capacity_seen,omitempty"`
 	ModelID         string    `json:"model_id,omitempty"`
 	Terminal        string    `json:"terminal,omitempty"`
 	Name            string    `json:"name"`

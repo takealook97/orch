@@ -87,10 +87,10 @@ func startInline(runID string, d Dag, st *dagState, n *DagNode, budget time.Dura
 				done <- res.inlineResult
 				return
 			}
-			skip := tried
 			if res.sameKindSpent {
-				skip = withoutKind(purpose, m.Kind, tried)
+				tried = withoutKind(purpose, inlineRanKind(t.Key, m.Kind), tried)
 			}
+			skip := tried
 			next, ok := nextFallback(purpose, t.Key, n.Role, authors, critics, skip)
 			if !ok {
 				done <- res.inlineResult
@@ -106,6 +106,14 @@ func startInline(runID string, d Dag, st *dagState, n *DagNode, budget time.Dura
 		}
 	}()
 	return nil
+}
+
+// inlineRanKind is the CLI kind of the key that just ran, or the node's kind if it is unknown.
+func inlineRanKind(key, fallbackKind string) string {
+	if m, err := modelByKey(key); err == nil {
+		return m.Kind
+	}
+	return fallbackKind
 }
 
 // inlineLane applies the lane family rules spawn would, using the workers the node reviews,

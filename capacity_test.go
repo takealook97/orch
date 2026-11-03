@@ -83,14 +83,14 @@ func TestCapacityReservationAndConcurrency(t *testing.T) {
 		t.Fatalf("first detection: %v %v %v", act, ex, err)
 	}
 	got, _ := loadRun(r.ID)
-	if got.worker("b").LastResume.IsZero() || got.worker("b").CapacityRetries != 0 {
+	if got.worker("b").CapacitySeen.IsZero() || got.worker("b").CapacityRetries != 0 {
 		t.Fatal("detection did not start backoff")
 	}
 	act, _, _ = resumeOnCapacity(r.ID, w, capacityScreen)
 	if act {
 		t.Fatal("sent inside initial backoff")
 	}
-	_ = withRun(r.ID, func(x *Run) error { x.worker("b").LastResume = time.Now().Add(-time.Hour); return nil })
+	_ = withRun(r.ID, func(x *Run) error { x.worker("b").CapacitySeen = time.Now().Add(-time.Hour); return nil })
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
@@ -107,7 +107,12 @@ func TestCapacityReservationAndConcurrency(t *testing.T) {
 	if sends.Load() != 1 || got.worker("b").CapacityRetries != 1 {
 		t.Fatalf("sends=%d worker=%+v", sends.Load(), got.worker("b"))
 	}
-	if !strings.Contains(got.Events[len(got.Events)-1].What, "capacity: resume 1/8 after 20s") {
+	// The loser of the race starts a new incident, so the resume is not necessarily last.
+	resumed := false
+	for _, e := range got.Events {
+		resumed = resumed || strings.Contains(e.What, "capacity: resume 1/8 after 20s")
+	}
+	if !resumed {
 		t.Fatal(got.Events)
 	}
 }
@@ -137,7 +142,7 @@ func TestWaitCapacitySurvivesIdleAndExhausts(t *testing.T) {
 
 func TestReaperCapacityAndQuotaPriority(t *testing.T) {
 	r, w, sends := capacityFixture(t)
-	_ = withRun(r.ID, func(x *Run) error { x.worker(w.Name).LastResume = time.Now().Add(-time.Hour); return nil })
+	_ = withRun(r.ID, func(x *Run) error { x.worker(w.Name).CapacitySeen = time.Now().Add(-time.Hour); return nil })
 	rp := newReaper(r.ID)
 	var log strings.Builder
 	if _, err := rp.once(&log); err != nil {
@@ -151,7 +156,7 @@ func TestReaperCapacityAndQuotaPriority(t *testing.T) {
 		t.Fatal("wait and reaper both sent")
 	}
 	t.Setenv("ORCH_CAPACITY_RETRIES", "1")
-	_ = withRun(r.ID, func(x *Run) error { x.worker(w.Name).LastResume = time.Now().Add(-time.Hour); return nil })
+	_ = withRun(r.ID, func(x *Run) error { x.worker(w.Name).CapacitySeen = time.Now().Add(-time.Hour); return nil })
 	if _, err := rp.once(&log); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +329,7 @@ func TestCapacityAppDelivery(t *testing.T) {
 	_ = withRun(r.ID, func(x *Run) error {
 		live := x.worker(w.Name)
 		live.Terminal = "term-b"
-		live.LastResume = time.Now().Add(-time.Hour)
+		live.CapacitySeen = time.Now().Add(-time.Hour)
 		return nil
 	})
 	acted, ex, err := resumeOnCapacity(r.ID, w, capacityScreen)
@@ -339,7 +344,7 @@ func TestCapacityNoResumeAfterResultOrForAgy(t *testing.T) {
 			r, w, sends := capacityFixture(t)
 			_ = withRun(r.ID, func(x *Run) error {
 				live := x.worker(w.Name)
-				live.LastResume = time.Now().Add(-time.Hour)
+				live.CapacitySeen = time.Now().Add(-time.Hour)
 				if mode == "agy" {
 					live.Kind = "agy"
 				}
