@@ -19,7 +19,7 @@ export default class UsageBar extends View {
     this.applyContext(this.context(), cx);
     this.refresh('sys', cx);
     this.refresh('usage', cx);
-    cx.timer.every(3000, cx => this.refresh('sys', cx));
+    cx.timer.every(1000, cx => this.refresh('sys', cx));
     cx.timer.every(60000, cx => this.refresh('usage', cx));
   }
 
@@ -53,6 +53,7 @@ export default class UsageBar extends View {
     const args = ['hud', kind === 'sys' ? 'sys' : 'usage'];
     if (kind === 'usage') args.push('--selected', '--max-age', '45s');
     cx.spawn(async cx => {
+      let quiet = false;
       try {
         const result = await exec(ORCH, args);
         if (result.code !== 0) throw new Error('orch hud unavailable');
@@ -68,13 +69,16 @@ export default class UsageBar extends View {
             weekly: account.weekly ?? prior.weekly,
             coupons: account.coupons ?? prior.coupons, stale: true } : account;
         });
+        const before = kind === 'sys' ? sysSignature(this.sys, this.stale.sys) : null;
         this[kind] = data;
         this.stale[kind] = false;
+        // A 1 s sys poll redraws the window only when a shown number changes.
+        if (kind === 'sys' && sysSignature(data, false) === before) quiet = true;
       } catch (_error) {
         this.stale[kind] = true;
       } finally {
         delete this.busy[kind];
-        cx.notify();
+        if (!quiet) cx.notify();
         const pending = this.request[kind];
         delete this.request[kind];
         if (pending) this.refresh(kind, cx);
@@ -141,4 +145,10 @@ export default class UsageBar extends View {
       .child(h_flex().flex_1().min_w(0))
       .child(system);
   }
+}
+
+function sysSignature(sys, stale) {
+  if (!sys) return '';
+  return [Math.round(sys.cpu_pct), Math.round(sys.mem_used_bytes / sys.mem_total_bytes * 100),
+    (sys.mem_used_bytes / 2 ** 30).toFixed(0), stale].join('|');
 }

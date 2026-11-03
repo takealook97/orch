@@ -78,7 +78,7 @@ function harness() {
 
 test('poll intervals and selected account arguments', async () => {
   const h = harness(); await h.flush();
-  assert.deepEqual(h.intervals.map(job => job.ms), [3000, 60000]);
+  assert.deepEqual(h.intervals.map(job => job.ms), [1000, 60000]);
   assert.deepEqual(h.calls.filter(args => args[1] === 'usage'), [['hud', 'usage', '--selected', '--max-age', '45s']]);
 });
 
