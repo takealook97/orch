@@ -26,10 +26,11 @@ export function groupLabel(t, account, compact) {
 }
 export function systemRow(t, label, pct, detail, hideBar) {
   const known = Number.isFinite(pct);
+  // Fixed columns keep the card from resizing as the digits change every second.
   return h_flex().flex_none().items_center().gap(4).text_size(10.8)
-    .child(div().w(26).text_color(t.dim).child(label))
-    .child(div().w(30).font_semibold().text_color(known ? roleColor(t, pct) : t.dim)
+    .child(div().w(28).flex_none().text_color(t.dim).child(label))
+    .child(h_flex().w(32).flex_none().justify_end().font_semibold().text_color(known ? roleColor(t, pct) : t.dim)
       .child(known ? `${Math.round(pct)}%` : '—'))
-    .when(known && !hideBar, el => el.child(progress(t, pct, 32)))
-    .child(div().text_color(t.dim).child(detail));
+    .when(!hideBar, el => el.child(known ? progress(t, pct, 32) : div().w(32).flex_none()))
+    .child(h_flex().w(56).flex_none().justify_end().text_color(t.dim).child(detail));
 }
