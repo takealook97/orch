@@ -2,6 +2,7 @@ import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { run, shared } from "herdr";
 import { nameElement } from "./rename.js";
+import { tabIconColor } from "./model.js";
 
 const asset = name => `mods/space-tree/${name}.svg`;
 const tone = (t, status) => t[status] ?? t.dim;
@@ -17,7 +18,7 @@ function icon(row, t) {
       .items_center().justify_center().text_size(10.5).font_bold()
       .text_color(t.accent_foreground).child([...row.name][0]?.toUpperCase() ?? "?");
   }
-  if (row.kind === "tab") return div().w(14).text_color(t.dim).child("▤");
+  if (row.kind === "tab") return svg(asset("tab")).size(13).flex_none().text_color(t[tabIconColor(row.status, row.active)]);
   const program = row.data.program;
   if (program?.icon) return program.tint ? svg(program.icon).size(14).flex_none().text_color(t.muted) : image(program.icon).size(14).flex_none();
   return div().w(14).text_color(t.dim).child("›_");

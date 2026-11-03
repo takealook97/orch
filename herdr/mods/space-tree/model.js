@@ -1,3 +1,5 @@
+export const tabIconColor = (status, active) => active ? "foreground" : status === "working" || status === "blocked" ? status : "muted";
+
 // Pure tree projection. Git ordering/linked parent information comes from spaces.
 export const machineId = name => `machine:${name ?? ""}`;
 export const rowId = (kind, id) => `${kind}:${id}`;
