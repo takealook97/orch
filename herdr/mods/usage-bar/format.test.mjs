@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pctColorRole, formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode, cellWidth, labelWidth } from './format.js';
+const couponText = iso => { const d = new Date(iso); return `~${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 process.env.TZ = 'Asia/Seoul';
 const now = new Date('2026-11-03T13:00:00+09:00');
@@ -26,19 +27,19 @@ test('calendar and coupon dates use local time in a non-KST timezone', () => {
   try {
     process.env.TZ = 'America/Los_Angeles';
     assert.equal(formatReset('2026-11-10T01:59:00Z', now), '11/9 17:59');
-    assert.deepEqual(formatCouponExpiry('2026-12-01T00:00:00Z', now), { text: 'until 11/30', urgent: false });
+    assert.deepEqual(formatCouponExpiry('2026-12-01T00:00:00Z', now), { text: couponText('2026-12-01T00:00:00Z'), urgent: false });
     // Calendar days stay consecutive across the spring DST change.
     const beforeDST = new Date('2027-03-13T12:00:00-08:00');
-    assert.equal(formatCouponExpiry('2027-03-15T12:00:00-07:00', beforeDST).text, 'D-2');
+    assert.equal(formatCouponExpiry('2027-03-15T12:00:00-07:00', beforeDST).urgent, true);
   } finally { process.env.TZ = original; }
 });
 test('coupon expiry handles urgency and absent coupons', () => {
   for (const [iso, expected] of [
-    ['2026-12-01T00:00:00+09:00', { text: 'until 12/1', urgent: false }],
-    ['2026-11-05T00:00:00+09:00', { text: 'D-2', urgent: true }],
-    ['2026-11-06T13:00:00+09:00', { text: 'D-3', urgent: true }],
-    ['2026-11-06T13:00:01+09:00', { text: 'until 11/6', urgent: false }],
-    ['2026-11-02T00:00:00+09:00', { text: 'D-0', urgent: true }],
+    ['2026-12-01T00:00:00+09:00', { text: couponText('2026-12-01T00:00:00+09:00'), urgent: false }],
+    ['2026-11-05T00:00:00+09:00', { text: couponText('2026-11-05T00:00:00+09:00'), urgent: true }],
+    ['2026-11-06T13:00:00+09:00', { text: couponText('2026-11-06T13:00:00+09:00'), urgent: true }],
+    ['2026-11-06T13:00:01+09:00', { text: couponText('2026-11-06T13:00:01+09:00'), urgent: false }],
+    ['2026-11-02T00:00:00+09:00', { text: couponText('2026-11-02T00:00:00+09:00'), urgent: true }],
     [null, { text: '—', urgent: false }], ['invalid', { text: '—', urgent: false }],
   ]) assert.deepEqual(formatCouponExpiry(iso, now), expected);
 });

@@ -14,8 +14,7 @@ export function formatReset(iso, now = new Date()) {
 export function formatCouponExpiry(iso, now = new Date()) {
   const expires = new Date(iso);
   if (!iso || !Number.isFinite(expires.getTime())) return { text: '—', urgent: false };
-  if (expires - now <= 3 * dayMS) return { text: `D-${Math.max(0, day(expires) - day(now))}`, urgent: true };
-  return { text: `until ${expires.getMonth() + 1}/${expires.getDate()}`, urgent: false };
+  return { text: `~${expires.getMonth() + 1}/${expires.getDate()} ${clock(expires)}`, urgent: expires - now <= 3 * dayMS };
 }
 export function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return '—';
