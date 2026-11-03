@@ -119,56 +119,7 @@ The Head tab holds at most terminal height / `ORCH_MIN_ROW_HEIGHT` (default 2) w
 
 A finished worker's pane closes even if the Head never calls `orch wait`: `orch spawn` starts one reaper per run (`orch __reap`, log in `~/.orch/runs/<id>/reaper.log`) that closes a pane once its result file has a status line and the agent has stopped working, then exits when the run has no live workers.
 
-## Herdr HUD data
-
-`orch hud sys` prints recent macOS/Linux CPU percentage and used/total physical memory.
-`orch hud panes` prints active runs, all their workers (including closed workers),
-English role labels (Recon, Web, Design, Impl, Docs, Image, Integrate, Test,
-Review, QA, Adversarial, Head), catalog model/effort, and agent terminal models
-from `hc ls` identity plus `hc get` argv, including shell launch wrappers.
-Terminal detail reads run with concurrency 8 and a three-second timeout each.
-
-`orch hud usage [--terminals t1,t2 | --selected] [--max-age 120s] [--refresh]` prints Codex/Claude/Gemini
-usage windows and available Codex reset coupons. With terminals, it resolves local
-agent processes and their account homes; without terminals, it uses non-ignored CR
-registry accounts. Gemini is always included when `agy` is installed, including
-with an explicit empty `--terminals=`. Remote terminal addresses are skipped
-silently. Gemini uses `agy -p /usage --output-format json --print-timeout 20s`
-from the temporary directory and maps only the Gemini group. Labels use registry email local
-parts; credentials and full emails are never included.
-
-`--selected` re-reads the CR registry on every call and selects one ready, non-ignored
-account per provider using CR's custom rank or plan/capacity ordering, followed by
-Gemini when installed. Each returned account has `"selected": true`; providers
-without a usable account are omitted. It cannot be combined with `--terminals`.
-Selection uses the registry snapshot; CR may refresh stale probes before launching,
-so a subsequent launch can choose differently. Elapsed reset times alone do not
-restore exhausted registry quotas. When no CR registry exists, it discovers default
-Codex (~/.codex/auth.json plus an installed codex binary) and Claude (an installed
-claude binary, using its default keychain or ~/.claude/.credentials.json). Labels
-use local email hints from Codex JWT claims or ~/.claude.json when available;
-otherwise they are empty. An existing empty registry still means no CR accounts.
-
-`make herdr-remote` cross-builds a CGO-free HUD helper once per connected platform
-and installs it at `$HOME/.local/libexec/orch-hud` on each connected Herdr machine.
-Supported targets are macOS arm64 and Linux amd64/arm64. It requires local Go,
-`hc`, and Python 3; it leaves remote orch checkouts untouched. Each install is
-verified with `hud sys`; failures are summarized per machine and the command exits
-nonzero after attempting the remaining machines. Use
-`make herdr-remote ARGS="--dry-run"` to print install commands (only machine listing
-and `uname -sm` are executed), or `make herdr-remote ARGS="oorung petasos"` to limit
-the destination machines. Unknown or disconnected requested names fail explicitly;
-unsupported platforms are skipped.
-
-Usage is cached at `$ORCH_HOME/cache/hud-usage.json` (default `~/.orch/cache/`,
-mode 0600). Failed refreshes retain cached values with `stale` and `error` fields.
-Minimum refresh intervals, including `--refresh`, are 15 seconds for Codex,
-120 seconds for Claude, and 300 seconds for Gemini. The usage bar requests a
-45-second Codex max-age. Other failures back off for at least 60 seconds or
-half the effective max-age. HTTP 429 respects `Retry-After` (five minutes if
-absent, capped at one hour), including on `--refresh`. Tokens are never refreshed. All
-three commands emit JSON and exit 0 on operational/partial errors; bad arguments
-exit 2. Usage requests have a 25-second overall budget.
+The Herdr cockpit is available at https://github.com/takealook97/herdr-cockpit.
 
 ## Development
 
