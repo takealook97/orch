@@ -58,8 +58,12 @@ func modelArgs(m Model) ([]string, error) {
 	}
 	args := []string{"--model", id}
 	if m.Kind == "claude" {
-		id, suffix := claudeModelArgs(id)
-		args = []string{"--model", id}
+		cliID, suffix := claudeModelArgs(id)
+		args = []string{"--model", cliID}
+		if suffix == "" && id != m.Default {
+			// An override without an effort (CLAUDE_HIGH_M=opus) keeps the key's default effort.
+			_, suffix = claudeModelArgs(m.Default)
+		}
 		if suffix != "" {
 			return append(args, "--effort", suffix), nil
 		}

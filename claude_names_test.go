@@ -43,3 +43,27 @@ func TestManifestRejectsClaudeEffortConflict(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestClaudeEnvOverrideKeepsDefaultEffort(t *testing.T) {
+	for _, tc := range []struct{ env, want string }{
+		{"opus", "--model opus --effort medium"},
+		{"claude-opus-5-5", "--model claude-opus-5-5 --effort medium"},
+		{"opus-5.5-high", "--model claude-opus-5-5 --effort high"},
+		{"opus-5.5", "--model claude-opus-5-5 --effort medium"},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv("CLAUDE_HIGH_M", tc.env)
+			m, err := modelByKey("claude-high-m")
+			if err != nil {
+				t.Fatal(err)
+			}
+			args, err := modelArgs(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(args, " "); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
