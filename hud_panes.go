@@ -323,14 +323,14 @@ func hudResolveClaudeModels(ctx context.Context, out *HUDPanes) {
 	procs := hudParseProcesses(string(raw))
 	nodeArgs := hudNodeArgs(ctx, procs)
 	type result struct {
-		index int
-		model string
+		index         int
+		model, effort string
 	}
 	results := make(chan result, len(indices))
 	for _, i := range indices {
 		go func(i int, address string) {
-			model := ""
-			defer func() { results <- result{i, model} }()
+			model, effort := "", ""
+			defer func() { results <- result{i, model, effort} }()
 			raw, err := exec.CommandContext(ctx, "hc", "get", address, "--json").Output()
 			if err != nil {
 				return
@@ -350,7 +350,7 @@ func hudResolveClaudeModels(ctx context.Context, out *HUDPanes) {
 			if err != nil || ctx.Err() != nil {
 				return
 			}
-			model = hudClaudeTranscriptModel(hudEnvValue(string(raw), "CLAUDE_CONFIG_DIR"), pid)
+			model, effort = hudClaudeTranscript(hudEnvValue(string(raw), "CLAUDE_CONFIG_DIR"), pid)
 		}(i, out.Terminals[i].Address)
 	}
 	for range indices {
@@ -358,6 +358,9 @@ func hudResolveClaudeModels(ctx context.Context, out *HUDPanes) {
 		case r := <-results:
 			if r.model != "" {
 				hudApplyClaudeModel(out, out.Terminals[r.index].Address, r.model)
+			}
+			if r.effort != "" {
+				hudApplyClaudeEffort(out, out.Terminals[r.index].Address, r.effort)
 			}
 		case <-ctx.Done():
 			return
@@ -380,6 +383,22 @@ func hudApplyClaudeModel(out *HUDPanes, terminal, model string) {
 			w := &out.Runs[i].Workers[j]
 			if w.Terminal == terminal {
 				w.Model = model
+			}
+		}
+	}
+}
+
+// hudApplyClaudeEffort records the session's live effort; it wins over the catalog default.
+func hudApplyClaudeEffort(out *HUDPanes, terminal, effort string) {
+	for i := range out.Terminals {
+		if out.Terminals[i].Address == terminal {
+			out.Terminals[i].Effort = effort
+		}
+	}
+	for i := range out.Runs {
+		for j := range out.Runs[i].Workers {
+			if w := &out.Runs[i].Workers[j]; w.Terminal == terminal {
+				w.Effort = effort
 			}
 		}
 	}

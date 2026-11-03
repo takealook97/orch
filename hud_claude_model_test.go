@@ -13,8 +13,8 @@ import (
 
 func TestHUDModelDisplay(t *testing.T) {
 	for id, want := range map[string]string{
-		"claude-opus-5-5": "opus 5.5", "claude-sonnet-5-5": "sonnet 5.5",
-		"claude-haiku-5-5-20261001": "haiku 5.5", "claude-fable-5-1": "fable 5.1",
+		"claude-opus-5-5": "opus-5.5", "claude-sonnet-5-5": "sonnet-5.5",
+		"claude-haiku-5-5-20261001": "haiku-5.5", "claude-fable-5-1": "fable-5.1",
 		"gpt-6.1-sol": "gpt-6.1-sol", "opus": "opus", "claude-opus-4-20250514": "opus-4",
 	} {
 		if got := hudModelDisplay(id); got != want {
@@ -94,17 +94,17 @@ func TestHUDClaudeLiveOverride(t *testing.T) {
 	t.Setenv("FIXTURE_HOME", home)
 	out := HUDPanes{Terminals: []HUDTerminal{{Address: "t1", Program: "claude-code", Model: "sonnet"}}, Runs: []HUDRun{{Workers: []HUDWorker{{Terminal: "t1", Model: "opus", Effort: "high"}, {Terminal: "t2", Model: "catalog-fallback"}}}}}
 	hudResolveClaudeModels(context.Background(), &out)
-	if got := out.Terminals[0].Model; got != "opus 5.5" {
+	if got := out.Terminals[0].Model; got != "opus-5.5" {
 		t.Fatalf("terminal: %q", got)
 	}
-	if got := out.Runs[0].Workers[0]; got.Model != "opus 5.5" || got.Effort != "high" {
+	if got := out.Runs[0].Workers[0]; got.Model != "opus-5.5" || got.Effort != "high" {
 		t.Fatalf("worker: %+v", got)
 	}
 	if got := out.Runs[0].Workers[1].Model; got != "catalog-fallback" {
 		t.Fatalf("other worker: %q", got)
 	}
 	hudApplyClaudeModel(&out, "t1", "")
-	if out.Runs[0].Workers[0].Model != "opus 5.5" {
+	if out.Runs[0].Workers[0].Model != "opus-5.5" {
 		t.Fatal("empty model replaced fallback")
 	}
 
@@ -115,7 +115,7 @@ func TestHUDClaudeLiveOverride(t *testing.T) {
 	}
 	hudResolveClaudeModels(context.Background(), &bounded)
 	for i, terminal := range bounded.Terminals {
-		want := "opus 5.5"
+		want := "opus-5.5"
 		if i == 12 {
 			want = "sonnet"
 		}
@@ -167,5 +167,28 @@ func writeHUDClaudeSession(t *testing.T, home string, pid int, id, cwd string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), raw, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHUDClaudeTranscriptEffort(t *testing.T) {
+	home := t.TempDir()
+	cwd := "/tmp/effort"
+	dir := filepath.Join(home, "projects", "-tmp-effort")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeHUDClaudeSession(t, home, 201, "s", cwd)
+	lines := "{\"effort\":\"medium\"}\n{\"message\":{\"model\":\"claude-opus-5-5\"}}\n{\"perTurnEffort\":\"high\",\"effort\":\"high\"}\n{\"type\":\"user\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "s.jsonl"), []byte(lines), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, effort := hudClaudeTranscript(home, 201)
+	if model != "claude-opus-5-5" || effort != "high" {
+		t.Fatalf("got %q %q, want claude-opus-5-5 high", model, effort)
+	}
+	out := HUDPanes{Terminals: []HUDTerminal{{Address: "t1"}}}
+	hudApplyClaudeEffort(&out, "t1", "high")
+	if out.Terminals[0].Effort != "high" {
+		t.Fatalf("terminal effort %q", out.Terminals[0].Effort)
 	}
 }

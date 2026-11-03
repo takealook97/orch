@@ -27,16 +27,17 @@ export function paneName(pane, indexInTab = 0, orchIndex = {}, aliases = {}) {
   const alias = aliases[aliasKey("pane", pane.terminal)];
   if (alias) return alias;
   const worker = orchIndex.workers?.[pane.terminal];
-  if (worker) return [worker.label, worker.name].filter(Boolean).join(" · ");
-  if (orchIndex.heads?.[pane.terminal]) return "Head";
-  return programName(pane);
+  if (worker) return [worker.label, worker.name].filter(Boolean).join(" · ").toLowerCase();
+  // Every agent session that is not an orch worker is a Head, with or without an active run.
+  if (orchIndex.heads?.[pane.terminal] || orchIndex.terminals?.[pane.terminal]) return "head";
+  return programName(pane).toLowerCase();
 }
 
 export function paneSub(pane, orchIndex = {}, indexInTab = 0) {
   const worker = orchIndex.workers?.[pane.terminal];
   const info = worker?.model ? worker : orchIndex.terminals?.[pane.terminal];
-  const model = info?.model ? [info.model, info.effort].filter(Boolean).join(" ") : "";
-  return [model || (indexInTab === 0 ? "main" : `sub ${indexInTab}`), pane.status || "idle"].join(" · ");
+  const model = info?.model ? [info.model, info.effort].filter(Boolean).join("-").replace(/\s+/g, "-") : "";
+  return [model || (indexInTab === 0 ? "main" : `sub ${indexInTab}`), pane.status || "idle"].join(" · ").toLowerCase();
 }
 
 // Remote ids keep the complete machine prefix (machine names may contain '/').

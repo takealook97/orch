@@ -54,31 +54,31 @@ test("pane subtitle uses position when model unknown and argv when worker model 
   assert.equal(paneSub(pane("p"), index, 2), "sub 2 · working");
   assert.equal(paneSub(pane("p", "tab", { terminal: "argv" }), {
     ...index, workers: { argv: { model: "", effort: "high" } }
-  }, 2), "gpt-6.1-sol low · working");
+  }, 2), "gpt-6.1-sol-low · working");
   assert.equal(paneSub(pane("p", "tab", { terminal: "argv" }), {
     terminals: { argv: { model: "", effort: "high" } }
   }, 2), "sub 2 · working");
   const rows = buildTree({ spaces: [sp("s", [tab("tab")])], activeSpaceId: "s", panes: [pane("a"), pane("b")] });
   assert.deepEqual(rows.filter(r => r.kind === "pane").map(r => [r.name, r.sub]), [
-    ["Codex", "main · working"], ["Codex", "sub 1 · working"]]);
+    ["codex", "main · working"], ["codex", "sub 1 · working"]]);
 });
 
 test("pane naming precedence: alias, worker, Head, main, sub and fallback", () => {
   const w = pane("p", "tab", { terminal: "worker" });
   assert.equal(paneName(w, 0, index, { [aliasKey("pane", "worker")]: "내 이름" }), "내 이름");
-  assert.equal(paneName(w, 0, index), "Impl · impl");
-  assert.equal(paneName(pane("p", "tab", { terminal: "head" }), 0, index), "Head");
-  assert.equal(paneName(pane("p"), 0, index), "Codex");
-  assert.equal(paneName(pane("p"), 1, index), "Codex");
-  assert.equal(paneName(pane("p"), 4, index), "Codex");
+  assert.equal(paneName(w, 0, index), "impl · impl");
+  assert.equal(paneName(pane("p", "tab", { terminal: "head" }), 0, index), "head");
+  assert.equal(paneName(pane("p"), 0, index), "codex");
+  assert.equal(paneName(pane("p"), 1, index), "codex");
+  assert.equal(paneName(pane("p"), 4, index), "codex");
   assert.equal(paneName({ terminal: null, mod: "files" }), "files");
-  assert.equal(paneName({}), "Terminal");
-  assert.equal(paneName(w, 0, index, { [aliasKey("pane", "worker")]: "" }), "Impl · impl");
+  assert.equal(paneName({}), "terminal");
+  assert.equal(paneName(w, 0, index, { [aliasKey("pane", "worker")]: "" }), "impl · impl");
 });
 
 test("line two uses worker model, argv model, then position plus live status", () => {
-  assert.equal(paneSub(pane("p", "tab", { terminal: "worker" }), index), "gpt-6-luna high · working");
-  assert.equal(paneSub(pane("p", "tab", { terminal: "argv", status: "blocked" }), index), "gpt-6.1-sol low · blocked");
+  assert.equal(paneSub(pane("p", "tab", { terminal: "worker" }), index), "gpt-6-luna-high · working");
+  assert.equal(paneSub(pane("p", "tab", { terminal: "argv", status: "blocked" }), index), "gpt-6.1-sol-low · blocked");
   assert.equal(paneSub(pane("p", "tab", { terminal: "head" }), index), "main · working");
   assert.equal(paneSub({ status: null }), "main · idle");
 });
@@ -129,7 +129,7 @@ test("tab badge counts done/total without a duplicate space badge; Head retains 
   assert.equal(rows.find(r => r.kind === "space").badge, undefined);
   assert.equal(rows.find(r => r.kind === "tab").badge, "orch full · 1/2");
   const head = rows.find(r => r.kind === "pane");
-  assert.equal(head.name, "Head"); assert.equal(head.active, true);
+  assert.equal(head.name, "head"); assert.equal(head.active, true);
   assert.equal(head.guide, "└");
   assert.equal(orchIndexes({ runs: [{ tab: "zero", workers: [] }] }).tabs.zero.total, 0);
 });
