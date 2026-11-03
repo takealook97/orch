@@ -31,7 +31,28 @@ print_command() {
 run() {
     if "$dry_run"; then print_command "$@"; else "$@"; fi
 }
-built=' '
+# hc file write takes at most 8 MB per call: send 7 MB parts, join them remotely and
+# install only when the joined file has the local sha256.
+upload() {
+    local machine=$1 binary=$2 parts sum part n=0 remote=.local/libexec/orch-hud
+    parts=$(mktemp -d) || return 1
+    split -b 7m "$binary" "$parts/p." || { rm -rf "$parts"; return 1; }
+    sum=$(shasum -a 256 "$binary" | cut -d' ' -f1)
+    for part in "$parts"/p.*; do
+        hc file write --on "$machine" "$remote.part.$n" < "$part" >/dev/null || { rm -rf "$parts"; return 1; }
+        n=$((n + 1))
+    done
+    rm -rf "$parts"
+    hc exec --on "$machine" sh -c '
+        dir="$HOME/.local/libexec"; n=$1; want=$2; i=0; : > "$dir/orch-hud.new"
+        while [ "$i" -lt "$n" ]; do cat "$dir/orch-hud.part.$i" >> "$dir/orch-hud.new"; i=$((i + 1)); done
+        rm -f "$dir"/orch-hud.part.*
+        got=$( (sha256sum "$dir/orch-hud.new" 2>/dev/null || shasum -a 256 "$dir/orch-hud.new") | cut -d" " -f1)
+        [ "$got" = "$want" ] || { rm -f "$dir/orch-hud.new"; echo "sha256 mismatch" >&2; exit 1; }
+        chmod +x "$dir/orch-hud.new" && mv "$dir/orch-hud.new" "$dir/orch-hud"
+    ' sh "$n" "$sum"
+}
+built=' ' 
 install_machine() {
     local machine=$1 platform target goos goarch binary output
     if ! platform=$(hc exec --on "$machine" uname -sm); then
@@ -47,16 +68,15 @@ install_machine() {
     binary="$root/bin/orch-hud-$target"
     if [[ "$built" != *" $target "* ]]; then
         run mkdir -p "$root/bin" || return 1
-        run env GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go -C "$root" build -o "$binary" . || return 1
+        run env GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go -C "$root" build -trimpath -ldflags "-s -w" -o "$binary" . || return 1
         built+="$target "
     fi
     run hc exec --on "$machine" sh -c 'mkdir -p "$HOME/.local/libexec"' || return 1
     if "$dry_run"; then
-        printf '+ hc file write --on %q .local/libexec/orch-hud < %q\n' "$machine" "$binary"
+        printf '+ upload %q to %q:.local/libexec/orch-hud in 7 MB parts, verify sha256, install\n' "$binary" "$machine"
     else
-        hc file write --on "$machine" .local/libexec/orch-hud < "$binary" || return 1
+        upload "$machine" "$binary" || return 1
     fi
-    run hc exec --on "$machine" sh -c 'chmod +x "$HOME/.local/libexec/orch-hud"' || return 1
     if "$dry_run"; then
         print_command hc exec --on "$machine" sh -c '"$HOME/.local/libexec/orch-hud" hud sys'
         echo "$machine: DRY-RUN ($target)"
