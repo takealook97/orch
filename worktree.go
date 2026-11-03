@@ -10,7 +10,48 @@ import (
 	"strings"
 )
 
-type writerRef struct{ Run, Head, Name, Kind, Cwd string }
+// Unverified marks a pane writer whose pane could not be checked (another backend).
+type writerRef struct {
+	Run, Head, Name, Kind, Cwd string
+	Unverified                 bool
+}
+
+// paneAliveFn is the pane lookup used for writer liveness; tests replace it.
+var paneAliveFn = paneExists
+
+// paneLiveness answers "does this pane still exist" once per id for one scan.
+// A failed lookup counts as live: a missed live writer is worse than a needless split.
+type paneLiveness struct{ seen map[string]bool }
+
+func (p *paneLiveness) alive(backend, id string) bool {
+	key := backend + "\x00" + id
+	if v, ok := p.seen[key]; ok {
+		return v
+	}
+	exists, err := paneAliveFn(id)
+	v := err != nil || exists
+	p.seen[key] = v
+	return v
+}
+
+// paneWriterLive decides whether a produce/integrate pane writer still works. Its pane and
+// its run's Head must exist. A run on another backend cannot be checked: it stays live, unverified.
+func (p *paneLiveness) paneWriterLive(r *Run, w *Worker) (live, unverified bool) {
+	if runBackend(r) != currentBackend() {
+		return true, true
+	}
+	id := w.Pane
+	if runBackend(r) == "app" && w.Terminal != "" {
+		id = w.Terminal
+	}
+	if !p.alive(runBackend(r), id) {
+		return false, false
+	}
+	if r.HeadPane != "" && r.HeadPane != headID() && !p.alive(runBackend(r), r.HeadPane) {
+		return false, false
+	}
+	return true, false
+}
 
 func recordTaskRunner(runID, id string, pid int) error {
 	return withRun(runID, func(r *Run) error {
@@ -103,24 +144,38 @@ func liveWritersIn(root string, except func(writerRef) bool) []writerRef {
 	runs, _ := allRuns()
 	root = canonicalRoot(root)
 	var out []writerRef
+	liveness := &paneLiveness{seen: map[string]bool{}}
 	add := func(ref writerRef) {
 		if canonicalRoot(ref.Cwd) == root && (except == nil || !except(ref)) {
 			out = append(out, ref)
 		}
 	}
+	inRoot := func(cwd string) bool { return canonicalRoot(cwd) == root }
 	for _, r := range runs {
 		for _, w := range r.Workers {
 			if (w.Role == "produce" || w.Role == "integrate") && w.Pane != "" && w.Status != "closed" && w.Status != "lost" {
-				add(writerRef{r.ID, r.HeadPane, w.Name, "spawn", w.Cwd})
+				if !inRoot(w.Cwd) {
+					continue
+				}
+				if live, unverified := liveness.paneWriterLive(r, w); live {
+					add(writerRef{r.ID, r.HeadPane, w.Name, "spawn", w.Cwd, unverified})
+				}
 			}
 		}
 		for _, t := range r.Tasks {
 			if t.Kind == "do" && (t.Status == "running" || t.Status == "pending") && t.Pid > 0 && pidAlive(t.Pid) {
-				add(writerRef{r.ID, r.HeadPane, t.ID, "do", t.Cwd})
+				add(writerRef{r.ID, r.HeadPane, t.ID, "do", t.Cwd, false})
 			}
 		}
 	}
 	return out
+}
+
+func unverifiedMark(ref writerRef) string {
+	if ref.Unverified {
+		return " (unverified)"
+	}
+	return ""
 }
 
 func warnOtherHeads(r *Run, cwd string, out io.Writer) {
@@ -132,13 +187,16 @@ func warnOtherHeads(r *Run, cwd string, out io.Writer) {
 	}
 	root := canonicalRoot(cwd)
 	groups := map[string][]string{}
+	unverified := map[string]bool{}
 	for _, ref := range liveWritersIn(root, nil) {
 		if ref.Head == r.HeadPane {
 			continue
 		}
 		other, err := loadRun(ref.Run)
 		if err == nil && other.Status == "active" {
-			groups[ref.Head+" run "+ref.Run] = append(groups[ref.Head+" run "+ref.Run], ref.Name)
+			key := ref.Head + " run " + ref.Run
+			groups[key] = append(groups[key], ref.Name)
+			unverified[key] = unverified[key] || ref.Unverified
 		}
 	}
 	var keys []string
@@ -147,7 +205,11 @@ func warnOtherHeads(r *Run, cwd string, out io.Writer) {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		fmt.Fprintf(out, "orch: warning: Head %s is also writing in %s (%s); writers here will use worktrees\n", key, root, strings.Join(groups[key], ","))
+		note := ""
+		if unverified[key] {
+			note = " [unverified: run uses another backend, liveness not checked]"
+		}
+		fmt.Fprintf(out, "orch: warning: Head %s is also writing in %s (%s)%s; writers here will use worktrees\n", key, root, strings.Join(groups[key], ","), note)
 	}
 }
 
@@ -184,6 +246,11 @@ type worktreeState struct {
 }
 
 func spawnWorktree(r *Run, o spawnOpts, out io.Writer) (worktreeState, error) {
+	// A replacement continues the old worker's partial edits, so it keeps the old placement.
+	// An old worker that shared the checkout must not trigger a fresh auto worktree.
+	if o.Fallback != "" && o.Worktree == "" {
+		return worktreeState{}, nil
+	}
 	warnFirstWriter(r, o.Cwd, out)
 	state, err := prepareWorktree(r.ID, o.Name, o.Cwd, o.Worktree, o.NoWorktree, out)
 	if err != nil {
@@ -228,14 +295,8 @@ func prepareWorktree(runID, name, cwd, explicit string, disabled bool, out io.Wr
 			if !isGitDir(path) {
 				return state, fmt.Errorf("worktree path is not a git checkout: %s", path)
 			}
-			// Existing cwd overrides remain usable, but only a linked checkout of
-			// this repository can be committed, merged and removed by orch.
-			sourceCommon, sourceErr := gitOutput(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
-			targetCommon, targetErr := gitOutput(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
-			if sourceErr == nil && targetErr == nil && sourceCommon == targetCommon && canonicalRoot(path) != root {
-				state.Branch, _ = gitOutput(path, "symbolic-ref", "--quiet", "--short", "HEAD")
-				state.Start, _ = gitOutput(path, "rev-parse", "HEAD")
-			}
+			// An existing directory is the user's own checkout: a plain cwd, as before worktrees
+			// existed. Without a Branch orch never commits, merges or removes it.
 			return state, nil
 		} else if !os.IsNotExist(err) {
 			return state, err
@@ -265,7 +326,7 @@ func prepareWorktree(runID, name, cwd, explicit string, disabled bool, out io.Wr
 		state = worktreeState{Dir: candidate, Base: root, Auto: true}
 		var names []string
 		for _, ref := range writers {
-			names = append(names, ref.Run+"/"+ref.Name)
+			names = append(names, ref.Run+"/"+ref.Name+unverifiedMark(ref))
 		}
 		state.Branch = "orch/" + runID + "/" + name
 		fmt.Fprintf(out, "orch: %s: checkout %s already has live writer(s) %s; using worktree %s (branch %s)\n", name, root, strings.Join(names, ","), state.Dir, state.Branch)
@@ -333,15 +394,17 @@ type worktreeEntry struct {
 	Busy                      bool
 }
 
+// Branch is set only for worktrees orch created with `git worktree add`, so it doubles
+// as the ownership mark: entries without one are plain cwds that orch must never manage.
 func worktreeEntries(r *Run) []worktreeEntry {
 	var out []worktreeEntry
 	for _, w := range r.Workers {
-		if w.Branch != "" || w.Worktree != "" {
+		if w.Branch != "" {
 			out = append(out, worktreeEntry{w.Name, &w.Worktree, &w.Branch, &w.WorktreeBase, &w.Commit, &w.WorktreeAuto, &w.Committed, &w.Merged, nil, w.Pane != "" && w.Status != "closed" && w.Status != "lost"})
 		}
 	}
 	for _, t := range r.Tasks {
-		if t.Branch != "" || t.Worktree != "" {
+		if t.Branch != "" {
 			out = append(out, worktreeEntry{t.ID, &t.Worktree, &t.Branch, &t.WorktreeBase, &t.Commit, &t.WorktreeAuto, &t.Committed, &t.Merged, t, t.Status == "running" || t.Status == "pending"})
 		}
 	}
@@ -424,7 +487,7 @@ func mergeOne(base, branch string) (string, error) {
 	return gitOutput(base, "rev-parse", "HEAD")
 }
 
-func mergeWorktrees(runID string, names []string, test string, keep bool, out, stderr io.Writer) error {
+func mergeWorktrees(runID string, names []string, test string, keep, force bool, out, stderr io.Writer) error {
 	r, err := loadRun(runID)
 	if err != nil {
 		return err
@@ -460,6 +523,11 @@ func mergeWorktrees(runID string, names []string, test string, keep bool, out, s
 	}
 	if len(selected) == 0 {
 		return fmt.Errorf("no committed worktrees to merge")
+	}
+	if !force {
+		if err := refuseLiveWriters(runID, selected); err != nil {
+			return err
+		}
 	}
 	for _, e := range selected {
 		// A retained branch may need integrating again after the source switches branches.
@@ -510,6 +578,27 @@ func mergeWorktrees(runID string, names []string, test string, keep bool, out, s
 				return fmt.Errorf("cleanup kept %s: %w", e.Name, err)
 			}
 		}
+	}
+	return nil
+}
+
+// refuseLiveWriters stops a merge from moving HEAD under a writer still working in the
+// source checkout: that writer's scope check would see the merged files as its own changes.
+func refuseLiveWriters(runID string, selected []worktreeEntry) error {
+	mine := map[string]bool{}
+	for _, e := range selected {
+		mine[e.Name] = true
+	}
+	for _, e := range selected {
+		writers := liveWritersIn(*e.Base, func(ref writerRef) bool { return ref.Run == runID && mine[ref.Name] })
+		if len(writers) == 0 {
+			continue
+		}
+		var names []string
+		for _, ref := range writers {
+			names = append(names, ref.Run+"/"+ref.Name+unverifiedMark(ref))
+		}
+		return fmt.Errorf("%s: source checkout %s has live writer(s) %s; collect them first or pass --force", e.Name, *e.Base, strings.Join(names, ","))
 	}
 	return nil
 }

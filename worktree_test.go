@@ -18,6 +18,7 @@ func worktreeFixture(t *testing.T) (*Run, string, string) {
 	t.Setenv("ORCH_MUX", "herdr")
 	t.Setenv("HERDR_PANE_ID", "wt-head")
 	t.Setenv("HC_TERMINAL_ID", "")
+	stubPaneAlive(t, func(string) (bool, error) { return true, nil })
 	root := filepath.Join(t.TempDir(), "repo")
 	base := scopeRepo(t, root)
 	root = canonicalRoot(root)
@@ -26,6 +27,13 @@ func worktreeFixture(t *testing.T) (*Run, string, string) {
 		t.Fatal(err)
 	}
 	return r, root, base
+}
+
+func stubPaneAlive(t *testing.T, fn func(string) (bool, error)) {
+	t.Helper()
+	old := paneAliveFn
+	paneAliveFn = fn
+	t.Cleanup(func() { paneAliveFn = old })
 }
 
 func saveFixture(t *testing.T, r *Run) {
@@ -128,7 +136,8 @@ func TestAutoWorktreeAdmission(t *testing.T) {
 				t.Fatal("Head's linked worktree is not pretrusted")
 			}
 			reused, err := prepareWorktree(r.ID, "second", root, state.Dir, false, io.Discard)
-			if err != nil || reused.Dir != state.Dir || reused.Branch != state.Branch {
+			// An existing path is a plain cwd: nothing records a branch for the executor to manage.
+			if err != nil || reused.Dir != state.Dir || reused.Branch != "" {
 				t.Fatalf("reuse=%+v err=%v", reused, err)
 			}
 		})
@@ -248,7 +257,7 @@ func TestMergeWorktreeLifecycle(t *testing.T) {
 				t.Setenv("ORCH_RUN", r.ID)
 			}
 			var out, errout bytes.Buffer
-			err := mergeWorktrees(r.ID, []string{w.Name}, test, tc.keep, &out, &errout)
+			err := mergeWorktrees(r.ID, []string{w.Name}, test, tc.keep, false, &out, &errout)
 			failed := tc.failTest || tc.conflict || tc.dirty
 			if (err != nil) != failed {
 				t.Fatalf("err=%v output=%s stderr=%s", err, out.String(), errout.String())
@@ -287,7 +296,7 @@ func TestMergeWorktreeLifecycle(t *testing.T) {
 			}
 			if tc.failTest {
 				// A retry after fixing the test can finish cleanup without losing its test task record.
-				if err := mergeWorktrees(r.ID, []string{w.Name}, "exit 0", false, &out, &errout); err != nil {
+				if err := mergeWorktrees(r.ID, []string{w.Name}, "exit 0", false, false, &out, &errout); err != nil {
 					t.Fatal(err)
 				}
 				fresh, _ = loadRun(r.ID)
@@ -411,7 +420,7 @@ func TestDoWorktreeExecution(t *testing.T) {
 				if !strings.Contains(git(t, task.Worktree, "log", "-1", "--format=%s"), "orch: "+r.ID+"/"+task.ID) {
 					t.Fatal("missing collect commit")
 				}
-				if err := mergeWorktrees(r.ID, []string{task.ID}, "", false, &out, &errout); err != nil {
+				if err := mergeWorktrees(r.ID, []string{task.ID}, "", false, true, &out, &errout); err != nil {
 					t.Fatal(err)
 				}
 				fresh, _ = loadRun(r.ID)
@@ -550,7 +559,7 @@ func TestMergeConflictLeavesLaterWorktreesUntouched(t *testing.T) {
 	git(t, root, "add", "-A")
 	git(t, root, "commit", "-qm", "source")
 	var out bytes.Buffer
-	if err := mergeWorktrees(r.ID, nil, "", false, &out, io.Discard); err == nil {
+	if err := mergeWorktrees(r.ID, nil, "", false, false, &out, io.Discard); err == nil {
 		t.Fatal("conflict accepted")
 	}
 	if _, err := os.Stat(second.Worktree); err != nil {
@@ -596,7 +605,7 @@ func TestMergeCleanupKeepsDirtyWorktree(t *testing.T) {
 	fixtureCommit(t, r, w, "new.txt", "committed")
 	putFile(t, w.Worktree, "untracked.txt", "keep")
 	var out bytes.Buffer
-	if err := mergeWorktrees(r.ID, nil, "", false, &out, io.Discard); err == nil {
+	if err := mergeWorktrees(r.ID, nil, "", false, false, &out, io.Discard); err == nil {
 		t.Fatal("dirty worktree removed")
 	}
 	if _, err := os.Stat(filepath.Join(w.Worktree, "untracked.txt")); err != nil {

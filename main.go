@@ -35,7 +35,7 @@ Delegation
   orch prompt <name> [--contract FILE] [--wait] [--timeout MS]
   orch wait [name...] [--timeout MS] [--no-fallback]      detect completion from the result file status line
   orch collect <name>                     inspect result and check owned-file scope
-  orch merge [name...] [--run ID] [--test CMD] [--keep]  merge committed worktrees and remove them
+  orch merge [name...] [--run ID] [--test CMD] [--keep] [--force]  merge committed worktrees and remove them
   orch read <name> [--lines N]            terminal output (only when no result file exists)
   orch fallback <name> [--reason "..."]   switch to next fallback key
   orch close <name> | --run ID | --all
@@ -343,6 +343,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "merge":
 		test := fs.String("test", "", "integration test command")
 		keep := fs.Bool("keep", false, "keep merged worktrees")
+		force := fs.Bool("force", false, "merge even while a writer is live in the source checkout")
 		names, err := parse(fs, rest)
 		if err != nil {
 			return 2
@@ -351,7 +352,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil {
 			return fail(err)
 		}
-		if err := mergeWorktrees(id, names, *test, *keep, stdout, stderr); err != nil {
+		if err := mergeWorktrees(id, names, *test, *keep, *force, stdout, stderr); err != nil {
 			return fail(err)
 		}
 		return 0

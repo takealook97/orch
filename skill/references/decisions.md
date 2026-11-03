@@ -178,3 +178,10 @@ The former codex-medium-h key is a deprecated Luna alias, including saved runs. 
 Embed `models.yaml` as the source for named model ids, canonical keys, tiers, aliases, fallback chains and key rules; a local `models.yaml` overlay changes only shared ids and key effort, below existing per-key env overrides.
 Generate marked catalog documentation from embedded defaults and reject drift in `make check`; keep historical decisions unchanged. Record the resolved model id on worker and task records.
 Keep each CLI's pane and one-shot argv in one adapter, pinned by golden tests. Live compatibility probes are opt-in through `doctor --probe-models`; tests use stubs and `make check` never probes models.
+
+## D21. Worktree ownership, merge guard, fallback placement, writer liveness (2026-11-03)
+
+- A worktree is managed (collect commit, merge, removal, branch delete) only when the executor created it with `git worktree add`; the recorded `Branch` is that ownership mark. An explicit `--worktree` that already exists is a plain cwd as before: no Branch, no commit, never a merge candidate, never removed. A path that does not exist yet is created and owned.
+- `merge` refuses while a live writer works in the source checkout (excluding the entries being merged) because HEAD moving under it makes its scope check fail; the error names the writers. `--force` overrides.
+- A fallback replacement keeps the old worker's placement: same worktree/branch when it had one, the same shared cwd when it had none, and no auto admission.
+- A pane writer is live only while its pane and its run's Head pane still exist. A failed lookup counts as live, lookups are cached per scan, and a run on another backend cannot be checked, so it stays live and the warning marks it unverified.
