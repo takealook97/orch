@@ -20,7 +20,7 @@ export function cell(t, { label, value, detail = '', pct, color, detailColor, hi
 }
 export function groupLabel(t, account, compact) {
   return v_flex().flex_none().min_w(44).items_center().justify_center().gap(1)
-    .child(div().text_size(12).font_semibold().text_color(account.dimDefault ? t.dim : t.foreground)
+    .child(div().text_size(12).font_semibold().text_color(t.foreground)
       .child({ codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }[account.provider]))
     .when(!compact && account.provider !== 'gemini', el => el.child(div().h(13).text_size(10.8)
       .text_color(t.dim).child(account.label)));

@@ -76,22 +76,19 @@ function harness() {
   };
 }
 
-test('poll intervals, filtered local addresses, and cache arguments', async () => {
-  const h = harness();
-  await h.flush();
-  assert.deepEqual(h.intervals.map(job => job.ms), [3000, 60000, 120000]);
-  assert.deepEqual(h.view.terminals, ['t2t', 't2w']);
-  h.tick(1000);
-  await h.flush();
-  assert.ok(h.calls.some(args => args.join(' ') === 'hud usage --terminals t2t,t2w --max-age 45s'));
-  assert.ok(h.calls.some(args => args.join(' ') === 'hud usage --max-age 120s'));
+test('poll intervals and selected account arguments', async () => {
+  const h = harness(); await h.flush();
+  assert.deepEqual(h.intervals.map(job => job.ms), [3000, 60000]);
+  assert.deepEqual(h.calls.filter(args => args[1] === 'usage'), [['hud', 'usage', '--selected', '--max-age', '45s']]);
 });
 
 test('provider cards retain placeholders, local labels, coupon text and stale opacity', async () => {
   const h = harness(); await h.flush(); h.tick(1000); await h.flush();
   const tree = h.view.render(h.cx), labels = text(tree);
-  assert.deepEqual(byID(tree, 'groups').nodes.map(node => node.style.id), ['system', 'account-codex', 'account-claude', 'account-gemini']);
+  assert.deepEqual(byID(tree, 'groups').nodes.map(node => node.style.id), ['account-codex', 'account-claude', 'account-gemini']);
   assert.equal(labels.filter(label => label === 'CPU').length, 1);
+  assert.deepEqual(tree.nodes.map(node => node.style.id), ['groups', undefined, 'system']);
+  assert.equal(tree.nodes[1].style.flex_1.length, 0);
   assert.ok(labels.includes('2 resets'));
   assert.ok(labels.includes('work'));
   assert.ok(!labels.some(label => /max|prolite|default|⚠|🎟|@/.test(label)));
@@ -111,19 +108,12 @@ test('provider cards retain placeholders, local labels, coupon text and stale op
   assert.equal(narrow.nodes[0].nodes[2].style.w, 58);
 });
 
-test('render defers context changes and space switches retain usage until replacement', async () => {
-  const h = harness(); await h.flush(); h.tick(1000); await h.flush();
-  const previous = h.view.usage;
+test('space switches do not trigger usage refresh', async () => {
+  const h = harness(); await h.flush();
+  const count = h.calls.length;
   h.state.spaces[0].id = 's2';
-  h.state.panes[0].terminal = 't3';
-  const oldKey = h.view.terminalKey;
-  h.view.render(h.cx);
-  assert.equal(h.view.terminalKey, oldKey);
-  assert.equal(h.view.usage, previous);
-  h.tick(0);
-  assert.notEqual(h.view.terminalKey, oldKey);
-  assert.equal(h.view.usage, previous);
-  assert.ok(h.timers.some(job => job.ms === 1000 && !job.canceled));
+  h.view.render(h.cx); h.tick(0); h.tick(1000); await h.flush();
+  assert.equal(h.calls.length, count);
 });
 
 test('working completion transitions debounce reads for two seconds', async () => {
@@ -168,28 +158,4 @@ test('failures keep last readings and partial errors preserve only the same acco
   h.respond(() => ({ code: 0, stdout: JSON.stringify({ accounts: [{ provider: 'codex', id: 'different', home: '/work', error: 'offline' }] }) }));
   h.view.refresh('usage', h.cx); await h.flush();
   assert.equal(h.view.usage.accounts[0].weekly, undefined);
-});
-
-test('obsolete in-flight response is ignored and the latest space request follows', async () => {
-  const h = harness(); await h.flush();
-  let resolve;
-  h.respond(() => new Promise(done => { resolve = done; }));
-  h.tick(1000);
-  h.state.spaces[0].id = 's2'; h.state.panes[0].terminal = 't3';
-  h.view.render(h.cx); h.tick(0); h.tick(1000);
-  h.respond(() => ({ code: 0, stdout: JSON.stringify({ accounts: [{ provider: 'codex', id: 'new' }] }) }));
-  resolve({ code: 0, stdout: JSON.stringify({ accounts: [{ provider: 'codex', id: 'old' }] }) });
-  await h.flush();
-  assert.equal(h.view.usage.accounts[0].id, 'new');
-  assert.ok(h.calls.at(-1).includes('t2w,t3'));
-});
-
-test('empty local terminal sets never issue an unfiltered active usage request', async () => {
-  const h = harness(); await h.flush();
-  h.state.panes = [];
-  h.view.render(h.cx); h.tick(0);
-  const count = h.calls.length;
-  h.tick(1000); await h.flush();
-  assert.equal(h.calls.length, count);
-  assert.equal(h.view.terminals.length, 0);
 });

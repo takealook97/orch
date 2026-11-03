@@ -26,14 +26,9 @@ export function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return '—';
   return `${Number((bytes / 1024 ** 3).toFixed(1))}G`;
 }
-export function pickAccounts(usage, defaults, terminals = []) {
+export function pickAccounts(usage) {
   return ['codex', 'claude', 'gemini'].map(provider => {
-    // The filtered response resolves terminal membership. Keep it visible
-    // during space switches while the next read is in progress.
-    const active = (terminals.length || provider === 'gemini') &&
-      usage?.accounts?.find(account => account.provider === provider);
-    const fallback = defaults?.accounts?.find(account => account.provider === provider && !account.error);
-    const account = active || fallback || { provider };
-    return { ...account, label: provider === 'gemini' ? '' : (account.label ?? '').split('@')[0], dimDefault: !active };
+    const account = usage?.accounts?.find(account => account.provider === provider) ?? { provider };
+    return { ...account, label: provider === 'gemini' ? '' : (account.label ?? '').split('@')[0] };
   });
 }

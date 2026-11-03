@@ -57,27 +57,20 @@ test('memory uses binary gigabytes', () => {
 const codex = { provider: 'codex', home: '/work', id: 'work', label: 'work@example.com', terminals: ['t1'], five_hour: null, coupons: { available: 0 } };
 const claude = { provider: 'claude', home: '', id: 'default', label: 'me', terminals: ['t2'] };
 const gemini = { provider: 'gemini', id: 'agy', label: '', five_hour: { used_pct: 12 }, weekly: { used_pct: 34 } };
-test('one account per provider in fixed order, including terminal-less Gemini', () => {
-  const picked = pickAccounts({ accounts: [claude, gemini, codex, { ...codex, label: 'second' }] }, null, ['t1', 't2']);
+test('selected response supplies one account per provider in fixed order', () => {
+  const picked = pickAccounts({ accounts: [claude, gemini, codex] });
   assert.deepEqual(picked.map(account => account.provider), ['codex', 'claude', 'gemini']);
-  assert.ok(picked.every(account => !account.dimDefault));
   assert.equal(picked[0].label, 'work');
   assert.equal(picked[0].five_hour, null);
   assert.equal(picked[0].coupons.available, 0);
   assert.equal(picked[2].label, '');
   assert.equal(codex.label, 'work@example.com');
 });
-test('first non-error default per provider, dim styling without label suffix', () => {
-  const defaults = { accounts: [{ ...codex, error: 'offline' }, claude, { ...codex, label: 'ready' }, codex, gemini] };
-  const picked = pickAccounts({ accounts: [claude] }, defaults, ['t2']);
-  assert.equal(picked[0].label, 'ready');
-  assert.equal(picked[0].dimDefault, true);
+test('missing providers yield placeholders', () => {
+  const picked = pickAccounts({ accounts: [claude] });
+  assert.deepEqual(picked.map(account => account.provider), ['codex', 'claude', 'gemini']);
+  assert.equal(picked[0].label, '');
+  assert.equal(picked[0].five_hour, undefined);
   assert.equal(picked[1].label, 'me');
-  assert.equal(picked[1].dimDefault, false);
-  assert.equal(picked[2].id, 'agy');
-  assert.equal(picked[2].dimDefault, true);
-  assert.deepEqual(pickAccounts(null, null).map(account => account.provider), ['codex', 'claude', 'gemini']);
-  assert.equal(pickAccounts(null, { accounts: [{ ...codex, error: 'offline' }] })[0].id, undefined);
-  assert.equal(pickAccounts(null, { accounts: [{ ...codex, label: '' }] })[0].label, '');
-  assert.equal(pickAccounts({ accounts: [gemini] }, null)[2].dimDefault, false);
+  assert.equal(picked[2].label, '');
 });
