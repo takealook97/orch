@@ -1,9 +1,10 @@
 const ORCH = "/Users/deepeet/.local/bin/orch";
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { spaces, machines, panes, terminals, run, exec, shared, setShared, theme, openOverlay, nextCommand, props } from "herdr";
+import { spaces, machines, panes, terminals, run, exec, shared, setShared, theme, openOverlay, nextCommand, props, notify } from "herdr";
 import Plumbing from "./plumbing.js";
 import { buildTree, aliasKey, machineId, rowId, pruneFolded } from "./model.js";
+import { clearDrag, beginTabDrag, hoverTabTarget, dropTab } from "./drag.js";
 import { treeRow } from "./rows.js";
 import { initRename, startRename, finishRename, renameId } from "./rename.js";
 import { menuView } from "./tree-menu.js";
@@ -111,7 +112,7 @@ export default class SpaceTree extends Plumbing {
   }
 
   select(row, cx) {
-    if (this.editing) return;
+    if (this.editing || this.movingTab) return;
     this.highlight = row.key; this.handle.focus();
     if (row.kind === "space" || row.kind === "tab") run(`${row.kind}.select`, { id: row.id });
     if (row.kind === "pane") run("pane.focus", { pane: row.id });
@@ -125,18 +126,27 @@ export default class SpaceTree extends Plumbing {
       props: { treeMenu: true, kind: row.kind, id: renameId(row), current: row.name,
         target: { pane: row.id, terminal: row.terminal } } });
   }
+  beginTabDrag(row, cx) { beginTabDrag(this, row, cx); }
+  hoverTabTarget(row, cx) { hoverTabTarget(this, row, cx); }
+  dropTab(row, cx) {
+    return dropTab(this, row, cx, { run, spaces, panes,
+      warn: body => notify({ title: "Cannot move tab", body, level: "warning", timeout: 5000 }) });
+  }
   dragOver(row, cx) {
+    if (this.tabDrag) { this.hoverTabTarget(row, cx); return; }
     const source = spaces()[this.pressed];
     const over = source && (source.machine ?? null) === (row.data.machine ?? null) ? row.data.order : null;
     if (this.pressed !== null && this.over !== over) { this.over = over; cx.notify(); }
   }
   dropSpace(row, cx) {
+    if (this.dropTab(row, cx)) return;
     const from = this.pressed, over = this.over, i = row.data.order;
     this.pressed = null; this.over = null;
     if (from !== null && over === i && from !== i) run("space.move", { id: spaces()[from].id, index: i + 1 });
     cx.notify();
   }
   key(e, cx) {
+    if (e.key === "escape" && this.tabDrag) { clearDrag(this, cx); cx.stop_propagation(); return; }
     if (this.editing) {
       if (e.key === "escape") { finishRename(this, cx, true); cx.stop_propagation(); }
       return;
@@ -169,6 +179,8 @@ export default class SpaceTree extends Plumbing {
       .on_click(action).child(svg(`mods/space-tree/${icon}.svg`).size(12));
     return v_flex().id("space-tree").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .size_full().min_h(0).bg(t.chrome).text_size(12)
+      .on_hover((hovered, cx) => { if (!hovered) clearDrag(this, cx); })
+      .on_mouse_up("left", (_e, cx) => clearDrag(this, cx))
       .child(h_flex().h(30).flex_none().pl(12).pr(8).items_center().text_color(t.muted)
         .child(div().flex_1().child("Spaces"))
         .when(this.orchStale, el => el.child(div().text_size(10).text_color(t.dim).tooltip("orch hud unavailable; retaining last data").child("⚠")))
@@ -176,7 +188,6 @@ export default class SpaceTree extends Plumbing {
         .child(button("collapse-all", "chevron-right", "Collapse all", (_e, cx) => this.foldAll(true, cx)))
         .child(button("new-space", "plus", "New space", () => run("space.new"))))
       .child(v_flex().id("tree-list").flex_1().min_h(0).px(4).pb(10).overflow_y_scroll()
-        .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
         .children(this.visible.map(row => treeRow(this, row, t))));
   }
 }

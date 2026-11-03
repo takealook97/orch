@@ -37,7 +37,8 @@ export function treeRow(view, row, t) {
   const stop = (_e, cx) => cx.stop_propagation();
   const name = nameElement(view, row, t);
   const main = h_flex().w_full().min_w(0).items_center().gap(5)
-    .child(div().w(9).flex_none().text_color(t.border).text_size(11).child(row.guide))
+    .child(div().w(9).h(17).self_start().mt(-4).flex_none()
+      .when(Boolean(row.guide), el => el.border_l(1).border_b(1).rounded_bl(6).border_color(t.border)))
     .child(row.foldable ? div().id(`fold-${row.key}`).size(12).flex_none()
       .on_mouse_down("left", stop).on_mouse_up("left", stop)
       .on_click((_e, cx) => { cx.stop_propagation(); view.toggle(row, cx); })
@@ -46,7 +47,7 @@ export function treeRow(view, row, t) {
     .child(row.kind === "pane" ? v_flex().flex_1().min_w(0).gap(1).child(name)
       .child(div().truncate().text_size(10.8).text_color(t.dim).child(row.sub)) : name);
   if (row.kind === "space") main.child(gitTail(row, t));
-  if (row.kind === "tab") main.child(div().text_size(11).text_color(t.dim).child(String(row.count)));
+  if (row.kind === "tab" && row.count > 1) main.child(div().text_size(11).text_color(t.dim).child(`· ${row.count}`));
   if (row.badge) main.child(div().flex_none().px(3).rounded(4).text_size(10)
     .when(view.orchStale, el => el.opacity(0.5))
     .text_color(t.dim).child(row.badge));
@@ -72,10 +73,23 @@ export function treeRow(view, row, t) {
     .on_click((_e, cx) => view.select(row, cx))
     .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); view.contextMenu(row); })
     .when(row.kind === "pane" && row.active, e => e.child(div().absolute().left(0).top(0).bottom(0).w(2).bg(t.accent)))
-    .child(main);
+    .child(main)
+    .when(view.tabDrag && view.tabOver === row.key, e => e.child(div().absolute().inset_0()
+      .rounded(5).border_1().border_color(t.accent)));
+  if (row.kind === "tab") {
+    el.when(view.tabDrag?.id === row.id && view.tabOver && view.tabOver !== row.key, e => e.opacity(0.5))
+      .on_mouse_down("left", (_e, cx) => view.beginTabDrag(row, cx))
+      .on_mouse_move((_e, cx) => view.hoverTabTarget(row, cx))
+      .on_mouse_up("left", (_e, cx) => { if (view.tabDrag?.id !== row.id) view.dropTab(row, cx); });
+  }
+  if (row.kind === "tab" || row.kind === "space") {
+    el.on_hover((hovered, cx) => {
+      if (!hovered && view.tabOver === row.key) { view.tabOver = null; cx.notify(); }
+    });
+  }
   if (row.kind === "space") {
     const i = row.data.order;
-    el.on_mouse_down("left", () => { view.pressed = i; view.over = i; })
+    el.on_mouse_down("left", () => { if (!view.movingTab) { view.tabDrag = null; view.pressed = i; view.over = i; } })
       .on_mouse_move((_e, cx) => view.dragOver(row, cx))
       .on_mouse_up("left", (_e, cx) => view.dropSpace(row, cx))
       .when(view.pressed === i && view.over !== i, e => e.opacity(0.5))

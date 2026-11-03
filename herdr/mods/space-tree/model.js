@@ -37,6 +37,34 @@ export function paneSub(pane, orchIndex = {}, indexInTab = 0) {
   return [model || (indexInTab === 0 ? "main" : `sub ${indexInTab}`), pane.status || "idle"].join(" · ");
 }
 
+// Remote ids keep the complete machine prefix (machine names may contain '/').
+const idOf = value => typeof value === "string" ? value : value?.id;
+const machinePrefix = value => {
+  const id = idOf(value) ?? "";
+  return id.slice(0, Math.max(0, id.lastIndexOf("/")));
+};
+export function canMoveTab({ tab, panes = [], orchIndex = {}, fromSpace, toSpace }) {
+  const id = idOf(tab), from = idOf(fromSpace), to = idOf(toSpace);
+  const refuse = reason => ({ ok: false, reason });
+  if (!id || !from || !to) return refuse("The tab or space is no longer available.");
+  if (orchIndex.tabs?.[id]) return refuse("Tabs hosting an active orch run cannot be moved.");
+  const ps = panes.filter(p => p.tab === id);
+  if (ps.some(p => orchIndex.workers?.[p.terminal])) return refuse("Tabs containing orch worker terminals cannot be moved.");
+  if (ps.some(p => !p.terminal)) return refuse("Tabs containing mod panes cannot be moved.");
+  if (from === to) return refuse("The tab is already in this space.");
+  if (machinePrefix(from) !== machinePrefix(to)) return refuse("Tabs cannot be moved between machines.");
+  if (!ps.length) return refuse("The tab has no terminal panes to move.");
+  return { ok: true };
+}
+export function moveTabPlan(tab, panes, toSpaceId) {
+  const terminals = panes.filter(p => p.tab === idOf(tab)).map(p => p.terminal);
+  return [
+    ...terminals.map(terminal => ({ command: "terminal.park", args: { terminal } })),
+    { command: "space.select", args: { id: toSpaceId } },
+    ...terminals.map((terminal, i) => ({ command: "terminal.keep", args: { terminal, place: i ? "right" : "tab" } })),
+  ];
+}
+
 // Actions omit the target id so callers can attach their space/tab id or alias key.
 export function renameAction(kind, original, value, named = false) {
   const name = value.trim();
