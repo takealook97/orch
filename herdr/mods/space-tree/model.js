@@ -45,7 +45,7 @@ const machinePrefix = value => {
   const id = idOf(value) ?? "";
   return id.slice(0, Math.max(0, id.lastIndexOf("/")));
 };
-export function canMoveTab({ tab, panes = [], orchIndex = {}, fromSpace, toSpace }) {
+export function canMoveTab({ tab, panes = [], orchIndex = {}, fromSpace, toSpace, sourceOnly = false }) {
   const id = idOf(tab), from = idOf(fromSpace), to = idOf(toSpace);
   const refuse = reason => ({ ok: false, reason });
   if (!id || !from || !to) return refuse("The tab or space is no longer available.");
@@ -53,9 +53,10 @@ export function canMoveTab({ tab, panes = [], orchIndex = {}, fromSpace, toSpace
   const ps = panes.filter(p => p.tab === id);
   if (ps.some(p => orchIndex.workers?.[p.terminal])) return refuse("Tabs containing orch worker terminals cannot be moved.");
   if (ps.some(p => !p.terminal)) return refuse("Tabs containing mod panes cannot be moved.");
+  if (!ps.length) return refuse("The tab has no terminal panes to move.");
+  if (sourceOnly) return { ok: true };
   if (from === to) return refuse("The tab is already in this space.");
   if (machinePrefix(from) !== machinePrefix(to)) return refuse("Tabs cannot be moved between machines.");
-  if (!ps.length) return refuse("The tab has no terminal panes to move.");
   return { ok: true };
 }
 export function moveTabPlan(tab, panes, toSpaceId) {

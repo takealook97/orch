@@ -74,6 +74,8 @@ export function treeRow(view, row, t) {
     .on_click((_e, cx) => view.select(row, cx))
     .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); view.contextMenu(row); })
     .when(row.kind === "pane" && row.active, e => e.child(div().absolute().left(0).top(0).bottom(0).w(2).bg(t.accent)))
+    .when(row.guide === "├", e => e.child(div().absolute().top(0).bottom(0)
+      .left(2 + row.depth * 14).border_l(1).border_color(t.border)))
     .child(main)
     .when(view.tabDrag && view.tabOver === row.key, e => e.child(div().absolute().inset_0()
       .rounded(5).border_1().border_color(t.accent)));
