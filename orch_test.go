@@ -117,7 +117,7 @@ func TestModelOverride(t *testing.T) {
 		t.Fatalf("codex-high-l followed codex-high-m override: %q", got)
 	}
 	m, _ = modelByKey("claude-high-m")
-	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-next" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-next --effort medium" {
 		t.Fatalf("got %q", got)
 	}
 	for _, bad := range []string{"--yolo", "gpt 7", `x"y`} {
