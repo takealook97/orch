@@ -36,7 +36,7 @@ export function pickAccounts(usage) {
 // These dimensions are shared with the rendered cells and card labels.
 export const cellWidth = (label, missing, hideDetail = false) =>
   missing ? 44 : label === 'Week' ? (hideDetail ? 58 : 92) : label === '5h' ? 76 : 64;
-export const labelWidth = accountLine => accountLine ? 64 : 48;
+export const labelWidth = accountLine => accountLine ? 84 : 48;
 export function layoutMode(width, accounts) {
   const mode = { bars: true, accountLine: true, weekDetail: true };
   const needed = () => accounts.reduce((sum, account) => {

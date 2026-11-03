@@ -78,7 +78,7 @@ test('missing providers yield placeholders', () => {
 test('layout adapts to the estimated card widths', () => {
   const full = ['codex', 'claude', 'gemini'].map(provider => ({ provider, five_hour: { used_pct: 10 }, weekly: { used_pct: 20 } }));
   assert.deepEqual(layoutMode(1600, full), { bars: true, accountLine: true, weekDetail: true });
-  assert.deepEqual(layoutMode(1100, full), { bars: false, accountLine: true, weekDetail: true });
+  assert.deepEqual(layoutMode(1160, full), { bars: false, accountLine: true, weekDetail: true });
   assert.deepEqual(layoutMode(400, full), { bars: false, accountLine: false, weekDetail: false });
   assert.deepEqual(layoutMode(1100, pickAccounts(null)), { bars: true, accountLine: true, weekDetail: true });
 });
