@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTree, paneName, paneSub, foldDefault, pruneFolded, orchIndexes, aliasKey, machineId, renameAction } from "./model.js";
+import { tabIconColor, buildTree, paneName, paneSub, foldDefault, pruneFolded, orchIndexes, aliasKey, machineId, renameAction } from "./model.js";
 
 const pane = (id, tab = "tab", extra = {}) => ({ pane: id, terminal: `t-${id}`, tab, program: { name: "Codex" }, status: "working", ...extra });
 const sp = (id, tabs = [], extra = {}) => ({ id, name: id, tabs, ...extra });
@@ -151,4 +151,11 @@ test("local computer fold key cannot collide with a remote named local", () => {
   const rows = buildTree({ machines: [{ name: "local" }], spaces: [sp("remote", [], { machine: "local" })],
     folded: { [machineId(null)]: true } });
   assert.equal(rows.find(r => r.id === "remote").kind, "space");
+});
+
+test("tab icon color follows active state and actionable status", () => {
+  for (const status of ["working", "blocked", "idle", undefined]) {
+    assert.equal(tabIconColor(status, true), "foreground");
+    assert.equal(tabIconColor(status, false), ["working", "blocked"].includes(status) ? status : "muted");
+  }
 });
