@@ -22,7 +22,8 @@ Run management
   orch status [--run ID]
 
 Delegation
-  orch ask --model K [--cwd DIR] [--max-output N] [--timeout MS] [--account same|hook] [--background] [--json] "question"
+  orch ask --model K [--cwd DIR] [--max-output N] [--timeout MS] [--account same|hook] [--background] [--fresh] [--json] "question"
+  orch recall "query" [--limit N] [--all-repos] [--json]  search past answers and results
   orch do --model K --own GLOBS [--test CMD] [--worktree DIR] [--cwd DIR] [--background] [--timeout MS] [--account same|hook] [--json] "requirement"
   orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
@@ -115,7 +116,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	cmd, rest := args[0], args[1:]
 	// A worker may only read: every command that changes runs or panes is Head-only.
-	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "hud"}, cmd) ||
+	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "hud", "recall"}, cmd) ||
 		(cmd == "goal" && len(rest) > 0 && (rest[0] == "status" || rest[0] == "check")) ||
 		(cmd == "run" && len(rest) > 0 && rest[0] == "list") ||
 		(cmd == "dag" && len(rest) > 0 && (rest[0] == "check" || rest[0] == "status"))
@@ -138,6 +139,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "hud":
 		return cmdHud(rest, stdout, stderr)
+	case "recall":
+		return recallCommand(rest, stdout, stderr)
 	case "ask", "do", "test":
 		return taskCommand(cmd, rest, stdout, stderr)
 	case "__task":

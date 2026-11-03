@@ -495,11 +495,15 @@ func diffForTask(t *Task) {
 }
 func runTask(t *Task) error {
 	start := time.Now()
+	cacheKey, _ := os.ReadFile(filepath.Join(t.Dir, "ask-cache-key"))
 	stopBeat := heartbeat(t)
 	defer func() {
 		stopBeat()
 		t.DurationMS = time.Since(start).Milliseconds()
 		_ = saveTask(t)
+		if t.Kind == "ask" {
+			storeAskCache(string(cacheKey), t)
+		}
 	}()
 	m, err := modelByKey(t.Key)
 	if err != nil {
@@ -831,6 +835,10 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	key := fs.String("model", "", "catalog key")
 	cwd := fs.String("cwd", "", "directory")
 	maxOutput := fs.Int("max-output", 2000, "characters")
+	var fresh bool
+	if kind == "ask" {
+		fs.BoolVar(&fresh, "fresh", false, "bypass cached answer")
+	}
 	var own ownedFlags
 	fs.Var(&own, "own", "owned globs")
 	testCmd := fs.String("test", "", "test command")
@@ -896,6 +904,16 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch: --own is required")
 		return 2
 	}
+	cacheKey := ""
+	if kind == "ask" {
+		cacheKey = askCacheKey(pos[0], *key, *maxOutput, *cwd)
+		if !fresh {
+			if cached := lookupAskCache(cacheKey); cached != nil {
+				fmt.Fprintln(stdout, cachedAskReport(cached, *maxOutput, *asJSON))
+				return 0
+			}
+		}
+	}
 	release := func() {}
 	committed := false
 	defer func() {
@@ -913,6 +931,9 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "orch:", err)
 		return 1
+	}
+	if cacheKey != "" {
+		_ = os.WriteFile(filepath.Join(t.Dir, "ask-cache-key"), []byte(cacheKey), 0600)
 	}
 	// newTask has recorded the task in its run; it remains counted from here.
 	committed = true

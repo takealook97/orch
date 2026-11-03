@@ -59,6 +59,8 @@ Length alone never keeps a task with the Head. If the only way to trust a result
 
 **Which channel:**
 
+Before new research, run `orch recall "query"` to search prior answers and results (add `--all-repos` to search beyond the current repository). `orch ask` reuses successful answers for an identical question, model, output cap, and code state; use `--fresh` to force a new answer. Cache lifetime defaults to seven days; `ORCH_ASK_CACHE_TTL` sets hours, and `0` disables caching. Only asks are cached.
+
 | Situation | Channel |
 |---|---|
 | One bounded read-only question expected to finish in under 5 minutes (search, trace a call path, summarize a log or doc) | `orch ask --model <key> "..."` |
