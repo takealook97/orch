@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 // cliAdapter owns both invocation modes for one CLI. Adding a CLI flag belongs here.
 type cliAdapter interface {
@@ -28,6 +31,24 @@ func adapterFor(kind string) (cliAdapter, error) {
 	return nil, fmt.Errorf("unknown CLI kind %s", kind)
 }
 
+// claudeNameRe matches orch's Claude naming: family, version, optional effort joined with "-".
+var claudeNameRe = regexp.MustCompile(`^(opus|sonnet|haiku|fable)-(\d+)(?:\.(\d+))?(?:-(low|medium|high|xhigh|max))?$`)
+
+// claudeModelArgs translates an orch Claude name such as opus-5.5-medium into the CLI model id
+// (claude-opus-5-5) and effort. The CLI accepts neither the orch name nor dotted versions, so any
+// other value (raw CLI id, alias) passes through unchanged with no effort.
+func claudeModelArgs(name string) (string, string) {
+	g := claudeNameRe.FindStringSubmatch(name)
+	if g == nil {
+		return name, ""
+	}
+	id := "claude-" + g[1] + "-" + g[2]
+	if g[3] != "" {
+		id += "-" + g[3]
+	}
+	return id, g[4]
+}
+
 // modelArgs selects the resolved model and effort for every CLI invocation.
 func modelArgs(m Model) ([]string, error) {
 	m, id, _, err := resolveModel(m)
@@ -35,6 +56,13 @@ func modelArgs(m Model) ([]string, error) {
 		return nil, err
 	}
 	args := []string{"--model", id}
+	if m.Kind == "claude" {
+		id, suffix := claudeModelArgs(id)
+		args = []string{"--model", id}
+		if suffix != "" {
+			return append(args, "--effort", suffix), nil
+		}
+	}
 	switch {
 	case m.Effort == "":
 	case m.Kind == "codex":

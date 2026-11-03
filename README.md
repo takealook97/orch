@@ -89,8 +89,8 @@ CR launches keep unfocused owned panes, assign the worker name after detection, 
 | `codex-medium-m` | codex | openai | Terra | `gpt-6.1-terra` | medium | `CODEX_MEDIUM_M` |
 | `codex-high-l` | codex | openai | Sol | `gpt-6.1-sol` | low | `CODEX_HIGH_L` |
 | `codex-high-m` | codex | openai | Sol | `gpt-6.1-sol` | medium | `CODEX_HIGH_M` |
-| `claude-high-m` | claude | anthropic | Opus | `opus` | medium | `CLAUDE_HIGH_M` |
-| `claude-medium-m` | claude | anthropic | Sonnet | `sonnet` | medium | `CLAUDE_MEDIUM_M` |
+| `claude-high-m` | claude | anthropic | Opus | `opus-5.5-medium` | — | `CLAUDE_HIGH_M` |
+| `claude-medium-m` | claude | anthropic | Sonnet | `sonnet-5.5-medium` | — | `CLAUDE_MEDIUM_M` |
 | `gemini-medium-m` | agy | google | Gemini | `gemini-3.8-flash-medium` | — | `GEMINI_MEDIUM_M` |
 
 OpenAI tiers: Luna < Terra < Sol (independent of effort). Deprecated alias: codex-medium-h -> codex-low-h. CODEX_LOW_H takes precedence over CODEX_MEDIUM_H.

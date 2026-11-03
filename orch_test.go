@@ -19,8 +19,8 @@ func TestCatalogFixed(t *testing.T) {
 		"codex-medium-m":  {"terra", "medium"},
 		"codex-high-l":    {"sol", "low"},
 		"codex-high-m":    {"sol", "medium"},
-		"claude-high-m":   {"opus", "medium"},
-		"claude-medium-m": {"sonnet", "medium"},
+		"claude-high-m":   {"opus", ""},
+		"claude-medium-m": {"sonnet", ""},
 		"gemini-medium-m": {"gemini-flash", ""},
 	}
 	if len(catalog) != len(want) {
@@ -84,9 +84,19 @@ func TestLaunchArgs(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	m, _ = modelByKey("claude-high-m")
-	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model "+embeddedManifest.Models["opus"]+" --effort medium" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-opus-5-5 --effort medium" {
 		t.Fatalf("got %q", got)
 	}
+	m, _ = modelByKey("claude-medium-m")
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-sonnet-5-5 --effort medium" {
+		t.Fatalf("got %q", got)
+	}
+	t.Setenv("CLAUDE_HIGH_M", "opus-5.5-high")
+	m, _ = modelByKey("claude-high-m")
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-opus-5-5 --effort high" {
+		t.Fatalf("env override got %q", got)
+	}
+	t.Setenv("CLAUDE_HIGH_M", "")
 	m, _ = modelByKey("gemini-medium-m")
 	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model "+embeddedManifest.Models["gemini-flash"] {
 		t.Fatalf("got %q", got)
@@ -107,7 +117,7 @@ func TestModelOverride(t *testing.T) {
 		t.Fatalf("codex-high-l followed codex-high-m override: %q", got)
 	}
 	m, _ = modelByKey("claude-high-m")
-	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-next --effort medium" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-next" {
 		t.Fatalf("got %q", got)
 	}
 	for _, bad := range []string{"--yolo", "gpt 7", `x"y`} {
