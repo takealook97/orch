@@ -1,6 +1,5 @@
 // Calendar labels follow local time, including daylight saving time.
 const dayMS = 24 * 60 * 60 * 1000;
-const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const day = date => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / dayMS;
 const clock = date => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 export function pctColorRole(pct) {
@@ -10,7 +9,7 @@ export function formatReset(iso, now = new Date()) {
   const reset = new Date(iso);
   if (!iso || !Number.isFinite(reset.getTime())) return '';
   if (reset <= now) return 'soon';
-  return `${reset.getMonth() + 1}/${reset.getDate()}(${weekdays[reset.getDay()]}) ${clock(reset)}`;
+  return `${reset.getMonth() + 1}/${reset.getDate()} ${clock(reset)}`;
 }
 export function formatCouponExpiry(iso, now = new Date()) {
   const expires = new Date(iso);
