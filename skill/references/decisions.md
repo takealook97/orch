@@ -158,3 +158,9 @@ The former codex-medium-h key is a deprecated Luna alias, including saved runs. 
 - Kill, wait for finished/not_found, rm, then confirm disappearance with app inventory. Last-terminal exit automatically removes tabs and empty spaces; explicitly close only an owned empty overflow tab that remains.
 
 - Herdr.app layout normalization tolerates an auto-removed overflow tab only after `hc get` confirms its recorded workers are no longer live; a missing Head tab or an inconclusive lookup remains an error. Readiness checks the screen for folder trust even before agent status arrives, and the `hc run` guard parses value-taking options and launch wrappers.
+
+## 2026-11-03 — Reuse research and recall prior evidence
+
+- Cache only successful one-off asks in the orch home, keyed by normalized question, model key, output cap, Git root, HEAD, and dirty state (including untracked file contents). Non-Git directories, failed asks, do, and test do not populate the cache. Store the launch key with the task so background completion follows the same rules.
+- Default TTL is seven days; `ORCH_ASK_CACHE_TTL` is hours (`0` disables). `--fresh` skips lookup and refreshes the entry after success. Hits retain the task report shape and mark the original task directory as cached, without launching a model or registering another task.
+- `orch recall` uses case-insensitive AND term matching over ask/do answers, worker results, knowledge, and findings. Filter by repository by default, with `--all-repos` for global recall; rank matching-line count before recency and cap excerpts to three lines of 160 characters each. Run recall before commissioning new research; no vector index is required.
