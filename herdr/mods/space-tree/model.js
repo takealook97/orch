@@ -1,0 +1,94 @@
+// Pure tree projection. Git ordering/linked parent information comes from spaces.
+export const machineId = name => `machine:${name ?? ""}`;
+export const rowId = (kind, id) => `${kind}:${id}`;
+export const aliasKey = (kind, id) => `space-tree.alias.${kind}.${id}`;
+
+export function orchIndexes(orch = {}) {
+  const workers = {}, heads = {}, tabs = {}, workspaces = new Set();
+  for (const run of orch.runs ?? []) {
+    if (run.workspace) workspaces.add(run.workspace);
+    if (run.head_terminal) heads[run.head_terminal] = run;
+    for (const w of run.workers ?? []) if (w.terminal) workers[w.terminal] = w;
+    if (run.tab) {
+      const prev = tabs[run.tab] ?? { done: 0, total: 0, mode: run.mode ?? "" };
+      prev.total += (run.workers ?? []).length;
+      prev.done += (run.workers ?? []).filter(w => w.status === "done").length;
+      tabs[run.tab] = prev;
+    }
+  }
+  return { workers, heads, tabs, workspaces,
+    terminals: Object.fromEntries((orch.terminals ?? []).map(t => [t.address, t])) };
+}
+
+const programName = pane => pane.program?.name || pane.app || pane.mod || "Terminal";
+export function paneName(pane, indexInTab = 0, orchIndex = {}, aliases = {}) {
+  const alias = aliases[aliasKey("pane", pane.terminal)];
+  if (alias) return alias;
+  const worker = orchIndex.workers?.[pane.terminal];
+  if (worker) return [worker.label, worker.name].filter(Boolean).join(" · ");
+  if (orchIndex.heads?.[pane.terminal]) return "Head";
+  return `${indexInTab === 0 ? "main" : `sub ${indexInTab}`} · ${programName(pane)}`;
+}
+
+export function paneSub(pane, orchIndex = {}) {
+  const info = orchIndex.workers?.[pane.terminal] ?? orchIndex.terminals?.[pane.terminal];
+  const model = [info?.model, info?.effort].filter(Boolean).join(" ");
+  return [model || programName(pane), pane.status || "idle"].join(" · ");
+}
+
+// true means folded. Explicit stored values always override these defaults.
+export function foldDefault(kind, id, activeSpaceId) {
+  return kind === "space" && id !== activeSpaceId;
+}
+export function pruneFolded(folded = {}, liveIds) {
+  const live = new Set(liveIds);
+  return Object.fromEntries(Object.entries(folded).filter(([id]) => live.has(id)));
+}
+
+export function buildTree({ machines = [], spaces = [], panes = [], orch = {}, aliases = {},
+  folded = {}, activeSpaceId } = {}) {
+  const index = orchIndexes(orch), result = [];
+  // Accept shipped ordered() entries ({w,i,g,tree}) or explicit {parentId}.
+  let parent = null;
+  const entries = spaces.map((entry, i) => {
+    const s = entry.w ?? entry;
+    if (!entry.tree) parent = s.id;
+    return { ...s, git: entry.g ?? s.git, order: entry.i ?? i,
+      parentId: s.parentId ?? (entry.tree ? parent : null), tree: entry.tree };
+  });
+  const names = [null, ...new Set([...machines.map(m => m.name), ...entries.map(s => s.machine)]
+    .filter(name => name != null))].sort((a, b) => a === null ? -1 : b === null ? 1 : a.localeCompare(b));
+  const emit = (kind, id, depth, fields) => {
+    const key = kind === "machine" ? machineId(id) : rowId(kind, id);
+    const row = { kind, id, key, depth, guide: "", foldable: kind !== "pane",
+      open: !(folded[key] ?? foldDefault(kind, id, activeSpaceId)), ...fields };
+    result.push(row); return row;
+  };
+  const addSpace = (s, depth, guide = "") => {
+    const row = emit("space", s.id, depth, { name: s.name, status: s.status, guide,
+      active: s.active, data: s, badge: index.workspaces.has(s.id) ? "orch" : "" });
+    if (!row.open) return;
+    const children = entries.filter(c => c.parentId === s.id);
+    const tabs = s.tabs ?? [];
+    tabs.forEach((tab, ti) => {
+      const ps = panes.filter(p => p.tab === tab.id), run = index.tabs[tab.id];
+      const tr = emit("tab", tab.id, depth + 1, { name: tab.name, data: tab, space: s.id,
+        guide: ti === tabs.length - 1 && !children.length ? "└" : "├", count: ps.length,
+        status: tab.status, active: tab.active,
+        badge: run ? `orch ${run.mode} · ${run.done}/${run.total}` : "" });
+      if (!tr.open) return;
+      ps.forEach((pane, pi) => emit("pane", pane.pane, depth + 2, {
+        name: paneName(pane, pi, index, aliases), sub: paneSub(pane, index),
+        orch: !!(index.workers[pane.terminal] || index.heads[pane.terminal]),
+        data: pane, terminal: pane.terminal, status: pane.status, active: pane.focused,
+        guide: pi === ps.length - 1 ? "└" : "├" }));
+    });
+    children.forEach((child, i) => addSpace(child, depth + 1, i === children.length - 1 ? "└" : "├"));
+  };
+  names.forEach(name => {
+    const data = machines.find(m => (m.name ?? null) === name) ?? { name, layout: "ready" };
+    const row = emit("machine", name, 0, { name: aliases[aliasKey("machine", name ?? "local")] || name || "This computer", data });
+    if (row.open) entries.filter(s => (s.machine ?? null) === name && !s.parentId).forEach(s => addSpace(s, 1));
+  });
+  return result;
+}
