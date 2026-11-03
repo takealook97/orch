@@ -25,23 +25,31 @@ func appDocGet() (appDocument, error) {
 
 var errAppTabNotFound = errors.New("app tab not found")
 
+// docTab finds a tab by id. Tab ids are unique, and Herdr re-ids a space when its tab moves,
+// so the given space is only the preferred first match; every space is searched.
 func docTab(d map[string]any, space, tab string) (map[string]any, error) {
 	spaces, _ := d["spaces"].([]any)
-	for _, ss := range spaces {
-		s, _ := ss.(map[string]any)
-		if s["id"] != space {
-			continue
-		}
+	find := func(s map[string]any) map[string]any {
 		tabs, _ := s["tabs"].([]any)
 		for _, tt := range tabs {
-			t, _ := tt.(map[string]any)
-			if t["id"] == tab {
+			if t, _ := tt.(map[string]any); t["id"] == tab {
+				return t
+			}
+		}
+		return nil
+	}
+	for _, preferred := range []bool{true, false} {
+		for _, ss := range spaces {
+			s, _ := ss.(map[string]any)
+			if (s["id"] == space) != preferred {
+				continue
+			}
+			if t := find(s); t != nil {
 				return t, nil
 			}
 		}
-		return nil, fmt.Errorf("%w: %s in space %s", errAppTabNotFound, tab, space)
 	}
-	return nil, fmt.Errorf("app space %s not found", space)
+	return nil, fmt.Errorf("%w: %s in space %s", errAppTabNotFound, tab, space)
 }
 func appLeaves(node any) ([]map[string]any, error) {
 	n, ok := node.(map[string]any)
@@ -246,6 +254,9 @@ func appOwnedTabs(head string) (map[string][]string, map[string]appIdentity, err
 	return tabs, known, nil
 }
 func normalizeAppLayouts(head string) error {
+	if err := refreshAppLocations(head); err != nil {
+		return err
+	}
 	space, tab := headSpace(), headTab()
 	if space == "" || tab == "" {
 		return fmt.Errorf("cannot resolve app Head location")
