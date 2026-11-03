@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -388,4 +389,35 @@ func hudParseGemini(raw []byte) (HUDAccount, error) {
 		return a, errors.New("gemini usage response has no supported windows")
 	}
 	return a, nil
+}
+
+// Only the email local part leaves this function; credentials are never cached.
+func hudGeminiLabel(ctx context.Context) string {
+	raw, err := exec.CommandContext(ctx, "security", "find-generic-password", "-s", "gemini", "-a", "antigravity", "-w").Output()
+	if err != nil {
+		return ""
+	}
+	return hudParseGeminiLabel(string(raw))
+}
+
+func hudParseGeminiLabel(raw string) string {
+	encoded, ok := strings.CutPrefix(strings.TrimSpace(raw), "go-keyring-base64:")
+	if !ok {
+		return ""
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return ""
+	}
+	var value struct {
+		Email string `json:"id_token_email"`
+	}
+	if json.Unmarshal(data, &value) != nil {
+		return ""
+	}
+	local, domain, ok := strings.Cut(value.Email, "@")
+	if !ok || domain == "" {
+		return ""
+	}
+	return local
 }
