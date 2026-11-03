@@ -1,5 +1,14 @@
 export const tabIconColor = (status, active) => active ? "foreground" : status === "working" || status === "blocked" ? status : "muted";
 
+export const aggregateStatus = statuses => ["blocked", "working", "done", "idle"]
+  .find(status => statuses.includes(status)) ?? "idle";
+export const machineConnected = (row, machine) => row.id == null || machine?.state === "connected" || row.data.layout === "ready";
+export const rowDisplay = (row, connected = true, hovered = false) => ({
+  dot: row.kind === "pane" || (row.kind === "machine" ? !connected : !row.open),
+  count: row.kind === "tab" && !row.open && row.count >= 2 ? `· ${row.count}` : "",
+  add: row.kind === "machine" && connected && hovered,
+});
+
 // Pure tree projection. Git ordering/linked parent information comes from spaces.
 export const machineId = name => `machine:${name ?? ""}`;
 export const rowId = (kind, id) => `${kind}:${id}`;
@@ -11,12 +20,7 @@ export function orchIndexes(orch = {}) {
     if (run.workspace) workspaces.add(run.workspace);
     if (run.head_terminal) heads[run.head_terminal] = run;
     for (const w of run.workers ?? []) if (w.terminal) workers[w.terminal] = w;
-    if (run.tab) {
-      const prev = tabs[run.tab] ?? { done: 0, total: 0, mode: run.mode ?? "" };
-      prev.total += (run.workers ?? []).length;
-      prev.done += (run.workers ?? []).filter(w => w.status === "done").length;
-      tabs[run.tab] = prev;
-    }
+    if (run.tab) tabs[run.tab] = true;
   }
   return { workers, heads, tabs, workspaces,
     terminals: Object.fromEntries((orch.terminals ?? []).map(t => [t.address, t])) };
@@ -110,16 +114,20 @@ export function buildTree({ machines = [], spaces = [], panes = [], orch = {}, a
     result.push(row); return row;
   };
   const addSpace = (s, depth, guide = "") => {
-    const row = emit("space", s.id, depth, { name: s.name, status: s.status, guide,
+    const tabStatus = tab => {
+      const ps = panes.filter(p => p.tab === tab.id);
+      return aggregateStatus(ps.length ? ps.map(p => p.status) : [tab.status]);
+    };
+    const statuses = (s.tabs ?? []).map(tabStatus);
+    const row = emit("space", s.id, depth, { name: s.name, status: aggregateStatus(statuses.length ? statuses : [s.status]), guide,
       active: s.id === activeSpaceId, data: s });
     const children = entries.filter(c => c.parentId === s.id);
     const tabs = row.open ? s.tabs ?? [] : [];
     tabs.forEach((tab, ti) => {
-      const ps = panes.filter(p => p.tab === tab.id), run = index.tabs[tab.id];
+      const ps = panes.filter(p => p.tab === tab.id);
       const tr = emit("tab", tab.id, depth + 1, { name: tab.name, data: tab, space: s.id,
         guide: ti === tabs.length - 1 && !children.length ? "└" : "├", count: ps.length,
-        status: tab.status, active: !!tab.active && s.id === activeSpaceId,
-        badge: run ? `orch ${run.mode} · ${run.done}/${run.total}` : "" });
+        status: tabStatus(tab), active: !!tab.active && s.id === activeSpaceId });
       if (!tr.open) return;
       ps.forEach((pane, pi) => emit("pane", pane.pane, depth + 2, {
         name: paneName(pane, pi, index, aliases), sub: paneSub(pane, index, pi),
