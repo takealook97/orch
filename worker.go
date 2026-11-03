@@ -607,7 +607,7 @@ func promptMessage(r *Run, w *Worker) string {
 	return fmt.Sprintf("%s Read contract %s and work only within its scope and permissions. "+
 		"Write the result to %s in the contract Result report format. Add the status line only after the file is complete. "+
 		"Do not delegate: no panes, subagents, Agent/Workflow tools, or orch.",
-		promptMarker(w.Name), w.Contract, w.Result)
+		promptMarker(w.Name), w.Contract, w.Result) + promptReferences(r, w.Name, w.Role)
 }
 
 func contractHash(body []byte) string {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -294,6 +295,7 @@ func newRun(request, mode, playbook, goal string, adhoc bool) (*Run, error) {
 		"acceptance.md": acceptanceTemplate,
 		"decisions.md":  decisionsTemplate,
 		"findings.md":   findingsTemplate,
+		"knowledge.md":  knowledgeTemplate,
 	}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(r.dir(), name), []byte(body), 0600); err != nil {
@@ -306,4 +308,73 @@ func newRun(request, mode, playbook, goal string, adhoc bool) (*Run, error) {
 		r.event("ad-hoc task run (closed; owns no panes)")
 	}
 	return r, saveRun(r)
+}
+
+const knowledgeTemplate = "# Knowledge\n<!-- Verified reusable facts, one bullet each with a source path; merged by orch, curated by the Head. -->\n"
+
+// mergeKnowledge serializes read/dedupe/write with the run state and event log.
+func mergeKnowledge(runID, worker, result string) error {
+	if st := resultStatus(result); st != "done" && st != "partial" {
+		return nil
+	}
+	return withRun(runID, func(r *Run) error {
+		data, err := os.ReadFile(result)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(r.dir(), "knowledge.md")
+		old, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if len(old) == 0 {
+			old = []byte(knowledgeTemplate)
+		}
+		factKey := func(line string) string {
+			line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+			if i := strings.Index(line, " — "); i >= 0 {
+				return line[:i]
+			}
+			if i := strings.LastIndex(line, " (from "); i >= 0 {
+				line = line[:i]
+			}
+			return line
+		}
+		seen := map[string]bool{}
+		for _, line := range strings.Split(string(old), "\n") {
+			if strings.HasPrefix(line, "- ") {
+				seen[factKey(line)] = true
+			}
+		}
+		body := string(old)
+		active, count, bullets := false, 0, 0
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "## ") {
+				active = strings.TrimSpace(line) == "## Reusable facts"
+				continue
+			}
+			if !active || !strings.HasPrefix(line, "- ") || bullets >= 8 {
+				continue
+			}
+			bullets++
+			key := factKey(line)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			if !strings.HasSuffix(body, "\n") {
+				body += "\n"
+			}
+			body += strings.TrimSpace(line) + " (from " + worker + ")\n"
+			count++
+		}
+		if count == 0 {
+			return nil
+		}
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			return err
+		}
+		r.event("knowledge +%d from %s", count, worker)
+		return nil
+	})
 }

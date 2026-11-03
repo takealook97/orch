@@ -120,6 +120,9 @@ func (rp *reaper) once(log io.Writer) (bool, error) {
 		if rp.notWorking[w.Name] < 2 {
 			continue
 		}
+		if err := mergeKnowledge(rp.runID, w.Name, w.Result); err != nil {
+			fmt.Fprintf(log, "knowledge merge %s: %v\n", w.Name, err)
+		}
 		if err := closeWorkerAs(rp.runID, w.Name, w.Pane, true); err != nil {
 			fmt.Fprintf(log, "%s reap %s: %v\n", time.Now().Format(time.RFC3339), w.Name, err)
 			continue

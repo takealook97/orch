@@ -70,6 +70,7 @@ func contractTemplate(r *Run, name, role, key string) string {
 
 ## Self-check
 - <commands to run, conditions to check>
+- Put only verified, reusable facts with a source path or command in the optional Reusable facts section (at most 8).
 
 ## Result report
 Write the following format to %[6]s. Add the status line only after the file is complete.
@@ -83,6 +84,8 @@ Write the following format to %[6]s. Add the status line only after the file is 
 - <path and description>
 ## Evidence
 - command: `+"`<cmd>`"+` → exit <code>, output excerpt or evidence/ path
+## Reusable facts
+- <fact> — <source path or command>
 ## Uncertainty
 - <what is uncertain and why>
 ## Blockers

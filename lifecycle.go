@@ -112,9 +112,13 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				continue
 			}
 			if st != "" {
+				mergeErr := mergeKnowledge(runID, name, w.Result)
 				setStatus(runID, name, st)
 				// A finished worker's pane is always closed at once (no reuse).
 				detail := w.Result
+				if mergeErr != nil {
+					detail += " · knowledge merge failed: " + mergeErr.Error()
+				}
 				if w.Pane == "" && w.Reaped {
 					detail += " · pane closed by the reaper"
 				}
@@ -381,17 +385,17 @@ func collectWorker(runFlag, name string) (string, string, error) {
 		return b.String(), "", nil
 	}
 	fmt.Fprintf(&b, "status: %s\nresult: %s\n", st, w.Result)
-	if data, err := os.ReadFile(w.Result); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(line, "- summary:") || strings.HasPrefix(line, "summary:") {
-				if rs := []rune(line); len(rs) > 300 {
-					line = string(rs[:300]) + "…"
-				}
-				fmt.Fprintln(&b, strings.TrimPrefix(line, "- "))
-				break
-			}
+	if w.Pane == "" || agentStopped(w) {
+		if err := mergeKnowledge(runID, name, w.Result); err != nil {
+			fmt.Fprintf(&b, "knowledge merge failed: %v\n", err)
 		}
 	}
+	if data, err := os.ReadFile(w.Result); err == nil {
+		if summary := collectSummary(string(data)); summary != "" {
+			fmt.Fprintln(&b, summary)
+		}
+	}
+
 	var closeErr error
 	if w.Pane == "" && w.Reaped {
 		fmt.Fprintf(&b, "pane closed by the reaper\n")
@@ -766,4 +770,28 @@ func resume(runID string) ([]string, error) {
 		return nil
 	})
 	return report, err
+}
+
+// collectSummary preserves up to three physical lines and caps displayed text at 600 runes.
+func collectSummary(body string) string {
+	var lines []string
+	for _, line := range strings.Split(body, "\n") {
+		if len(lines) == 0 {
+			if !strings.HasPrefix(line, "- summary:") && !strings.HasPrefix(line, "summary:") {
+				continue
+			}
+			lines = append(lines, strings.TrimPrefix(line, "- "))
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if len(lines) >= 3 || strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "##") {
+			break
+		}
+		lines = append(lines, line)
+	}
+	text := strings.TrimRight(strings.Join(lines, "\n"), "\n")
+	if rs := []rune(text); len(rs) > 600 {
+		text = string(rs[:599]) + "…"
+	}
+	return text
 }
