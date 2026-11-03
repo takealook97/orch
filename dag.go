@@ -48,7 +48,7 @@ func (n DagNode) inline() bool { return n.Run != "" || n.Pane != nil && !*n.Pane
 // dir is where the node runs: the worktree, else cwd, else the Head's directory.
 func (n DagNode) dir() string {
 	d := n.Cwd
-	if n.Worktree != "" {
+	if n.Worktree != "" && n.Worktree != "none" {
 		d = n.Worktree
 	}
 	if d == "" {
@@ -139,7 +139,7 @@ func validateDag(r *Run, d Dag) []string {
 			if n.Role != roleMech {
 				bad("%s: a run node must have role %s", n.Name, roleMech)
 			}
-			if n.Worktree != "" && n.Cwd != "" {
+			if n.Worktree != "" && n.Worktree != "none" && n.Cwd != "" {
 				bad("%s: set cwd or worktree, not both", n.Name)
 			}
 			for _, need := range n.Needs {
@@ -499,7 +499,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 			w, err := spawn(spawnOpts{
 				Serves: n.Serves, FixOf: n.FixOf, Run: runID, Key: n.Model, Name: n.Name, Role: n.Role, Purpose: n.Purpose,
 				Reviews: currentWorkers(st, n.Reviews), AuthorFamilies: n.AuthorFamily,
-				Cwd: n.Cwd, Worktree: n.Worktree, Account: n.Account,
+				Cwd: n.Cwd, Worktree: nodeWorktree(n.Worktree), NoWorktree: n.Worktree == "none", Account: n.Account,
 			})
 			if err != nil {
 				if strings.Contains(err.Error(), "is full") {

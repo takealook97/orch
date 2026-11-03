@@ -15,25 +15,32 @@ import (
 )
 
 type Worker struct {
-	ModelID    string   `json:"model_id,omitempty"`
-	Terminal   string   `json:"terminal,omitempty"`
-	Name       string   `json:"name"`
-	Key        string   `json:"key"`
-	Family     string   `json:"family"`
-	Kind       string   `json:"kind"`
-	Pane       string   `json:"pane"`
-	Tab        string   `json:"tab,omitempty"`
-	Role       string   `json:"role"`
-	Purpose    string   `json:"purpose,omitempty"`
-	Reviews    []string `json:"reviews,omitempty"`
-	Account    string   `json:"account"`
-	Cwd        string   `json:"cwd"`
-	Worktree   string   `json:"worktree,omitempty"`
-	Contract   string   `json:"contract,omitempty"`
-	Result     string   `json:"result"`
-	Status     string   `json:"status"` // spawned, prompted, done, blocked, partial, failed, quota, lost, closed
-	FallbackOf string   `json:"fallback_of,omitempty"`
-	Tried      []string `json:"tried,omitempty"`
+	Branch        string   `json:"branch,omitempty"`
+	WorktreeAuto  bool     `json:"worktree_auto,omitempty"`
+	WorktreeBase  string   `json:"worktree_base,omitempty"`
+	WorktreeStart string   `json:"worktree_start,omitempty"`
+	Commit        string   `json:"commit,omitempty"`
+	Committed     bool     `json:"committed,omitempty"`
+	Merged        bool     `json:"merged,omitempty"`
+	ModelID       string   `json:"model_id,omitempty"`
+	Terminal      string   `json:"terminal,omitempty"`
+	Name          string   `json:"name"`
+	Key           string   `json:"key"`
+	Family        string   `json:"family"`
+	Kind          string   `json:"kind"`
+	Pane          string   `json:"pane"`
+	Tab           string   `json:"tab,omitempty"`
+	Role          string   `json:"role"`
+	Purpose       string   `json:"purpose,omitempty"`
+	Reviews       []string `json:"reviews,omitempty"`
+	Account       string   `json:"account"`
+	Cwd           string   `json:"cwd"`
+	Worktree      string   `json:"worktree,omitempty"`
+	Contract      string   `json:"contract,omitempty"`
+	Result        string   `json:"result"`
+	Status        string   `json:"status"` // spawned, prompted, done, blocked, partial, failed, quota, lost, closed
+	FallbackOf    string   `json:"fallback_of,omitempty"`
+	Tried         []string `json:"tried,omitempty"`
 	// Baseline maps files already changed at prompt time to their content hash.
 	Baseline      map[string]string `json:"baseline,omitempty"`
 	BaselineRoot  string            `json:"baseline_root,omitempty"`
@@ -307,6 +314,9 @@ func newRun(request, mode, playbook, goal string, adhoc bool) (*Run, error) {
 	if adhoc {
 		r.Status, r.Adhoc = "closed", true
 		r.event("ad-hoc task run (closed; owns no panes)")
+	}
+	if cwd, err := os.Getwd(); err == nil && !adhoc {
+		warnOtherHeads(r, cwd, os.Stderr)
 	}
 	return r, saveRun(r)
 }

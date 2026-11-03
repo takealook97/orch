@@ -395,6 +395,10 @@ func collectWorker(runFlag, name string) (string, string, error) {
 			fmt.Fprintln(&b, summary)
 		}
 	}
+	if w.Merged && w.Worktree == "" {
+		fmt.Fprintf(&b, "merged worktree already removed: %s (%s)\n", w.Branch, w.Commit)
+		return b.String(), st, nil
+	}
 
 	var closeErr error
 	if w.Pane == "" && w.Reaped {
@@ -418,10 +422,10 @@ func collectWorker(runFlag, name string) (string, string, error) {
 		var root string
 		var changed []string
 		if err == nil && checkScope {
-			root, err = scopeRepository(w.Cwd, string(body))
+			root, err = workerScopeRepository(w, string(body))
 		}
 		if err == nil && checkScope {
-			changed, err = changedFiles(root, contractField(string(body), "base commit"))
+			changed, err = changedFiles(root, workerScopeBase(w, string(body)))
 		}
 		if err != nil {
 			// Fail closed: an unverifiable scope is not a pass.
@@ -437,12 +441,34 @@ func collectWorker(runFlag, name string) (string, string, error) {
 				baseline = nil
 			}
 			fresh := freshChanges(root, changed, baseline)
-			if bad := repositoryScopeViolations(w.Cwd, root, fresh, ownedGlobs(string(body))); len(bad) > 0 {
+			if bad := repositoryScopeViolations(w.Cwd, root, fresh, workerOwnedGlobs(w, string(body))); len(bad) > 0 {
 				st = "failed"
 				fmt.Fprintf(&b, "scope violation; marked failed: change outside owned files %s\n", strings.Join(bad, ", "))
 			} else if len(fresh) > 0 {
 				fmt.Fprintf(&b, "changed files (in scope): %s\n", strings.Join(fresh, ", "))
 			}
+		}
+	}
+	if w.Branch != "" && !w.Committed && (st == "done" || st == "partial") && closeErr == nil && (w.Pane == "" || agentStopped(w)) {
+		body, _ := os.ReadFile(w.Result)
+		hash, err := commitWorktree(w.Worktree, runID, name, collectSummary(string(body)))
+		if err != nil {
+			st = "failed"
+			fmt.Fprintf(&b, "worktree commit failed; left in %s: %v\n", w.Worktree, err)
+		} else if err := withRun(runID, func(r *Run) error {
+			x := r.worker(name)
+			x.Commit, x.Committed = hash, true
+			r.event("committed %s (%s)", name, hash)
+			return nil
+		}); err != nil {
+			return b.String(), st, err
+		} else {
+			fmt.Fprintf(&b, "committed: %s (%s)\n", w.Branch, hash)
+		}
+	} else if w.Branch != "" && st == "failed" {
+		fmt.Fprintf(&b, "worktree left uncommitted: %s (branch %s)\n", w.Worktree, w.Branch)
+		if err := withRun(runID, func(r *Run) error { r.worker(name).Committed = false; return nil }); err != nil {
+			return b.String(), st, err
 		}
 	}
 	setStatus(runID, name, st)
@@ -583,13 +609,7 @@ func closeRun(runID string, end bool) ([]string, error) {
 	}
 	var notes []string
 	r, _ = loadRun(runID)
-	for _, w := range r.Workers {
-		if w.Worktree != "" {
-			if _, err := os.Stat(w.Worktree); err == nil {
-				notes = append(notes, fmt.Sprintf("worktree remains: %s (worker %s). remove with git worktree remove after merging", w.Worktree, w.Name))
-			}
-		}
-	}
+	notes = append(notes, cleanupRunWorktrees(r, false)...)
 	if end {
 		_ = withRun(runID, func(r *Run) error {
 			r.Status = "closed"
@@ -622,7 +642,13 @@ func gc(orphans bool) ([]string, error) {
 		return nil, err
 	}
 	// Ad-hoc task runs own no panes; old ones are only clutter.
-	report := pruneAdhoc(runs, adhocRetention)
+	var report []string
+	for _, r := range runs {
+		if r.Status == "closed" && (r.Adhoc || r.HeadPane != headID() || runBackend(r) != currentBackend()) {
+			report = append(report, cleanupRunWorktrees(r, true)...)
+		}
+	}
+	report = append(report, pruneAdhoc(runs, adhocRetention)...)
 	panes, err := listPanes("")
 	if err != nil {
 		return report, err
@@ -700,6 +726,9 @@ func gc(orphans bool) ([]string, error) {
 			})
 			report = append(report, fmt.Sprintf("%s: Head disappeared; run ended", r.ID))
 		}
+		if fresh, err := loadRun(r.ID); err == nil {
+			report = append(report, cleanupRunWorktrees(fresh, true)...)
+		}
 	}
 	return report, nil
 }
@@ -712,6 +741,21 @@ func pruneAdhoc(runs []*Run, keep time.Duration) []string {
 	var report []string
 	for _, r := range runs {
 		if !r.Adhoc || time.Since(r.Created) <= keep {
+			continue
+		}
+		// Worktree records must survive until integration and cleanup, even for ad-hoc tasks.
+		hasWorktree := false
+		fresh, err := loadRun(r.ID)
+		if err != nil {
+			continue
+		}
+		for _, e := range worktreeEntries(fresh) {
+			_, branchErr := gitOutput(*e.Base, "show-ref", "--verify", "refs/heads/"+*e.Branch)
+			if *e.Dir != "" || *e.Branch != "" && branchErr == nil {
+				hasWorktree = true
+			}
+		}
+		if hasWorktree {
 			continue
 		}
 		if err := os.RemoveAll(r.dir()); err != nil {

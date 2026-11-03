@@ -30,6 +30,7 @@ type spawnOpts struct {
 	AuthorFamilies []string
 	Cwd            string
 	Worktree       string
+	NoWorktree     bool
 	Account        string
 	Exclude        []string // account labels to skip (fallback rotation)
 	Tried          []string
@@ -212,6 +213,11 @@ func spawn(o spawnOpts) (*Worker, error) {
 	var crPath string
 	w, pane, err := func() (*Worker, string, error) {
 		defer unlock()
+		unlockWriters, err := lockHead("writers")
+		if err != nil {
+			return nil, "", err
+		}
+		defer unlockWriters()
 		r, err := loadRun(runID)
 		if err != nil {
 			return nil, "", err
@@ -278,9 +284,20 @@ func spawn(o spawnOpts) (*Worker, error) {
 		if err != nil {
 			return nil, "", err
 		}
+		var wt worktreeState
+		if o.Role == "produce" || o.Role == "integrate" {
+			wt, err = spawnWorktree(r, o, os.Stderr)
+			if err != nil {
+				return nil, "", err
+			}
+			o.Worktree = wt.Dir
+		}
 		cwd := o.Cwd
 		if o.Worktree != "" {
 			cwd = o.Worktree
+		}
+		if wt.Cwd != "" {
+			cwd = wt.Cwd
 		}
 		if cwd == "" {
 			cwd, _ = os.Getwd()
@@ -335,12 +352,18 @@ func spawn(o spawnOpts) (*Worker, error) {
 			Result: r.resultPath(o.Name), Status: "spawned", Started: time.Now(),
 			FallbackOf: o.Fallback, Tried: append(slices.Clone(o.Tried), m.Key), TriedAccounts: triedAcc,
 		}
+		w.Branch, w.WorktreeAuto, w.WorktreeBase, w.WorktreeStart = wt.Branch, wt.Auto, wt.Base, wt.Start
 		// Record the pane before anything else can fail.
 		if err := withRun(r.ID, func(r *Run) error {
 			if err := retireName(r, o.Name); err != nil {
 				return err
 			}
 			r.Workers = append(r.Workers, w)
+			if o.Fallback != "" && w.Worktree != "" {
+				if old := r.worker(o.Fallback); old != nil && old.Worktree == w.Worktree {
+					old.Worktree, old.Branch = "", ""
+				}
+			}
 			if tab != "" && tab != r.Tab && !slices.Contains(r.OverflowTabs, tab) {
 				r.OverflowTabs = append(r.OverflowTabs, tab)
 			}
@@ -608,7 +631,7 @@ func promptMessage(r *Run, w *Worker) string {
 	return fmt.Sprintf("%s Read contract %s and work only within its scope and permissions. "+
 		"Write the result to %s in the contract Result report format. Add the status line only after the file is complete. "+
 		"Do not delegate: no panes, subagents, Agent/Workflow tools, or orch.",
-		promptMarker(w.Name), w.Contract, w.Result) + promptReferences(r, w.Name, w.Role)
+		promptMarker(w.Name), w.Contract, w.Result) + promptReferences(r, w.Name, w.Role) + worktreePrompt(w)
 }
 
 func contractHash(body []byte) string {
@@ -669,8 +692,8 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		w.Contract = dest
 		hash = contractHash(body)
 		if w.Cwd != "" {
-			if root, err := scopeRepository(w.Cwd, string(body)); err == nil && isGitDir(root) {
-				base := contractField(string(body), "base commit")
+			if root, err := workerScopeRepository(w, string(body)); err == nil && isGitDir(root) {
+				base := workerScopeBase(w, string(body))
 				if files, err := changedFiles(root, base); err == nil {
 					w.Baseline = snapshot(root, files)
 					w.BaselineRoot = root

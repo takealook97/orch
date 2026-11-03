@@ -4,6 +4,8 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 
 ## Decisions (design doc S14)
 
+2026-11-03: Concurrent writers automatically get Git worktrees, including across Heads and backends. Scope checks and collect commits run in each worker's checkout. `orch merge` explicitly integrates committed branches, aborts conflicts, and removes worktree directories and branches only after integration checks pass; run end and gc preserve unmerged or dirty work. Explicit `--worktree`, `--no-worktree`, and DAG `worktree: none` retain caller control.
+
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Opus uses `--effort medium` (or low); Sonnet uses `--effort medium` | Design-doc recommendation; Opus effort: medium or low only, never high |
@@ -181,3 +183,10 @@ Keep each CLI's pane and one-shot argv in one adapter, pinned by golden tests. L
 
 Claude manifest ids read `opus-5.5-medium` and `sonnet-5.5-medium`: family, version and effort joined with `-`, key effort empty (as for Gemini). The Claude CLI accepts none of this directly. Verified live: `--model opus-5.5-medium` is an unknown model, and `--model claude-opus-5.5` silently resolves to Opus 5, which is wrong. The correct form is `--model claude-opus-5-5 --effort medium`.
 The claude adapter therefore translates names matching `^(opus|sonnet|haiku|fable)-<major>[.<minor>][-<effort>]$` into `--model claude-<family>-<major>[-<minor>]` plus `--effort` from the suffix, else from the key effort. Anything else (raw CLI ids, aliases, unknown suffixes) passes through unchanged. Env and overlay overrides use the same path. Manifest validation rejects a Claude key that has both a key effort and a suffix.
+
+## D22. Worktree ownership, merge guard, fallback placement, writer liveness (2026-11-03)
+
+- A worktree is managed (collect commit, merge, removal, branch delete) only when the executor created it with `git worktree add`; the recorded `Branch` is that ownership mark. An explicit `--worktree` that already exists is a plain cwd as before: no Branch, no commit, never a merge candidate, never removed. A path that does not exist yet is created and owned.
+- `merge` refuses while a live writer works in the source checkout (excluding the entries being merged) because HEAD moving under it makes its scope check fail; the error names the writers. `--force` overrides.
+- A fallback replacement keeps the old worker's placement: same worktree/branch when it had one, the same shared cwd when it had none, and no auto admission.
+- A pane writer is live only while its pane and its run's Head pane still exist. A failed lookup counts as live, lookups are cached per scan, and a run on another backend cannot be checked, so it stays live and the warning marks it unverified.

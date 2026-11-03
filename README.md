@@ -42,6 +42,7 @@ orch prompt impl
 orch wait impl                 # judged by the status line in the result file -> finished panes close immediately
 orch spawn --model claude-medium-m --name crit --role verify-critical --reviews impl
 orch prompt crit && orch wait crit
+# If concurrent writers created worktrees: orch merge --test "go test ./..." (merge, test, remove)
 orch run end                   # close all remaining panes and confirm removal
 ```
 

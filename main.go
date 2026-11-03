@@ -24,17 +24,18 @@ Run management
 Delegation
   orch ask --model K [--cwd DIR] [--max-output N] [--timeout MS] [--account same|hook] [--background] [--fresh] [--json] "question"
   orch recall "query" [--limit N] [--all-repos] [--json]  search past answers and results
-  orch do --model K --own GLOBS [--test CMD] [--worktree DIR] [--cwd DIR] [--background] [--timeout MS] [--account same|hook] [--json] "requirement"
+  orch do --model K --own GLOBS [--test CMD] [--worktree DIR|--no-worktree] [--cwd DIR] [--background] [--timeout MS] [--account same|hook] [--json] "requirement"
   orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
   orch models [--markdown]                seven canonical keys (codex-medium-h: deprecated Luna alias)
   orch contract new <name> --role R --model K [--run ID]    create contract template
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
-           [--cwd D|--worktree D] [--account auto|cr|same|hook] [--run ID]
+           [--cwd D|--worktree D] [--no-worktree] [--account auto|cr|same|hook] [--run ID]
   orch prompt <name> [--contract FILE] [--wait] [--timeout MS]
   orch wait [name...] [--timeout MS] [--no-fallback]      detect completion from the result file status line
   orch collect <name>                     inspect result and check owned-file scope
+  orch merge [name...] [--run ID] [--test CMD] [--keep] [--force]  merge committed worktrees and remove them
   orch read <name> [--lines N]            terminal output (only when no result file exists)
   orch fallback <name> [--reason "..."]   switch to next fallback key
   orch close <name> | --run ID | --all
@@ -47,7 +48,7 @@ Maintenance
   orch layout                             Head 1/3 · restore equal rows in Head and overflow tabs
                                           ORCH_MAX_WORKERS: live pane workers per run (default 12)
   orch resume --run ID                    resume /goal: make this pane Head and mark missing workers
-  orch gc [--orphans]                     clean panes spawned by this Head for closed runs
+  orch gc [--orphans]                     clean owned panes and merged, clean auto worktrees of closed runs
                                         --orphans: also clean runs whose Head disappeared (abnormal exit)
   orch doctor [--probe-models] [--keys k1,k2]
   orch docs gen [--root DIR]             regenerate marked model catalog blocks
@@ -339,6 +340,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "goal":
 		return goalCommand(rest, stdin, stdout, stderr)
 
+	case "merge":
+		test := fs.String("test", "", "integration test command")
+		keep := fs.Bool("keep", false, "keep merged worktrees")
+		force := fs.Bool("force", false, "merge even while a writer is live in the source checkout")
+		names, err := parse(fs, rest)
+		if err != nil {
+			return 2
+		}
+		id, err := resolveRun(*runFlag)
+		if err != nil {
+			return fail(err)
+		}
+		if err := mergeWorktrees(id, names, *test, *keep, *force, stdout, stderr); err != nil {
+			return fail(err)
+		}
+		return 0
+
 	case "spawn":
 		servesFlag := fs.String("serves", "", "goal criteria, comma-separated")
 		fixOf := fs.String("fix-of", "", "fix shard")
@@ -350,6 +368,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		authorFam := fs.String("author-family", "", "author outside the run: openai|anthropic|google|head")
 		cwd := fs.String("cwd", "", "working directory")
 		wt := fs.String("worktree", "", "worktree path")
+		noWT := fs.Bool("no-worktree", false, "disable automatic writer isolation")
 		account := fs.String("account", "auto", "pane launch: auto|cr|same|hook (auto uses CR when available)")
 		if _, err := parse(fs, rest); err != nil {
 			return 2
@@ -360,7 +379,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 		w, err := spawn(spawnOpts{Serves: serves, FixOf: *fixOf, Run: *runFlag, Key: *key, Name: *name, Role: *role, Purpose: *purpose,
-			Reviews: splitList(*reviews), AuthorFamilies: splitList(*authorFam), Cwd: *cwd, Worktree: *wt, Account: *account})
+			Reviews: splitList(*reviews), AuthorFamilies: splitList(*authorFam), Cwd: *cwd, Worktree: *wt, NoWorktree: *noWT, Account: *account})
 		if err != nil {
 			return fail(err)
 		}
