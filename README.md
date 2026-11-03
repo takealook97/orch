@@ -116,6 +116,27 @@ The Head tab holds at most terminal height / `ORCH_MIN_ROW_HEIGHT` (default 2) w
 
 A finished worker's pane closes even if the Head never calls `orch wait`: `orch spawn` starts one reaper per run (`orch __reap`, log in `~/.orch/runs/<id>/reaper.log`) that closes a pane once its result file has a status line and the agent has stopped working, then exits when the run has no live workers.
 
+## Herdr HUD data
+
+`orch hud sys` prints recent macOS CPU percentage and used/total physical memory.
+`orch hud panes` prints active runs, all their workers (including closed workers),
+Korean role labels, catalog model/effort, and terminal models reported by `hc ls` argv.
+Older `hc` versions without argv leave non-orch terminal model/effort empty.
+
+`orch hud usage [--terminals t1,t2] [--max-age 120s] [--refresh]` prints Codex/Claude
+usage windows and available Codex reset coupons. With terminals, it resolves local
+agent processes and their account homes; without terminals, it uses non-ignored CR
+registry accounts. An explicit empty `--terminals=` returns no accounts. Remote
+terminal addresses are skipped with an error field. Labels use registry email local
+parts; credentials and full emails are never included.
+
+Usage is cached at `$ORCH_HOME/cache/hud-usage.json` (default `~/.orch/cache/`,
+mode 0600). Failed refreshes retain cached values with `stale` and `error` fields.
+Claude caches last at least five minutes; HTTP 429 respects `Retry-After` (five
+minutes if absent), including on `--refresh`. Tokens are never refreshed. All
+three commands emit JSON and exit 0 on operational/partial errors; bad arguments
+exit 2. Usage requests have a 25-second overall budget.
+
 ## Development
 
 ```bash

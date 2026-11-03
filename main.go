@@ -18,6 +18,7 @@ Run management
   orch run mode <mode> --reason "..." [--run ID]
   orch run end [--run ID]                 close all worker panes, confirm removal, end run
   orch run list [--all]                   --all also shows ad-hoc runs of one-off tasks
+  orch hud sys|usage|panes                 JSON data for Herdr mods
   orch status [--run ID]
 
 Delegation
@@ -114,7 +115,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	cmd, rest := args[0], args[1:]
 	// A worker may only read: every command that changes runs or panes is Head-only.
-	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist"}, cmd) ||
+	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "hud"}, cmd) ||
 		(cmd == "goal" && len(rest) > 0 && (rest[0] == "status" || rest[0] == "check")) ||
 		(cmd == "run" && len(rest) > 0 && rest[0] == "list") ||
 		(cmd == "dag" && len(rest) > 0 && (rest[0] == "check" || rest[0] == "status"))
@@ -135,6 +136,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	runFlag := fs.String("run", "", "run id")
 
 	switch cmd {
+	case "hud":
+		return cmdHud(rest, stdout, stderr)
 	case "ask", "do", "test":
 		return taskCommand(cmd, rest, stdout, stderr)
 	case "__task":
