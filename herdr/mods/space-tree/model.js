@@ -60,6 +60,7 @@ export function canMoveTab({ tab, panes = [], orchIndex = {}, fromSpace, toSpace
   if (ps.some(p => orchIndex.workers?.[p.terminal])) return refuse("Tabs containing orch worker terminals cannot be moved.");
   if (ps.some(p => !p.terminal)) return refuse("Tabs containing mod panes cannot be moved.");
   if (!ps.length) return refuse("The tab has no terminal panes to move.");
+  if (fromSpace?.tabs?.length === 1) return refuse("This is the only tab in its space; moving it would close the space.");
   if (sourceOnly) return { ok: true };
   if (from === to) return refuse("The tab is already in this space.");
   if (machinePrefix(from) !== machinePrefix(to)) return refuse("Tabs cannot be moved between machines.");
