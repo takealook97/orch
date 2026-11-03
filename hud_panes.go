@@ -350,7 +350,7 @@ func hudResolveClaudeModels(ctx context.Context, out *HUDPanes) {
 			if err != nil || ctx.Err() != nil {
 				return
 			}
-			model = hudClaudeTranscriptModel(hudEnvValue(string(raw), "CLAUDE_CONFIG_DIR"), detail.Cwd)
+			model = hudClaudeTranscriptModel(hudEnvValue(string(raw), "CLAUDE_CONFIG_DIR"), pid)
 		}(i, out.Terminals[i].Address)
 	}
 	for range indices {

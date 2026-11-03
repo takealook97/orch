@@ -177,7 +177,14 @@ func hudNodeProvider(raw string) string {
 	if len(argv) < 2 {
 		return ""
 	}
-	script := argv[1]
+	i := 1
+	for i < len(argv) && strings.HasPrefix(argv[i], "-") {
+		i++
+	}
+	if i == len(argv) {
+		return ""
+	}
+	script := argv[i]
 	switch filepath.Base(script) {
 	case "codex":
 		return "codex"
@@ -709,9 +716,6 @@ func hudCREmailLess(a, b string) bool {
 func hudCRPick(reg hudRegistry, provider string, now time.Time) (hudRegistryAccount, bool) {
 	_ = now // cr's snapshot ranking does not adjust elapsed resets.
 	for _, a := range hudCRSortedAccounts(reg, provider) {
-		if contains1(reg.Ignored, a.Provider+":"+strings.ToLower(strings.TrimSpace(a.Email))) {
-			continue
-		}
 		if hudCRUsable(a) {
 			return a, true
 		}

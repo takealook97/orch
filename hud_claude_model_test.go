@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,24 +40,32 @@ func TestHUDClaudeTranscriptModel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	writeHUDClaudeSession(t, home, 101, "new", cwd)
+	writeHUDClaudeSession(t, home, 102, "old", cwd)
 	now := time.Now()
 	write("old.jsonl", "{\"model\":\"claude-haiku-5-5\"}\n", now.Add(-time.Hour))
 	write("new.jsonl", "{\"model\":\"claude-sonnet-5-5\"}\n{\"message\":{\"model\":\"claude-opus-5-5\"}}\n{\"model\":\"claude-haiku", now)
-	if got := hudClaudeTranscriptModel(home, cwd); got != "claude-opus-5-5" {
+	if got := hudClaudeTranscriptModel(home, 101); got != "claude-opus-5-5" {
 		t.Fatalf("newest/last/truncated: %q", got)
 	}
+	if got := hudClaudeTranscriptModel(home, 102); got != "claude-haiku-5-5" {
+		t.Fatalf("second session in same cwd: %q", got)
+	}
+	if got := hudClaudeTranscriptModel(home, 103); got != "" {
+		t.Fatalf("missing session must not guess newest transcript: %q", got)
+	}
 	write("new.jsonl", "{\"model\":\"claude-too-old-1-0\"}\n"+strings.Repeat("x", 300*1024)+"\n{\"model\":\"claude-fable-5-1\"}\n", now)
-	if got := hudClaudeTranscriptModel(home, cwd); got != "claude-fable-5-1" {
+	if got := hudClaudeTranscriptModel(home, 101); got != "claude-fable-5-1" {
 		t.Fatalf("tail: %q", got)
 	}
 	write("new.jsonl", "{\"model\":\"claude-too-old-1-0\"}\n"+strings.Repeat("x", 300*1024), now)
-	if got := hudClaudeTranscriptModel(home, cwd); got != "" {
+	if got := hudClaudeTranscriptModel(home, 101); got != "" {
 		t.Fatalf("must not read before tail: %q", got)
 	}
-	if got := hudClaudeTranscriptModel(home, "/missing"); got != "" {
+	if got := hudClaudeTranscriptModel(home, 104); got != "" {
 		t.Fatalf("missing: %q", got)
 	}
-	if got := hudClaudeTranscriptModel(home, ""); got != "" {
+	if got := hudClaudeTranscriptModel(home, 0); got != "" {
 		t.Fatalf("empty cwd: %q", got)
 	}
 }
@@ -70,6 +79,7 @@ func TestHUDClaudeLiveOverride(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "session.jsonl"), []byte("{\"message\":{\"model\":\"claude-opus-5-5\"}}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	writeHUDClaudeSession(t, home, 101, "session", "/fixture")
 	bin := t.TempDir()
 	scripts := map[string]string{
 		"hc": "#!/bin/sh\nprintf '%s\\n' '{\"pid\":100,\"cwd\":\"/fixture\"}'\n",
@@ -142,5 +152,20 @@ func TestHUDClaudeResolutionDeadline(t *testing.T) {
 	}
 	if out.Terminals[0].Model != "opus" {
 		t.Fatal("deadline replaced fallback")
+	}
+}
+
+func writeHUDClaudeSession(t *testing.T, home string, pid int, id, cwd string) {
+	t.Helper()
+	dir := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{"pid": pid, "sessionId": id, "cwd": cwd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), raw, 0600); err != nil {
+		t.Fatal(err)
 	}
 }

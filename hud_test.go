@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/shirou/gopsutil/v4/cpu"
 	"io"
 	"math"
 	"net/http"
@@ -517,6 +518,10 @@ func TestHUDEdgeDiscovery(t *testing.T) {
 		{"node server.js --prompt claude /codex", ""},
 		{"node /tools/bin/codex", "codex"},
 		{"node /tools/node_modules/@anthropic-ai/claude-code/cli.js", "claude"},
+		{"node --no-warnings /tools/node_modules/@anthropic-ai/claude-code/cli.js", "claude"},
+		{"node --no-warnings --enable-source-maps /tools/bin/codex", "codex"},
+		{"node --no-warnings", ""},
+		{"node --no-warnings /proj/claude-notes/server.js", ""},
 	} {
 		if got := hudNodeProvider(tc.raw); got != tc.want {
 			t.Errorf("%q: %q", tc.raw, got)
@@ -631,5 +636,34 @@ func TestHUDSysPartialAndBatchNodeArgs(t *testing.T) {
 	args := hudNodeArgs(context.Background(), []hudProcess{{201, 1, "node"}, {202, 1, "/usr/bin/node"}, {203, 1, "claude"}})
 	if len(args) != 2 || hudNodeProvider(args[201]) != "codex" || hudNodeProvider(args[202]) != "claude" {
 		t.Fatalf("batch: %+v", args)
+	}
+}
+
+// Realistic per-core counters in gopsutil seconds, one second apart. Roundtrip
+// the first sample through the cache to cover cross-process precision as well.
+func TestHUDCPURealisticTickDelta(t *testing.T) {
+	at := time.Now().UTC()
+	prev := hudCPUSampleFromTicks(at, []cpu.TimesStat{
+		{User: 19152.07, System: 10693.47, Idle: 138717.87},
+		{User: 18152.13, System: 9693.53, Idle: 140717.91},
+	})
+	cur := hudCPUSampleFromTicks(at.Add(time.Second), []cpu.TimesStat{
+		{User: 19152.58, System: 10693.66, Idle: 138718.17},
+		{User: 18152.44, System: 9693.72, Idle: 140718.41},
+	})
+	path := filepath.Join(t.TempDir(), "cpu.json")
+	if err := hudWriteCPUSample(path, prev); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cached cpuSample
+	if err := json.Unmarshal(raw, &cached); err != nil {
+		t.Fatal(err)
+	}
+	if got := cpuPercent(cached, cur); math.Abs(got-60) > 0.001 {
+		t.Fatalf("one-second tick delta = %v, want 60", got)
 	}
 }

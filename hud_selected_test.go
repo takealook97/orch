@@ -32,10 +32,10 @@ func TestHUDCRPick(t *testing.T) {
 		{"elapsed reset stays exhausted", func(r *hudRegistry) {
 			r.Accounts[1].Weekly = hudRegistryWindow{Remaining: ptr(0), ResetsAt: now.Add(-time.Hour)}
 		}, "a@example.com"},
-		{"ignored normalized", func(r *hudRegistry) {
-			r.Accounts[1].Email = " B@example.com "
+		{"ignored still launchable", func(r *hudRegistry) {
+			r.Accounts[1].Email = "b@example.com"
 			r.Ignored = []string{"codex:b@example.com"}
-		}, "a@example.com"},
+		}, "b@example.com"},
 		{"unavailable", func(r *hudRegistry) { r.Accounts[1].State = "error" }, "a@example.com"},
 		{"none usable", func(r *hudRegistry) { r.Accounts[0].State = ""; r.Accounts[1].State = "error" }, ""},
 		{"least capacity", func(r *hudRegistry) { r.Capacity = "least" }, "a@example.com"},

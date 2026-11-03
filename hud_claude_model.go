@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
-	"time"
 )
 
 var hudClaudeProjectChar = regexp.MustCompile(`[^A-Za-z0-9]`)
@@ -27,8 +27,8 @@ func hudModelDisplay(id string) string {
 }
 
 // Read a bounded tail only; incomplete JSON written by the running agent is ignored.
-func hudClaudeTranscriptModel(home, cwd string) string {
-	if cwd == "" {
+func hudClaudeTranscriptModel(home string, pid int) string {
+	if pid <= 0 {
 		return ""
 	}
 	if home == "" {
@@ -38,29 +38,20 @@ func hudClaudeTranscriptModel(home, cwd string) string {
 		}
 		home = filepath.Join(user, ".claude")
 	}
-	dir := filepath.Join(home, "projects", hudClaudeProjectChar.ReplaceAllString(cwd, "-"))
-	entries, err := os.ReadDir(dir)
+	rawSession, err := os.ReadFile(filepath.Join(home, "sessions", strconv.Itoa(pid)+".json"))
 	if err != nil {
 		return ""
 	}
-	var newest string
-	var modified time.Time
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			continue
-		}
-		if newest == "" || info.ModTime().After(modified) {
-			newest, modified = entry.Name(), info.ModTime()
-		}
+	var session struct {
+		PID       int    `json:"pid"`
+		SessionID string `json:"sessionId"`
+		Cwd       string `json:"cwd"`
 	}
-	if newest == "" {
+	if json.Unmarshal(rawSession, &session) != nil || session.PID != pid || session.Cwd == "" || session.SessionID == "" || strings.ContainsAny(session.SessionID, `/\`) || session.SessionID == "." || session.SessionID == ".." {
 		return ""
 	}
-	f, err := os.Open(filepath.Join(dir, newest))
+	dir := filepath.Join(home, "projects", hudClaudeProjectChar.ReplaceAllString(session.Cwd, "-"))
+	f, err := os.Open(filepath.Join(dir, session.SessionID+".jsonl"))
 	if err != nil {
 		return ""
 	}

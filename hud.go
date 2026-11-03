@@ -108,15 +108,28 @@ func cpuPercent(prev, cur cpuSample) float64 {
 }
 
 func hudCPUSample(ctx context.Context) (cpuSample, error) {
-	ticks, err := cpu.TimesWithContext(ctx, false)
+	ticks, err := cpu.TimesWithContext(ctx, true)
 	if err != nil {
 		return cpuSample{}, err
 	}
 	if len(ticks) == 0 {
 		return cpuSample{}, fmt.Errorf("missing CPU ticks")
 	}
-	t := ticks[0]
-	return cpuSample{At: time.Now(), User: t.User, System: t.System, Idle: t.Idle, Nice: t.Nice}, nil
+	return hudCPUSampleFromTicks(time.Now(), ticks), nil
+}
+
+// Per-CPU sampling uses host_processor_info on Darwin. The aggregate
+// host_statistics counters can be cached, yielding an unchanged short sample.
+// gopsutil already converts ticks to seconds; retain their fractional precision.
+func hudCPUSampleFromTicks(at time.Time, ticks []cpu.TimesStat) cpuSample {
+	sample := cpuSample{At: at}
+	for _, tick := range ticks {
+		sample.User += tick.User
+		sample.System += tick.System
+		sample.Idle += tick.Idle
+		sample.Nice += tick.Nice
+	}
+	return sample
 }
 
 func hudWriteCPUSample(path string, sample cpuSample) error {
@@ -184,7 +197,7 @@ func parseVMStat(raw string) (uint64, error) {
 
 func hudSys(ctx context.Context) (SysStats, error) {
 	s := SysStats{At: time.Now()}
-	path := filepath.Join(orchHome(), "cache", "hud-cpu.json")
+	path := filepath.Join(orchHome(), "cache", "hud-cpu-percpu.json")
 	var prev cpuSample
 	if raw, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(raw, &prev)
