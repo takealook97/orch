@@ -37,7 +37,8 @@ export function paneSub(pane, orchIndex = {}, indexInTab = 0) {
   const worker = orchIndex.workers?.[pane.terminal];
   const info = worker?.model ? worker : orchIndex.terminals?.[pane.terminal];
   const model = info?.model ? [info.model, info.effort].filter(Boolean).join("-").replace(/\s+/g, "-") : "";
-  return [model || (indexInTab === 0 ? "main" : `sub ${indexInTab}`), pane.status || "idle"].join(" · ").toLowerCase();
+  // Status is the row's colored dot; the text line carries only the model or the pane's position.
+  return (model || (indexInTab === 0 ? "main" : `sub ${indexInTab}`)).toLowerCase();
 }
 
 // Remote ids keep the complete machine prefix (machine names may contain '/').

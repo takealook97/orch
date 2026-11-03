@@ -51,16 +51,16 @@ test("only shown space's active tab and focused pane are highlighted", () => {
 });
 
 test("pane subtitle uses position when model unknown and argv when worker model empty", () => {
-  assert.equal(paneSub(pane("p"), index, 2), "sub 2 · working");
+  assert.equal(paneSub(pane("p"), index, 2), "sub 2");
   assert.equal(paneSub(pane("p", "tab", { terminal: "argv" }), {
     ...index, workers: { argv: { model: "", effort: "high" } }
-  }, 2), "gpt-6.1-sol-low · working");
+  }, 2), "gpt-6.1-sol-low");
   assert.equal(paneSub(pane("p", "tab", { terminal: "argv" }), {
     terminals: { argv: { model: "", effort: "high" } }
-  }, 2), "sub 2 · working");
+  }, 2), "sub 2");
   const rows = buildTree({ spaces: [sp("s", [tab("tab")])], activeSpaceId: "s", panes: [pane("a"), pane("b")] });
   assert.deepEqual(rows.filter(r => r.kind === "pane").map(r => [r.name, r.sub]), [
-    ["codex", "main · working"], ["codex", "sub 1 · working"]]);
+    ["codex", "main"], ["codex", "sub 1"]]);
 });
 
 test("pane naming precedence: alias, worker, Head, main, sub and fallback", () => {
@@ -77,10 +77,10 @@ test("pane naming precedence: alias, worker, Head, main, sub and fallback", () =
 });
 
 test("line two uses worker model, argv model, then position plus live status", () => {
-  assert.equal(paneSub(pane("p", "tab", { terminal: "worker" }), index), "gpt-6-luna-high · working");
-  assert.equal(paneSub(pane("p", "tab", { terminal: "argv", status: "blocked" }), index), "gpt-6.1-sol-low · blocked");
-  assert.equal(paneSub(pane("p", "tab", { terminal: "head" }), index), "main · working");
-  assert.equal(paneSub({ status: null }), "main · idle");
+  assert.equal(paneSub(pane("p", "tab", { terminal: "worker" }), index), "gpt-6-luna-high");
+  assert.equal(paneSub(pane("p", "tab", { terminal: "argv", status: "blocked" }), index), "gpt-6.1-sol-low");
+  assert.equal(paneSub(pane("p", "tab", { terminal: "head" }), index), "main");
+  assert.equal(paneSub({ status: null }), "main");
 });
 
 test("machines local first, remote alphabetic; preserve shipped space and tab/pane order", () => {
@@ -143,7 +143,7 @@ test("remote identifiers containing slashes match whole addresses and aliases", 
   assert.equal(rows.find(r => r.kind === "machine" && r.id === machine).name, "서버");
   const row = rows.find(r => r.kind === "pane");
   assert.equal(row.name, "원격 작업"); assert.equal(row.id, "remote/host/p");
-  assert.equal(row.sub, "remote-model · working");
+  assert.equal(row.sub, "remote-model");
 });
 
 test("local computer fold key cannot collide with a remote named local", () => {
