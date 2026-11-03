@@ -360,7 +360,7 @@ func hudUsageMode(ctx context.Context, terminals string, specified bool, age tim
 		out.Error = err.Error()
 	}
 	if _, err := hudFindGemini(); err == nil {
-		accounts = append(accounts, HUDAccount{Provider: "gemini", ID: "agy", Selected: selected, Terminals: []string{}})
+		accounts = append(accounts, HUDAccount{Provider: "gemini", ID: "agy", Label: hudGeminiLabel(ctx), Selected: selected, Terminals: []string{}})
 	}
 	out.Accounts = hudCachedUsage(ctx, accounts, age, refresh, map[string]hudFetchFunc{"codex": fetchCodexUsage, "claude": fetchClaudeUsage, "gemini": fetchGeminiUsage})
 	return out

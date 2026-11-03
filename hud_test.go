@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,41 +19,83 @@ import (
 	"time"
 )
 
-// Captured on the development Mac on 2026-11-03. top emits two samples;
-// using the first one would report the average since boot instead of recent CPU.
-const hudTopSample = `Processes: 589 total, 6 running, 583 sleeping, 5094 threads
-CPU usage: 10.0% user, 10.0% sys, 80.0% idle
-PhysMem: 14G used (3121M wired, 6535M compressor), 270M unused.
-Processes: 589 total, 6 running, 583 sleeping, 5094 threads
-2026/11/03 13:03:48
-Load Avg: 5.70, 5.04, 3.93
-CPU usage: 21.17% user, 17.25% sys, 61.56% idle
-SharedLibs: 302M resident, 65M data, 58M linkedit.
-MemRegions: 361 total, 14M resident, 125M private, 2214M shared.
-PhysMem: 15G used (3121M wired, 6535M compressor), 270M unused.
-VM: 299T vsize, 6144M framework vsize, 82061(99) swapins, 371808(0) swapouts.`
+// Captured from vm_stat on this Mac, 2026-11-03.
+const hudVMStatSample = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free: 5453.
+Pages active: 271527.
+Pages inactive: 259920.
+Pages speculative: 10496.
+Pages wired down: 202882.
+Pages purgeable: 550.
+File-backed pages: 214718.
+Pages stored in compressor: 1063539.
+Pages occupied by compressor: 241852.
+`
 
-func TestHUDTop(t *testing.T) {
+func TestHUDVMStat(t *testing.T) {
+	used, err := parseVMStat(hudVMStatSample)
+	if err != nil || used != 771409*16384 {
+		t.Fatalf("used=%d err=%v", used, err)
+	}
+	if _, err := parseVMStat(""); err == nil {
+		t.Fatal("accepted missing header")
+	}
+	if _, err := parseVMStat("Mach Virtual Memory Statistics: (page size of 4096 bytes)"); err == nil {
+		t.Fatal("accepted missing counters")
+	}
+	raw := strings.ReplaceAll(hudVMStatSample, "214718", "99999999")
+	if used, err := parseVMStat(raw); err != nil || used != 0 {
+		t.Fatalf("negative used=%d err=%v", used, err)
+	}
+	raw = strings.ReplaceAll(hudVMStatSample, "16384", "4096")
+	if used, err := parseVMStat(raw); err != nil || used != 771409*4096 {
+		t.Fatalf("page size used=%d err=%v", used, err)
+	}
+}
+
+func TestHUDCPUPercent(t *testing.T) {
+	prev := cpuSample{At: time.Now(), User: 10, System: 20, Nice: 5, Idle: 65}
+	cur := cpuSample{At: time.Now(), User: 30, System: 30, Nice: 10, Idle: 130}
 	for _, tc := range []struct {
-		name, raw string
+		name      string
+		prev, cur cpuSample
 		want      float64
-		ok        bool
-	}{{"real last sample", hudTopSample, 38.44, true}, {"idle", "CPU usage: 0% user, 0% sys, 100% idle", 0, true}, {"busy", "CPU usage: 90% user, 10% sys, 0% idle", 100, true}, {"missing", "", 0, false}, {"invalid", "CPU usage: 0% user, 0% sys, 101% idle", 0, false}} {
+	}{
+		{"normal", prev, cur, 35}, {"equal", prev, prev, 0}, {"missing previous", cpuSample{}, cur, 0}, {"reset", cur, prev, 0},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseTopCPU(tc.raw)
-			if ok != tc.ok || ok && math.Abs(got-tc.want) > 0.001 {
-				t.Fatalf("got %v,%v; want %v,%v", got, ok, tc.want, tc.ok)
+			if got := cpuPercent(tc.prev, tc.cur); math.Abs(got-tc.want) > 0.001 {
+				t.Fatalf("got %v want %v", got, tc.want)
 			}
 		})
 	}
-	for _, tc := range []struct {
-		raw  string
-		want uint64
-		ok   bool
-	}{{hudTopSample, 15 << 30, true}, {"PhysMem: 1.5G used", 3 << 29, true}, {"PhysMem: 123M used", 123 << 20, true}, {"PhysMem: 2T used", 2 << 40, true}, {"PhysMem: 512K used", 512 << 10, true}, {"PhysMem: 42 used", 42, true}, {"PhysMem: unknown", 0, false}} {
-		got, ok := parseTopMem(tc.raw)
-		if ok != tc.ok || got != tc.want {
-			t.Fatalf("memory %q: got %v,%v want %v,%v", tc.raw, got, ok, tc.want, tc.ok)
+}
+
+func TestHUDCPUSampleCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache", "hud-cpu.json")
+	sample := cpuSample{At: time.Now().UTC(), User: 12, Idle: 34}
+	if err := hudWriteCPUSample(path, sample); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("cache permissions: %v %v", info, err)
+	}
+	raw, err := os.ReadFile(path)
+	var got cpuSample
+	if err != nil || json.Unmarshal(raw, &got) != nil || got != sample {
+		t.Fatalf("cache roundtrip failed")
+	}
+}
+
+func TestHUDGeminiLabel(t *testing.T) {
+	fake := "go-keyring-base64:" + base64.StdEncoding.EncodeToString([]byte(`{"id_token_email":"fake.person@example.test","access_token":"fake-secret"}`))
+	if got := hudParseGeminiLabel(fake + "\n"); got != "fake.person" {
+		t.Fatalf("label=%q", got)
+	}
+	for _, raw := range []string{"", "go-keyring-base64:!", "go-keyring-base64:e30=", "plain text"} {
+		if hudParseGeminiLabel(raw) != "" {
+			t.Fatal("accepted invalid label")
 		}
 	}
 }
@@ -570,10 +613,10 @@ func TestHUDFailureBackoffAndFloors(t *testing.T) {
 }
 
 func TestHUDSysPartialAndBatchNodeArgs(t *testing.T) {
+	t.Setenv("ORCH_HOME", t.TempDir())
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
 	for name, script := range map[string]string{
-		"top":    "#!/bin/sh\nprintf '%s\n' 'CPU usage: 10% user, 10% sys, 80% idle' 'PhysMem: 2G used'\n",
 		"sysctl": "#!/bin/sh\nexit 1\n",
 		"ps":     "#!/bin/sh\n[ \"$1 $2 $3 $4\" = \"-o pid=,args= -p 201,202\" ] || exit 1\nprintf '%s\n' '201 node /tools/bin/codex' '202 node /tools/@anthropic-ai/claude-code/cli.js'\n",
 	} {
@@ -582,7 +625,7 @@ func TestHUDSysPartialAndBatchNodeArgs(t *testing.T) {
 		}
 	}
 	stats, err := hudSys(context.Background())
-	if err == nil || stats.CPU != 20 || stats.MemUsed != 0 || stats.MemTotal != 0 {
+	if err == nil || stats.CPU < 0 || stats.CPU > 100 || stats.MemUsed != 0 || stats.MemTotal != 0 {
 		t.Fatalf("partial system: %+v %v", stats, err)
 	}
 	args := hudNodeArgs(context.Background(), []hudProcess{{201, 1, "node"}, {202, 1, "/usr/bin/node"}, {203, 1, "claude"}})
