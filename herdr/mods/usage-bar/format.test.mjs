@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pctColorRole, formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode, cellWidth, labelWidth } from './format.js';
+import { pctColorRole, formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode, cellWidth, labelWidth, hudCommand } from './format.js';
+test('HUD commands route arguments to the selected machine', () => {
+  const args = ['usage', '--selected', 'a b'];
+  assert.deepEqual(hudCommand('', args), ['/Users/deepeet/.local/bin/orch', ['hud', ...args], {}]);
+  assert.deepEqual(hudCommand('macstudio', args), ['sh', ['-c', 'b="$HOME/.local/libexec/orch-hud"; [ -x "$b" ] || b="$HOME/.local/bin/orch"; exec "$b" hud "$@"', 'hud', ...args], { on: 'macstudio' }]);
+});
 const couponText = iso => { const d = new Date(iso); return `~${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 process.env.TZ = 'Asia/Seoul';

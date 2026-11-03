@@ -1,3 +1,8 @@
+export function hudCommand(machine, args) {
+  if (!machine) return ['/Users/deepeet/.local/bin/orch', ['hud', ...args], {}];
+  return ['sh', ['-c', 'b="$HOME/.local/libexec/orch-hud"; [ -x "$b" ] || b="$HOME/.local/bin/orch"; exec "$b" hud "$@"', 'hud', ...args], { on: machine }];
+}
+
 // Calendar labels follow local time, including daylight saving time.
 const dayMS = 24 * 60 * 60 * 1000;
 const day = date => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / dayMS;

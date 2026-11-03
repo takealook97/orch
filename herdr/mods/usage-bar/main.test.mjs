@@ -60,7 +60,7 @@ function harness() {
     spawn(fn) { const task = fn(cx); tasks.push(task); return task; },
     notify() {}, stop_propagation() {},
   };
-  const deps = { View: class {}, h_flex, v_flex, exec: async (_cmd, args) => { calls.push(args); return respond(args); },
+  const deps = { View: class {}, h_flex, v_flex, exec: async (cmd, args, opts) => { calls.push({ cmd, args, opts }); return respond(cmd === 'sh' ? ['hud', ...args.slice(3)] : args); },
     spaces: () => state.spaces, panes: () => state.panes, agents: () => state.agents,
     theme: () => new Proxy({}, { get: (_obj, prop) => prop }), ...format, ...ui };
   const UsageBar = new Function(...Object.keys(deps), `${source}; return UsageBar;`)(...Object.values(deps));
@@ -79,7 +79,7 @@ function harness() {
 test('poll intervals and selected account arguments', async () => {
   const h = harness(); await h.flush();
   assert.deepEqual(h.intervals.map(job => job.ms), [1000, 60000]);
-  assert.deepEqual(h.calls.filter(args => args[1] === 'usage'), [['hud', 'usage', '--selected', '--max-age', '45s']]);
+  assert.deepEqual(h.calls.filter(call => call.args[1] === 'usage').map(call => call.args), [['hud', 'usage', '--selected', '--max-age', '45s']]);
 });
 
 test('provider cards show compact weekly usage, coupon text and stale opacity', async () => {
@@ -100,8 +100,8 @@ test('provider cards show compact weekly usage, coupon text and stale opacity', 
   assert.ok(!walk(h.view.render(h.cx)).some(node => node?.style?.w === 28 && node?.style?.h === 2));
   h.view.width = fullWidth - 45;
   assert.ok(!text(h.view.render(h.cx)).includes('work'));
-  h.view.usage.accounts[0].weekly = null;
-  h.view.usage.accounts[0].coupons = undefined;
+  h.view.byMachine[''].usage.accounts[0].weekly = null;
+  h.view.byMachine[''].usage.accounts[0].coupons = undefined;
   const missing = byID(h.view.render(h.cx), 'account-codex').nodes[0];
   assert.deepEqual(text(missing.nodes[1]), ['—', '']);
   assert.deepEqual(text(missing.nodes[2]), ['—', '']);
@@ -125,7 +125,7 @@ test('working completion transitions debounce reads for two seconds', async () =
     assert.ok(h.timers.some(job => job.ms === 2000 && !job.canceled));
     h.tick(2000); await h.flush();
     assert.equal(h.calls.length, count + 1);
-    assert.ok(!h.calls.at(-1).includes('--refresh'));
+    assert.ok(!h.calls.at(-1).args.includes('--refresh'));
   }
 });
 
@@ -143,18 +143,37 @@ test('completion bursts cancel previous debounce and ignore agents in other spac
   assert.equal(h.timers.length, count);
 });
 
-test('failures keep last readings and partial errors preserve only the same account', async () => {
+test('failures show placeholders and partial errors preserve only the same account', async () => {
   const h = harness(); await h.flush(); h.tick(1000); await h.flush();
-  const previous = h.view.usage;
   h.respond(() => ({ code: 1, stdout: '' }));
   h.view.refresh('usage', h.cx); await h.flush();
-  assert.equal(h.view.usage, previous);
-  assert.equal(h.view.stale.usage, true);
+  assert.equal(h.view.byMachine[''].usage, null);
+  assert.equal(h.view.byMachine[''].stale.usage, true);
+  assert.equal(byID(h.view.render(h.cx), 'account-codex').nodes[0].style.opacity, 0.6);
+  h.respond(() => ({ code: 0, stdout: JSON.stringify(fixture.usage) }));
+  h.view.refresh('usage', h.cx); await h.flush();
   h.respond(() => ({ code: 0, stdout: JSON.stringify({ accounts: [{ ...fixture.usage.accounts[0], weekly: null, error: 'offline' }] }) }));
   h.view.refresh('usage', h.cx); await h.flush();
-  assert.equal(h.view.usage.accounts[0].weekly.used_pct, 9);
-  assert.equal(h.view.usage.accounts[0].stale, true);
+  assert.equal(h.view.byMachine[''].usage.accounts[0].weekly.used_pct, 9);
+  assert.equal(h.view.byMachine[''].usage.accounts[0].stale, true);
   h.respond(() => ({ code: 0, stdout: JSON.stringify({ accounts: [{ provider: 'codex', id: 'different', home: '/work', error: 'offline' }] }) }));
   h.view.refresh('usage', h.cx); await h.flush();
-  assert.equal(h.view.usage.accounts[0].weekly, undefined);
+  assert.equal(h.view.byMachine[''].usage.accounts[0].weekly, undefined);
+});
+
+test('machine switches show cached readings immediately and debounce remote reads', async () => {
+  const h = harness(); await h.flush();
+  h.state.spaces[0].machine = 'macstudio';
+  assert.ok(!text(h.view.render(h.cx)).includes('work'));
+  h.tick(0); h.tick(300); await h.flush();
+  const remote = h.calls.slice(-2);
+  assert.deepEqual(remote.map(call => [call.cmd, call.opts, call.args.slice(2)]), [
+    ['sh', { on: 'macstudio' }, ['hud', 'sys']],
+    ['sh', { on: 'macstudio' }, ['hud', 'usage', '--selected', '--max-age', '45s']],
+  ]);
+  h.state.spaces[0].machine = '';
+  assert.ok(text(h.view.render(h.cx)).includes('work'));
+  h.tick(0);
+  h.state.spaces[0].machine = 'macstudio';
+  assert.ok(text(h.view.render(h.cx)).includes('work'));
 });
