@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { tabIconColor, buildTree, paneName, paneSub, foldDefault, pruneFolded, orchIndexes, aliasKey, machineId, renameAction } from "./model.js";
+import { tabIconColor, aggregateStatus, machineConnected, rowDisplay, buildTree, paneName, paneSub, foldDefault, pruneFolded, orchIndexes, aliasKey, machineId, renameAction } from "./model.js";
 
 const pane = (id, tab = "tab", extra = {}) => ({ pane: id, terminal: `t-${id}`, tab, program: { name: "Codex" }, status: "working", ...extra });
 const sp = (id, tabs = [], extra = {}) => ({ id, name: id, tabs, ...extra });
@@ -123,15 +123,52 @@ test("prune removes dead keys and preserves explicit open/closed states without 
   assert.equal(Object.keys(folded).length, 3);
 });
 
-test("tab badge counts done/total without a duplicate space badge; Head retains focus", () => {
+test("run data retains Head naming and drag guard without a tab badge", () => {
   const rows = buildTree({ spaces: [sp("repo", [tab("tab")])], activeSpaceId: "repo", orch,
     panes: [pane("head-pane", "tab", { terminal: "head", focused: true })] });
   assert.equal(rows.find(r => r.kind === "space").badge, undefined);
-  assert.equal(rows.find(r => r.kind === "tab").badge, "orch full · 1/2");
+  assert.equal(rows.find(r => r.kind === "tab").badge, undefined);
   const head = rows.find(r => r.kind === "pane");
   assert.equal(head.name, "head"); assert.equal(head.active, true);
   assert.equal(head.guide, "└");
-  assert.equal(orchIndexes({ runs: [{ tab: "zero", workers: [] }] }).tabs.zero.total, 0);
+  assert.equal(orchIndexes({ runs: [{ tab: "zero", workers: [] }] }).tabs.zero, true);
+});
+
+test("row display shows folded counts and appropriate dots and add button", () => {
+  for (const count of [0, 1, 2, 3]) for (const open of [true, false]) {
+    const display = rowDisplay({ kind: "tab", count, open });
+    assert.equal(display.count, !open && count >= 2 ? `· ${count}` : "");
+    assert.equal(display.dot, !open);
+  }
+  for (const open of [true, false]) assert.equal(rowDisplay({ kind: "space", open }).dot, !open);
+  assert.equal(rowDisplay({ kind: "pane" }).dot, true);
+  for (const connected of [true, false]) for (const hovered of [true, false]) {
+    const display = rowDisplay({ kind: "machine" }, connected, hovered);
+    assert.equal(display.dot, !connected);
+    assert.equal(display.add, connected && hovered);
+  }
+});
+
+test("machine connection logic preserves local, connected, ready and offline states", () => {
+  assert.equal(machineConnected({ id: null, data: {} }), true);
+  assert.equal(machineConnected({ id: "remote", data: {} }, { state: "connected" }), true);
+  assert.equal(machineConnected({ id: "remote", data: { layout: "ready" } }), true);
+  assert.equal(machineConnected({ id: "remote", data: { layout: "unavailable" } }, { state: "asleep" }), false);
+});
+
+test("folded space and tab statuses aggregate pane states in priority order", () => {
+  assert.equal(aggregateStatus([]), "idle");
+  for (const [statuses, expected] of [[["idle", "done"], "done"], [["done", "working"], "working"],
+    [["working", "blocked"], "blocked"], [["unknown"], "idle"]]) assert.equal(aggregateStatus(statuses), expected);
+  const input = { spaces: [sp("s", [tab("t"), tab("other")])], activeSpaceId: "s",
+    panes: [pane("a", "t", { status: "done" }), pane("b", "t", { status: "working" }),
+      pane("c", "other", { status: "blocked" })], folded: { "tab:t": true } };
+  let rows = buildTree(input);
+  assert.equal(rows.find(r => r.id === "s").status, "blocked");
+  assert.equal(rows.find(r => r.id === "t").status, "working");
+  assert.equal(rowDisplay(rows.find(r => r.id === "t")).count, "· 2");
+  rows = buildTree({ ...input, folded: { "space:s": true } });
+  assert.equal(rows.find(r => r.id === "s").status, "blocked");
 });
 
 test("remote identifiers containing slashes match whole addresses and aliases", () => {
