@@ -3,8 +3,8 @@ models:
   sol: gpt-6.1-sol
   terra: gpt-6.1-terra
   luna: gpt-6-luna
-  opus: opus
-  sonnet: sonnet
+  opus: opus-5.5-medium
+  sonnet: sonnet-5.5-medium
   gemini-flash: gemini-3.8-flash-medium
 keys:
   - key: codex-low-h
@@ -44,7 +44,7 @@ keys:
     family: anthropic
     tier: Opus
     model: opus
-    effort: "medium"
+    effort: ""
     cost: "highest"
     use: "hard implementation and debugging, ambiguous design, deep review, adversarial verification"
   - key: claude-medium-m
@@ -52,7 +52,7 @@ keys:
     family: anthropic
     tier: Sonnet
     model: sonnet
-    effort: "medium"
+    effort: ""
     cost: "low+"
     use: "docs and writing, alternative implementation, code review, scenario QA"
   - key: gemini-medium-m

@@ -249,6 +249,9 @@ func loadManifest(data []byte) (*modelManifest, error) {
 		if k.Family != map[string]string{"codex": familyOpenAI, "claude": familyAnthropic, "agy": familyGoogle}[k.Kind] || k.Tier == "" || !validEffort(k.Effort) {
 			return nil, fmt.Errorf("invalid family, tier or effort for %s", k.Key)
 		}
+		if _, suffix := claudeModelArgs(mf.Models[k.Model]); k.Kind == "claude" && suffix != "" && k.Effort != "" {
+			return nil, fmt.Errorf("%s: effort %q conflicts with effort suffix %q in model name", k.Key, k.Effort, suffix)
+		}
 	}
 	for alias, target := range mf.Aliases {
 		if alias == "" || keys[alias] || !keys[target] {

@@ -176,3 +176,8 @@ The former codex-medium-h key is a deprecated Luna alias, including saved runs. 
 Embed `models.yaml` as the source for named model ids, canonical keys, tiers, aliases, fallback chains and key rules; a local `models.yaml` overlay changes only shared ids and key effort, below existing per-key env overrides.
 Generate marked catalog documentation from embedded defaults and reject drift in `make check`; keep historical decisions unchanged. Record the resolved model id on worker and task records.
 Keep each CLI's pane and one-shot argv in one adapter, pinned by golden tests. Live compatibility probes are opt-in through `doctor --probe-models`; tests use stubs and `make check` never probes models.
+
+## D21. Claude models named like GPT and Gemini (2026-11-03)
+
+Claude manifest ids read `opus-5.5-medium` and `sonnet-5.5-medium`: family, version and effort joined with `-`, key effort empty (as for Gemini). The Claude CLI accepts none of this directly. Verified live: `--model opus-5.5-medium` is an unknown model, and `--model claude-opus-5.5` silently resolves to Opus 5, which is wrong. The correct form is `--model claude-opus-5-5 --effort medium`.
+The claude adapter therefore translates names matching `^(opus|sonnet|haiku|fable)-<major>[.<minor>][-<effort>]$` into `--model claude-<family>-<major>[-<minor>]` plus `--effort` from the suffix, else from the key effort. Anything else (raw CLI ids, aliases, unknown suffixes) passes through unchanged. Env and overlay overrides use the same path. Manifest validation rejects a Claude key that has both a key effort and a suffix.
