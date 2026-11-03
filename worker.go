@@ -715,21 +715,7 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	// Herdr's agent.prompt moves the UI to the agent's workspace and tab, which drags the
 	// user back to the Head. Type the one-line prompt into the pane and press Enter instead;
 	// neither pane.send_text nor agent.send_keys changes focus.
-	send := func() error {
-		if info, err := agentGet(workerAgent(w)); err == nil && info.Status == "blocked" {
-			return fmt.Errorf("agent %s is stopped at an approval or question dialog; inspect with orch read %s", name, name)
-		}
-		if backend() == "app" {
-			_, err := hcRun("send", w.Terminal, msg)
-			return err
-		}
-		if _, err := herdrRun("pane", "send-text", w.Pane, msg); err != nil {
-			return err
-		}
-		time.Sleep(timings.KeyGap)
-		_, err := muxKeys(name, "enter")
-		return err
-	}
+	send := func() error { return sendWorkerText(w, msg) }
 	if err := send(); err != nil {
 		return fmt.Errorf("prompt send failed: %w", err)
 	}
@@ -834,4 +820,21 @@ func retireName(r *Run, name string) error {
 		}
 	}
 	return nil
+}
+
+// sendWorkerText shares the unfocused delivery transport for prompts and resumes.
+func sendWorkerText(w *Worker, msg string) error {
+	if info, err := agentGet(workerAgent(w)); err == nil && info.Status == "blocked" {
+		return fmt.Errorf("agent %s is stopped at an approval or question dialog; inspect with orch read %s", w.Name, w.Name)
+	}
+	if backend() == "app" {
+		_, err := hcRun("send", w.Terminal, msg)
+		return err
+	}
+	if _, err := herdrRun("pane", "send-text", w.Pane, msg); err != nil {
+		return err
+	}
+	time.Sleep(timings.KeyGap)
+	_, err := muxKeys(w.Name, "enter")
+	return err
 }

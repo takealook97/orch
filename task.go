@@ -38,6 +38,7 @@ type TestResult struct {
 	Interrupted bool `json:"-"`
 }
 type Task struct {
+	CapacityRetries int               `json:"capacity_retries,omitempty"`
 	Worktree        string            `json:"worktree,omitempty"`
 	Branch          string            `json:"branch,omitempty"`
 	WorktreeAuto    bool              `json:"worktree_auto,omitempty"`
@@ -287,7 +288,14 @@ type execResult struct {
 // interrupted orch never leaves a child editing files behind.
 // started, when set, receives the child's pid (its process group id) once it runs.
 func execLogged(cwd, bin string, args []string, env []string, timeout time.Duration, logPath string, started func(pgid int)) (execResult, error) {
-	log, err := os.Create(logPath)
+	return execLoggedMode(cwd, bin, args, env, timeout, logPath, started, false)
+}
+func execLoggedMode(cwd, bin string, args []string, env []string, timeout time.Duration, logPath string, started func(int), appendLog bool) (execResult, error) {
+	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	if appendLog {
+		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	}
+	log, err := os.OpenFile(logPath, flags, 0600)
 	if err != nil {
 		return execResult{Code: 1}, err
 	}
@@ -532,10 +540,7 @@ func runTask(t *Task) error {
 	env := append(os.Environ(), "ORCH_ROLE=worker", "ORCH_RUN="+t.Run, "ORCH_WORKER="+t.ID, "ORCH_MODEL="+t.Key)
 	env = append(env, acc.Env...)
 	budget := time.Duration(t.TimeoutMS) * time.Millisecond
-	res, err := execLogged(t.Cwd, m.Kind, args, env, budget, filepath.Join(t.Dir, "output.log"), func(pgid int) {
-		t.Pgid = pgid
-		editTask(t, func(x *Task) { x.Pgid = pgid })
-	})
+	res, raw, err := runTaskAttempts(t, m, args, env, budget, start, answerPath)
 	t.ExitCode = res.Code
 	if err != nil {
 		t.Status = "failed"
@@ -545,7 +550,6 @@ func runTask(t *Task) error {
 		t.Status, t.Note = "failed", "interrupted"
 		return nil
 	}
-	raw, _ := os.ReadFile(filepath.Join(t.Dir, "output.log"))
 	answer, usage := parseAnswer(m.Kind, raw)
 	if m.Kind == "codex" {
 		if b, e := os.ReadFile(answerPath); e == nil && len(b) > 0 {
@@ -693,6 +697,7 @@ func taskReport(t *Task, asJSON bool) string {
 	hint := paneHint(t, inHerdr())
 	if asJSON {
 		v := map[string]any{"task": t.ID, "run": t.Run, "status": t.Status, "exit_code": t.ExitCode, "duration_ms": t.DurationMS, "dir": t.Dir}
+		v["capacity_retries"] = t.CapacityRetries
 		if hint != "" {
 			v["hint"] = hint
 		}
@@ -731,6 +736,9 @@ func taskReport(t *Task, asJSON bool) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "task: %s\nrun: %s\nstatus: %s\nexit code: %d\nduration: %d ms\n", t.ID, t.Run, t.Status, t.ExitCode, t.DurationMS)
+	if t.CapacityRetries > 0 {
+		fmt.Fprintf(&b, "capacity retries: %d/%d\n", t.CapacityRetries, capacityMaxRetries())
+	}
 	if t.Note != "" {
 		fmt.Fprintf(&b, "note: %s\n", t.Note)
 	}

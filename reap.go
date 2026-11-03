@@ -109,6 +109,20 @@ func (rp *reaper) once(log io.Writer) (bool, error) {
 	for _, w := range r.liveWorkers() {
 		// Never close a worker that has not written its final status line.
 		if resultStatus(w.Result) == "" {
+			info, infoErr := agentGet(workerAgent(w))
+			if infoErr == nil && info.Status == "working" {
+				noteCapacityRecovered(rp.runID, w)
+			}
+			if infoErr == nil && (info.Status == "idle" || info.Status == "done") {
+				if screen, err := agentRead(workerAgent(w), 40); err == nil {
+					if !capacityText(screen) {
+						noteCapacityRecovered(rp.runID, w)
+					}
+					if _, _, err := resumeOnCapacity(rp.runID, w, screen); err != nil {
+						fmt.Fprintf(log, "capacity resume %s: %v\n", w.Name, err)
+					}
+				}
+			}
 			delete(rp.notWorking, w.Name)
 			continue
 		}
