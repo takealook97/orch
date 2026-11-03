@@ -176,7 +176,7 @@ func decide(in hookInput, role string, inHerdr bool) string {
 		if goalEditTool.MatchString(tool) || goalPatchTool.MatchString(tool) {
 			return ""
 		}
-		cmd = patchBody.ReplaceAllString(cmd, "")
+		cmd = stripPatchHeredocs(cmd)
 		switch {
 		case subagentTools.MatchString(tool):
 			return "orch workers cannot delegate. Work within the contract scope and list any blockers in the result report."
@@ -328,8 +328,38 @@ var goalPatchTool = regexp.MustCompile(`(?i)(^|[.__])apply_patch$`)
 var goalPatchPath = regexp.MustCompile(`(?m)^\*\*\* (?:Add File|Update File|Delete File|Move to):[ \t]*(.+)$`)
 var goalShellPatch = regexp.MustCompile(`\bapply_patch\b[^\n]*<<`)
 
-// The body of an apply_patch heredoc is file content, not commands.
-var patchBody = regexp.MustCompile(`(?s)\*\*\* Begin Patch.*?\*\*\* End Patch`)
+// An apply_patch heredoc's body is file content, not commands.
+var patchHeredoc = regexp.MustCompile(`\bapply_patch\b[^\n]*<<-?\s*['"]?(\w+)['"]?[^\n]*\n`)
+
+// stripPatchHeredocs drops the body of each apply_patch heredoc, up to its terminator line.
+// Text outside such a heredoc, marker lines included, is still checked.
+func stripPatchHeredocs(cmd string) string {
+	var b strings.Builder
+	for {
+		m := patchHeredoc.FindStringSubmatchIndex(cmd)
+		if m == nil {
+			b.WriteString(cmd)
+			return b.String()
+		}
+		b.WriteString(cmd[:m[1]])
+		rest := cmd[m[1]:]
+		term := cmd[m[2]:m[3]]
+		end := len(rest)
+		for off := 0; off < len(rest); {
+			line := rest[off:]
+			n := strings.IndexByte(line, '\n')
+			if n < 0 {
+				n = len(line)
+			}
+			if strings.TrimSpace(line[:n]) == term {
+				end = off
+				break
+			}
+			off += n + 1
+		}
+		cmd = rest[end:]
+	}
+}
 
 var goalEditTool = regexp.MustCompile(`(?i)(^|[.__])(?:Edit|Write|MultiEdit|NotebookEdit)$`)
 

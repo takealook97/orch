@@ -362,6 +362,8 @@ func TestHookDecisions(t *testing.T) {
 		{"worker apply_patch tool", hookJSON("apply_patch", map[string]any{"input": "*** Begin Patch\n*** Add File: a.go\n+orch hud sys\n*** End Patch"}), "worker", true, false},
 		{"worker shell patch body", hookJSON("exec_command", map[string]any{"cmd": "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: a.md\n+orch spawn x\n*** End Patch\nEOF"}), "worker", true, false},
 		{"worker spawn after patch", hookJSON("exec_command", map[string]any{"cmd": "apply_patch <<'EOF'\n*** Begin Patch\n*** End Patch\nEOF\norch spawn --model x"}), "worker", true, true},
+		{"worker fake patch markers", hookJSON("Bash", map[string]any{"command": "echo '*** Begin Patch'; orch spawn --model x; echo '*** End Patch'"}), "worker", true, true},
+		{"worker fake markers lines", hookJSON("Bash", map[string]any{"command": ": '*** Begin Patch'\ncodex exec hi\n: '*** End Patch'"}), "worker", true, true},
 		{"worker grep orch", hookJSON("Bash", map[string]any{"command": "grep -r 'orch spawn' docs"}), "worker", true, false},
 		{"head prose mention", hookJSON("Bash", map[string]any{"command": "python3 - <<'EOF'\ns='run `herdr pane split --help` once'\nEOF"}), "", true, false},
 		{"head chained split", hookJSON("Bash", map[string]any{"command": "cd x && herdr pane split --pane a"}), "", true, true},
