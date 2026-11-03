@@ -87,7 +87,7 @@ func workerScopeRepository(w *Worker, body string) (string, error) {
 		return scopeRepository(w.Cwd, body)
 	}
 	root := canonicalRoot(w.Cwd)
-	base := contractField(body, "base commit")
+	base := contractBase(body)
 	if !isGitDir(root) || explicitBase(base) && !hasBaseCommit(root, base) {
 		return "", fmt.Errorf("worktree cannot verify contract baseline: %s", root)
 	}
@@ -95,7 +95,7 @@ func workerScopeRepository(w *Worker, body string) (string, error) {
 }
 
 func workerScopeBase(w *Worker, body string) string {
-	base := contractField(body, "base commit")
+	base := contractBase(body)
 	if w.Branch != "" && !explicitBase(base) && w.WorktreeStart != "" {
 		return w.WorktreeStart
 	}

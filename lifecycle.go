@@ -475,7 +475,7 @@ func collectWorker(runFlag, name string) (string, string, error) {
 	if w.Contract != "" && w.Cwd != "" {
 		body, err := os.ReadFile(w.Contract)
 		// Preserve non-git tasks that declare no commit baseline.
-		checkScope := err != nil || isGitDir(w.Cwd) || explicitBase(contractField(string(body), "base commit"))
+		checkScope := err != nil || isGitDir(w.Cwd) || explicitBase(contractBase(string(body)))
 		var root string
 		var changed []string
 		if err == nil && checkScope {

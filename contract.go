@@ -182,6 +182,19 @@ func repoRoot(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// contractBase reads the base commit: the first word of the field, so a note such as
+// "cbe6ed2 (before this work)" still names the commit. Placeholders stay as written.
+func contractBase(body string) string {
+	base := contractField(body, "base commit")
+	if strings.HasPrefix(base, "<") {
+		return base
+	}
+	if f := strings.Fields(base); len(f) > 0 {
+		return f[0]
+	}
+	return base
+}
+
 func explicitBase(base string) bool {
 	return base != "" && base != "none" && !strings.HasPrefix(base, "<")
 }
@@ -196,7 +209,7 @@ var contractPaths = regexp.MustCompile("`(/[^`]+)`|\"(/[^\"]+)\"|'(/[^']+)'|(/[^
 // path, then falls back to a unique repository in cwd and its children through
 // depth two. Git discovers both normal repositories and linked worktrees.
 func scopeRepository(cwd, body string) (string, error) {
-	base := contractField(body, "base commit")
+	base := contractBase(body)
 	root := repoRoot(cwd)
 	if !explicitBase(base) {
 		return root, nil

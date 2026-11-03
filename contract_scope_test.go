@@ -317,3 +317,17 @@ func TestFirstPromptSavesHashAndWorkspaceBaseline(t *testing.T) {
 		t.Fatalf("first prompt state: %+v", w)
 	}
 }
+
+func TestContractBaseFirstWord(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{"- base commit: cbe6ed2 (before this work)   · worktree: none", "cbe6ed2"},
+		{"- base commit: cbe6ed2 · worktree: /tmp/x", "cbe6ed2"},
+		{"- base commit: <hash or none>   · worktree: <path or none>", "<hash or none>"},
+		{"- base commit: none", "none"},
+		{"- other: x", ""},
+	} {
+		if got := contractBase(tc.line + "\n"); got != tc.want {
+			t.Errorf("%q: got %q want %q", tc.line, got, tc.want)
+		}
+	}
+}
