@@ -4,6 +4,8 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 
 ## Decisions (design doc S14)
 
+2026-11-03: Concurrent writers automatically get Git worktrees, including across Heads and backends. Scope checks and collect commits run in each worker's checkout. `orch merge` explicitly integrates committed branches, aborts conflicts, and removes worktree directories and branches only after integration checks pass; run end and gc preserve unmerged or dirty work. Explicit `--worktree`, `--no-worktree`, and DAG `worktree: none` retain caller control.
+
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Opus uses `--effort medium` (or low); Sonnet uses `--effort medium` | Design-doc recommendation; Opus effort: medium or low only, never high |

@@ -38,6 +38,14 @@ type TestResult struct {
 	Interrupted bool `json:"-"`
 }
 type Task struct {
+	Worktree        string            `json:"worktree,omitempty"`
+	Branch          string            `json:"branch,omitempty"`
+	WorktreeAuto    bool              `json:"worktree_auto,omitempty"`
+	WorktreeBase    string            `json:"worktree_base,omitempty"`
+	WorktreeStart   string            `json:"worktree_start,omitempty"`
+	Commit          string            `json:"commit,omitempty"`
+	Committed       bool              `json:"committed,omitempty"`
+	Merged          bool              `json:"merged,omitempty"`
 	ModelID         string            `json:"model_id,omitempty"`
 	ID              string            `json:"task"`
 	Run             string            `json:"run"`
@@ -263,7 +271,7 @@ func taskPrompt(t *Task, requirement string) string {
 		}
 		p += "End with a final message whose first line is SUMMARY: <one line>, followed by at most 10 lines.\n"
 	}
-	return p + "\n" + requirement
+	return p + "\n" + requirement + worktreePrompt(&Worker{Worktree: t.Worktree, Branch: t.Branch, WorktreeBase: t.WorktreeBase})
 }
 
 // execResult is how a task child ended.
@@ -433,6 +441,9 @@ func capText(s string, n int, path string) (string, bool) {
 func diffForTask(t *Task) {
 	root := repoRoot(t.Cwd)
 	base := "HEAD"
+	if t.WorktreeStart != "" {
+		base = t.WorktreeStart
+	}
 	if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
 		base = emptyTree
 	}
@@ -551,15 +562,10 @@ func runTask(t *Task) error {
 	t.Answer, t.Truncated = capText(answer, limit, answerPath)
 	testTimed := false
 	if t.Kind == "do" {
-		changed, e := changedFiles(t.Cwd, "")
-		if e != nil {
+		if e := captureTaskChanges(t); e != nil {
 			t.Status = "failed"
 			return e
 		}
-		t.Changed = freshChanges(t.Cwd, changed, t.Baseline)
-		sort.Strings(t.Changed)
-		t.ScopeViolations = scopeViolations(t.Changed, rootGlobs(t.Cwd, t.Own))
-		diffForTask(t)
 		if t.TestCmd != "" && !res.Timed {
 			// The final test gets what is left of the task budget, at least a minute.
 			left := max(budget-time.Since(start), time.Minute)
@@ -584,6 +590,37 @@ func runTask(t *Task) error {
 	default:
 		t.Status = "done"
 	}
+	if t.Kind == "do" && t.Branch != "" && t.Status == "done" && len(t.ScopeViolations) == 0 {
+		// A final test can generate files too. Check them before staging everything.
+		if t.TestCmd != "" {
+			if e := captureTaskChanges(t); e != nil {
+				t.Status = "failed"
+				return e
+			}
+			if len(t.ScopeViolations) > 0 {
+				t.Status = "failed"
+				return nil
+			}
+		}
+		hash, e := commitWorktree(t.Worktree, t.Run, t.ID, t.Answer)
+		if e != nil {
+			t.Status = "failed"
+			return e
+		}
+		t.Commit, t.Committed = hash, true
+	}
+	return nil
+}
+
+func captureTaskChanges(t *Task) error {
+	changed, err := changedFiles(t.Cwd, t.WorktreeStart)
+	if err != nil {
+		return err
+	}
+	t.Changed = freshChanges(t.Cwd, changed, t.Baseline)
+	sort.Strings(t.Changed)
+	t.ScopeViolations = scopeViolations(t.Changed, rootGlobs(t.Cwd, t.Own))
+	diffForTask(t)
 	return nil
 }
 
@@ -678,6 +715,10 @@ func taskReport(t *Task, asJSON bool) string {
 			v["scope_violations"] = t.ScopeViolations
 			v["diffstat"] = t.Diffstat
 			v["diff_path"] = t.DiffPath
+			if t.Worktree != "" {
+				v["worktree"], v["branch"], v["worktree_base"] = t.Worktree, t.Branch, t.WorktreeBase
+				v["worktree_auto"], v["committed"], v["commit"], v["merged"] = t.WorktreeAuto, t.Committed, t.Commit, t.Merged
+			}
 		}
 		if t.Test != nil {
 			v["test"] = t.Test
@@ -692,6 +733,12 @@ func taskReport(t *Task, asJSON bool) string {
 	fmt.Fprintf(&b, "task: %s\nrun: %s\nstatus: %s\nexit code: %d\nduration: %d ms\n", t.ID, t.Run, t.Status, t.ExitCode, t.DurationMS)
 	if t.Note != "" {
 		fmt.Fprintf(&b, "note: %s\n", t.Note)
+	}
+	if t.Worktree != "" {
+		fmt.Fprintf(&b, "worktree: %s\nbranch: %s\ncommitted: %t\n", t.Worktree, t.Branch, t.Committed)
+		if len(t.ScopeViolations) > 0 {
+			fmt.Fprintln(&b, "worktree left uncommitted after scope violation")
+		}
 	}
 	if t.Answer != "" {
 		fmt.Fprintf(&b, "answer: %s\n", t.Answer)
@@ -762,6 +809,11 @@ func claimTask(runID, id string) (*Task, error) {
 		}
 		x.Pid, x.Pgid, x.Heartbeat = os.Getpid(), 0, time.Now()
 		t = x
+		for i, existing := range r.Tasks {
+			if existing.ID == id {
+				r.Tasks[i] = x
+			}
+		}
 		return writeTask(x)
 	})
 	return t, err
@@ -837,6 +889,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	fs.Var(&own, "own", "owned globs")
 	testCmd := fs.String("test", "", "test command")
 	worktree := fs.String("worktree", "", "worktree directory")
+	noWorktree := fs.Bool("no-worktree", false, "disable automatic writer isolation")
 	background := fs.Bool("background", false, "run in background")
 	timeout := fs.Int("timeout", 0, "milliseconds")
 	account := fs.String("account", "same", "same|hook")
@@ -921,6 +974,15 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	unlockWriters := func() {}
+	if kind == "do" {
+		unlockWriters, err = lockHead("writers")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	defer func() { unlockWriters() }()
 	t, err := newTask(kind, *key, pos[0], *cwd)
 	if err != nil {
 		fmt.Fprintln(stderr, "orch:", err)
@@ -940,19 +1002,15 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		t.Pid = 0 // the __task runner claims the task with its own pid
 	}
 	if kind == "do" {
-		if *worktree != "" {
-			path, e := filepath.Abs(*worktree)
-			if e != nil {
-				err = e
-			} else {
-				if _, e = os.Stat(path); errors.Is(e, os.ErrNotExist) {
-					branch := "orch/" + t.Run + "-" + t.ID
-					c := exec.Command("git", "-C", *cwd, "worktree", "add", "-b", branch, path, "HEAD")
-					if out, ce := c.CombinedOutput(); ce != nil {
-						err = fmt.Errorf("git worktree add: %v %s", ce, out)
-					}
-				}
-				t.Cwd = path
+		r, e := loadRun(t.Run)
+		if e != nil {
+			err = e
+		} else {
+			warnFirstWriter(r, *cwd, stderr)
+			var state worktreeState
+			state, err = prepareWorktree(t.Run, t.ID, *cwd, *worktree, *noWorktree, stderr)
+			if err == nil {
+				applyTaskWorktree(t, state)
 			}
 		}
 		if err == nil {
@@ -999,6 +1057,12 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		if e = c.Start(); e != nil {
 			return notStarted(e)
 		}
+		// Publish the runner before releasing writer admission. claimTask may
+		// already have run; update only the still-unclaimed record.
+		if e = recordTaskRunner(t.Run, t.ID, c.Process.Pid); e != nil {
+			fmt.Fprintln(stderr, "orch:", e)
+			return 1
+		}
 		_ = c.Process.Release()
 		if *asJSON {
 			fmt.Fprintln(stdout, taskReport(t, true))
@@ -1007,6 +1071,8 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
+	unlockWriters()
+	unlockWriters = func() {}
 	err = runTask(t)
 	if err != nil {
 		fmt.Fprintln(stderr, "orch:", err)
@@ -1021,10 +1087,17 @@ func splitOwned(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
 }
 func testCommand(line, cwd string, maxLines, timeout int, asJSON bool, stdout, stderr io.Writer) int {
+	return testCommandForRun("", line, cwd, maxLines, timeout, asJSON, stdout, stderr)
+}
+
+func testCommandForRun(runID, line, cwd string, maxLines, timeout int, asJSON bool, stdout, stderr io.Writer) int {
 	var path string
-	_, err := activeTaskRun()
+	var err error
+	if runID == "" {
+		runID, err = activeTaskRun()
+	}
 	if err == nil {
-		t, e := newTask("test", "", line, cwd)
+		t, e := newTaskIn(runID, "test", "", line, cwd)
 		if e != nil {
 			fmt.Fprintln(stderr, "orch:", e)
 			return 1
