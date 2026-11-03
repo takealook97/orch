@@ -191,6 +191,7 @@ export default class SpaceTree extends Plumbing {
         .child(button("collapse-all", "chevron-up", "Collapse all", (_e, cx) => this.foldAll(true, cx)))
         .child(button("new-space", "plus", "New space", () => run("space.new"))))
       .child(v_flex().id("tree-list").flex_1().min_h(0).px(4).pb(10).overflow_y_scroll()
-        .children(this.visible.map(row => treeRow(this, row, t))));
+        .children(this.visible.map((row, i) => treeRow(this, row, t)
+          .when(row.kind === "space" && !row.data.parentId && this.visible[i - 1]?.sectionColorKey != null, el => el.mt(4)))));
   }
 }

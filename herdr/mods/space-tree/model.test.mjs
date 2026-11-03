@@ -197,3 +197,12 @@ test("tab icon color follows active state and actionable status", () => {
     assert.equal(tabIconColor(status, false), ["working", "blocked"].includes(status) ? status : "muted");
   }
 });
+
+ test("section ownership follows the repository through worktrees, tabs and panes", () => {
+  const rows = buildTree({ spaces: [sp("repo", [tab("rt")]), sp("wt", [tab("wt-tab")], { parentId: "repo" }), sp("other", [tab("ot")])],
+    panes: [pane("rp", "rt"), pane("wp", "wt-tab"), pane("op", "ot")] });
+  assert.deepEqual(rows.map(r => [r.id, r.sectionColorKey, r.sectionDepth]), [
+    [null, undefined, undefined], ["repo", "repo", 1], ["rt", "repo", 1], ["rp", "repo", 1],
+    ["wt", "repo", 1], ["wt-tab", "repo", 1], ["wp", "repo", 1],
+    ["other", "other", 1], ["ot", "other", 1], ["op", "other", 1]]);
+});

@@ -114,29 +114,29 @@ export function buildTree({ machines = [], spaces = [], panes = [], orch = {}, a
       open: !(folded[key] ?? foldDefault(kind, id, activeSpaceId)), ...fields };
     result.push(row); return row;
   };
-  const addSpace = (s, depth, guide = "") => {
+  const addSpace = (s, depth, guide = "", sectionColorKey = s.id, sectionDepth = depth) => {
     const tabStatus = tab => {
       const ps = panes.filter(p => p.tab === tab.id);
       return aggregateStatus(ps.length ? ps.map(p => p.status) : [tab.status]);
     };
     const statuses = (s.tabs ?? []).map(tabStatus);
-    const row = emit("space", s.id, depth, { name: s.name, status: aggregateStatus(statuses.length ? statuses : [s.status]), guide,
+    const row = emit("space", s.id, depth, { sectionColorKey, sectionDepth, name: s.name, status: aggregateStatus(statuses.length ? statuses : [s.status]), guide,
       active: s.id === activeSpaceId, data: s });
     const children = entries.filter(c => c.parentId === s.id);
     const tabs = row.open ? s.tabs ?? [] : [];
     tabs.forEach((tab, ti) => {
       const ps = panes.filter(p => p.tab === tab.id);
-      const tr = emit("tab", tab.id, depth + 1, { name: tab.name, data: tab, space: s.id,
+      const tr = emit("tab", tab.id, depth + 1, { sectionColorKey, sectionDepth, name: tab.name, data: tab, space: s.id,
         guide: ti === tabs.length - 1 && !children.length ? "└" : "├", count: ps.length,
         status: tabStatus(tab), active: !!tab.active && s.id === activeSpaceId });
       if (!tr.open) return;
-      ps.forEach((pane, pi) => emit("pane", pane.pane, depth + 2, {
+      ps.forEach((pane, pi) => emit("pane", pane.pane, depth + 2, { sectionColorKey, sectionDepth,
         name: paneName(pane, pi, index, aliases), sub: paneSub(pane, index, pi),
         orch: !!(index.workers[pane.terminal] || index.heads[pane.terminal]),
         data: pane, terminal: pane.terminal, status: pane.status, active: !!pane.focused && s.id === activeSpaceId,
         guide: pi === ps.length - 1 ? "└" : "├" }));
     });
-    children.forEach((child, i) => addSpace(child, depth + 1, i === children.length - 1 ? "└" : "├"));
+    children.forEach((child, i) => addSpace(child, depth + 1, i === children.length - 1 ? "└" : "├", sectionColorKey, sectionDepth));
   };
   names.forEach(name => {
     const data = machines.find(m => (m.name ?? null) === name) ?? { name, layout: "ready" };

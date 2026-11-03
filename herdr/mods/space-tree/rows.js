@@ -11,13 +11,7 @@ const glyph = (name, t) => svg(asset(name)).size(13).flex_none().text_color(t.di
 
 function icon(row, t) {
   if (row.kind === "machine") return glyph(row.id ? "server" : "monitor", t);
-  if (row.kind === "space") {
-    if (row.data.parentId) return glyph("branch", t);
-    const color = (shared("space.colors") ?? {})[row.id] ?? "ansi6";
-    return h_flex().size(18).flex_none().rounded(5).bg(t[color] ?? t.accent)
-      .items_center().justify_center().text_size(10.5).font_bold()
-      .text_color(t.accent_foreground).child([...row.name][0]?.toUpperCase() ?? "?");
-  }
+  if (row.kind === "space") return row.data.parentId ? glyph("branch", t) : null;
   if (row.kind === "tab") return svg(asset("tab")).size(13).flex_none().text_color(t[tabIconColor(row.status, row.active)]);
   const program = row.data.program;
   if (program?.icon) return program.tint ? svg(program.icon).size(14).flex_none().text_color(t.muted) : image(program.icon).size(14).flex_none();
@@ -27,14 +21,14 @@ export function treeRow(view, row, t) {
   const stop = (_e, cx) => cx.stop_propagation();
   const name = nameElement(view, row, t);
   const main = h_flex().w_full().min_w(0).items_center().gap(row.kind === "pane" ? 6 : 5)
-    .child(div().w(9).h(17).self_start().mt(-4).flex_none()
+    .child(div().w(row.kind === "space" && !row.data.parentId ? 3 : 9).h(17).self_start().mt(-4).flex_none()
       .when(Boolean(row.guide), el => el.border_l(1).border_b(1).rounded_bl(6).border_color(t.border)))
     .child(row.foldable ? div().id(`fold-${row.key}`).size(12).flex_none()
       .on_mouse_down("left", stop).on_mouse_up("left", stop)
       .on_click((_e, cx) => { cx.stop_propagation(); view.toggle(row, cx); })
       .child(svg(asset(row.open ? "chevron-down" : "chevron-right")).size(12).text_color(t.dim)) : div().w(12).flex_none())
-    .child(icon(row, t))
-    .child(row.kind === "pane" ? h_flex().flex_none().min_w(0).max_w_3_5().text_size(12).text_color(t.foreground).child(name) : name)
+    .when(row.kind !== "space" || !!row.data.parentId, el => el.child(icon(row, t)))
+    .child(row.kind === "pane" ? h_flex().flex_none().min_w(0).max_w_3_5().text_size(12).text_color(t.foreground).child(name) : row.kind === "space" ? div().flex_1().min_w(0).text_size(12.5).font_semibold().text_color(t.foreground).child(name) : name)
     .when(row.kind === "pane", el => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(row.sub)));
   const display = rowDisplay(row);
   if (display.count) main.child(div().text_size(11).text_color(t.dim).child(display.count));
@@ -59,6 +53,8 @@ export function treeRow(view, row, t) {
     .hover(s => s.bg(t.hover))
     .on_click((_e, cx) => { if (Date.now() >= (view.suppressClickUntil ?? 0)) view.select(row, cx); })
     .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); view.contextMenu(row); })
+    .when(row.sectionColorKey != null, e => e.child(div().absolute().left(2 + row.sectionDepth * 12).top(0).bottom(0).w(2)
+      .bg(t[(shared("space.colors") ?? {})[row.sectionColorKey]] ?? t.accent)))
     .when(row.kind === "pane" && row.active, e => e.child(div().absolute().left(0).top(0).bottom(0).w(2).bg(t.accent)))
     .when(row.guide === "├", e => e.child(div().absolute().top(0).bottom(0)
       .left(2 + row.depth * 12).border_l(1).border_color(t.border)))
