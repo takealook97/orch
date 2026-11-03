@@ -554,7 +554,7 @@ func TestCollectSummaryIsRuneSafe(t *testing.T) {
 	t.Setenv("ORCH_RUN", "")
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	r, _ := createRun("x", "light", "", "")
-	os.WriteFile(r.resultPath("a"), []byte("# Result: a\n- summary: "+strings.Repeat("ü", 400)+"\n- status: done\n"), 0600)
+	os.WriteFile(r.resultPath("a"), []byte("# Result: a\n- summary: "+strings.Repeat("ü", 700)+"\n- status: done\n"), 0600)
 	_ = withRun(r.ID, func(x *Run) error {
 		x.Workers = append(x.Workers, &Worker{Name: "a", Status: "prompted", Result: r.resultPath("a")})
 		return nil

@@ -142,6 +142,12 @@ Keep the Head full-height on the left third and at most rowCap workers on the ri
 `ORCH_MAX_WORKERS` is a positive integer with default 12 (invalid/non-positive values use the default). Count live workers of the run that have panes, excluding closed/lost workers. Spawn at the cap fails with "is full" so DAG workers queue only at the worker cap, rather than the visible row cap. Goal admission budgets remain separate. The concurrent-writer gate follows this worker cap instead of a fixed 4; the other parallel-write gates still apply.
 
 
+## 2026-11-03 — Run knowledge and result summaries
+
+Each run starts with `knowledge.md`. Optional result facts (at most eight, verified with a source path or command) merge under the run lock when a done/partial result is observed through wait, collect, reaping, or inline DAG completion. Dedupe uses fact text, retaining the first source and worker attribution; the Head curates the resulting knowledge. This is run-local, not a cross-run cache.
+
+Prompt references supplement the message rather than changing the contract hash. DAG nodes receive existing result paths for declared `needs` (including `reviews`); other workers get no upstream results. `verify-*` roles receive no automatic knowledge reference, preserving independent verification. Collect preserves up to three summary lines, stopping at the next field or section and capping display at 600 characters.
+
 ## D19. Terra between Luna and Sol
 
 2026-10-30: supersedes the 2026-09-30 retirement of codex-medium-m (history above is retained). Seven canonical entries now include codex-low-h = gpt-6-luna/high, codex-medium-m = gpt-6.1-terra/medium, and the unchanged Sol low/medium entries. Model hierarchy is Luna < Terra < Sol regardless of effort. Terra handles constrained writing, scoped known fixes and mechanical extraction; larger complete plans start at Sol low. Screen work is a candidate role, not a measured advantage. Sonnet/Opus writing and deep-document defaults and Gemini independent-neutral review remain unchanged.

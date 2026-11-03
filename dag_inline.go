@@ -13,7 +13,7 @@ import (
 // interrupted means orch was signalled: the node is not final and the DAG run stops.
 type inlineResult struct {
 	node, status, detail, worker string
-	interrupted              bool
+	interrupted                  bool
 }
 
 // startInline launches a run or pane: false node in the background and reports on done.
@@ -51,9 +51,7 @@ func startInline(runID string, d Dag, st *dagState, n *DagNode, budget time.Dura
 	if err != nil {
 		return err
 	}
-	prompt := fmt.Sprintf("This DAG node runs without a pane and with read-only tools. Do not write any file. "+
-		"Your final message is saved verbatim as the result file %s, so give the full result in the format the "+
-		"contract asks for and end it with the status: line.\n\n%s", result, body)
+	prompt := inlinePrompt(r, n, string(body))
 	purpose := n.Purpose
 	if purpose == "" {
 		if _, ok := chains[n.Role]; ok {
@@ -220,4 +218,10 @@ func runInlineAsk(t *Task, node, result string) askResult {
 		return end("attention", t.ID+": answer has no status line")
 	}
 	return end(status, t.ID+" ("+t.Key+")")
+}
+
+func inlinePrompt(r *Run, n *DagNode, body string) string {
+	return fmt.Sprintf("This DAG node runs without a pane and with read-only tools. Do not write any file. "+
+		"Your final message is saved verbatim as the result file %s, so give the full result in the format the "+
+		"contract asks for and end it with the status: line.%s\n\n%s", r.resultPath(n.Name), promptReferences(r, n.Name, n.Role), body)
 }

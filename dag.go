@@ -398,6 +398,9 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 			fmt.Fprintf(out, "%s\tinterrupted\n", res.node)
 			return
 		}
+		if err := mergeKnowledge(r.ID, res.node, r.resultPath(res.node)); err != nil {
+			fmt.Fprintf(out, "knowledge merge %s: %v\n", res.node, err)
+		}
 		ns.Status, ns.Detail, ns.Ended = res.status, res.detail, time.Now()
 		fmt.Fprintf(out, "%s\t%s\t%s\n", res.node, res.status, res.detail)
 	}
@@ -591,3 +594,29 @@ func dagAllDone(d Dag, st *dagState) bool {
 }
 
 var errDagIncomplete = errors.New("not all DAG nodes finished as done")
+
+// References supplement the message, leaving contract hashes stable.
+func promptReferences(r *Run, name, role string) string {
+	var lines []string
+	if !strings.HasPrefix(role, "verify-") {
+		lines = append(lines, "Run knowledge (read first, reuse instead of re-deriving): "+filepath.Join(r.dir(), "knowledge.md"))
+	}
+	if d, err := loadDag(r); err == nil {
+		if n := d.node(name); n != nil {
+			var paths []string
+			for _, need := range n.Needs {
+				path := r.resultPath(need)
+				if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+					paths = append(paths, path)
+				}
+			}
+			if len(paths) > 0 {
+				lines = append(lines, "Upstream results: "+strings.Join(paths, ", "))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(lines, "\n")
+}
