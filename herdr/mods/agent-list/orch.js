@@ -23,5 +23,5 @@ export function isHidden(agent, index) {
 
 export function headSuffix(address, index) {
   const counts = index.heads.get(address);
-  return counts?.total ? ` · worker ${counts.total}${counts.working ? ` (${counts.working} 작업 중)` : ""}` : "";
+  return counts?.total ? ` · ${counts.total} worker${counts.total === 1 ? "" : "s"}${counts.working ? ` (${counts.working} working)` : ""}` : "";
 }

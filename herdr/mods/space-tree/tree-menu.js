@@ -19,7 +19,7 @@ export function menuView(view) {
         cx.stop_propagation();
       }
     })
-    .child(view.editing ? nameElement(view, row, t) : button("rename-alias", "이름 바꾸기", (_e, cx) => {
+    .child(view.editing ? nameElement(view, row, t) : button("rename-alias", "Rename", (_e, cx) => {
       if (p.id != null) startRename(view, p.kind, p.id, p.current, cx);
     }))
     .when(p.kind === "pane", el => el.child(button("pane-actions", "Pane actions…", () => {
