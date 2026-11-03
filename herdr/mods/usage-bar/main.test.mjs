@@ -90,8 +90,8 @@ test('provider cards show compact weekly usage, coupon text and stale opacity', 
   assert.ok(['codex', 'claude', 'gemini', '2 resets', 'work'].every(label => labels.includes(label)));
   assert.ok(!labels.some(label => /5h|Week|max|prolite|default|⚠|🎟|@/.test(label)));
   const codex = byID(tree, 'account-codex');
-  assert.equal(codex.nodes[0].nodes[1].style.min_w, format.cellWidth('weekly'));
-  assert.equal(codex.nodes[0].nodes[2].style.min_w, format.cellWidth('coupon'));
+  assert.equal(codex.nodes[0].nodes[1].style.min_w, undefined); // cells hug their content
+  assert.equal(codex.nodes[0].nodes[2].style.min_w, undefined);
   assert.equal(byID(tree, 'account-claude').nodes[0].style.opacity, 0.6);
   assert.equal(byID(tree, 'account-gemini').nodes[0].nodes[0].nodes.length, 1);
   assert.ok(walk(tree).some(node => node?.style?.w === 28 && node?.style?.h === 2));
