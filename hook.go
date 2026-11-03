@@ -172,6 +172,11 @@ func decide(in hookInput, role string, inHerdr bool) string {
 	// The shell joins quoted fragments (he''rdr, or''ch, \herdr); match the joined form too.
 	cmd += "\n" + quoteJoiner.Replace(cmd)
 	if role == "worker" {
+		// File edits start no process; their text (source, docs) may name orch or herdr commands.
+		if goalEditTool.MatchString(tool) || goalPatchTool.MatchString(tool) {
+			return ""
+		}
+		cmd = patchBody.ReplaceAllString(cmd, "")
 		switch {
 		case subagentTools.MatchString(tool):
 			return "orch workers cannot delegate. Work within the contract scope and list any blockers in the result report."
@@ -322,6 +327,9 @@ func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 var goalPatchTool = regexp.MustCompile(`(?i)(^|[.__])apply_patch$`)
 var goalPatchPath = regexp.MustCompile(`(?m)^\*\*\* (?:Add File|Update File|Delete File|Move to):[ \t]*(.+)$`)
 var goalShellPatch = regexp.MustCompile(`\bapply_patch\b[^\n]*<<`)
+
+// The body of an apply_patch heredoc is file content, not commands.
+var patchBody = regexp.MustCompile(`(?s)\*\*\* Begin Patch.*?\*\*\* End Patch`)
 
 var goalEditTool = regexp.MustCompile(`(?i)(^|[.__])(?:Edit|Write|MultiEdit|NotebookEdit)$`)
 
