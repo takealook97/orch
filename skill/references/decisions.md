@@ -170,3 +170,9 @@ The former codex-medium-h key is a deprecated Luna alias, including saved runs. 
 - Cache only successful one-off asks in the orch home, keyed by normalized question, model key, output cap, Git root, HEAD, and dirty state (including untracked file contents). Non-Git directories, failed asks, do, and test do not populate the cache. Store the launch key with the task so background completion follows the same rules.
 - Default TTL is seven days; `ORCH_ASK_CACHE_TTL` is hours (`0` disables). `--fresh` skips lookup and refreshes the entry after success. Hits retain the task report shape and mark the original task directory as cached, without launching a model or registering another task.
 - `orch recall` uses case-insensitive AND term matching over ask/do answers, worker results, knowledge, and findings. Filter by repository by default, with `--all-repos` for global recall; rank matching-line count before recency and cap excerpts to three lines of 160 characters each. Run recall before commissioning new research; no vector index is required.
+
+## D20. One model manifest and CLI adapters (2026-11-03)
+
+Embed `models.yaml` as the source for named model ids, canonical keys, tiers, aliases, fallback chains and key rules; a local `models.yaml` overlay changes only shared ids and key effort, below existing per-key env overrides.
+Generate marked catalog documentation from embedded defaults and reject drift in `make check`; keep historical decisions unchanged. Record the resolved model id on worker and task records.
+Keep each CLI's pane and one-shot argv in one adapter, pinned by golden tests. Live compatibility probes are opt-in through `doctor --probe-models`; tests use stubs and `make check` never probes models.

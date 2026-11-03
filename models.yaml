@@ -1,0 +1,89 @@
+version: 1
+models:
+  sol: gpt-6.1-sol
+  terra: gpt-6.1-terra
+  luna: gpt-6-luna
+  opus: opus
+  sonnet: sonnet
+  gemini-flash: gemini-3.8-flash-medium
+keys:
+  - key: codex-low-h
+    kind: codex
+    family: openai
+    tier: Luna
+    model: luna
+    effort: "high"
+    cost: "low"
+    use: "exploration, bulk classification, precise extraction, log and test analysis, focused verification"
+  - key: codex-medium-m
+    kind: codex
+    family: openai
+    tier: Terra
+    model: terra
+    effort: "medium"
+    cost: "low+"
+    use: "constrained writing, scoped code fixes, mechanical extraction; screen work candidate"
+  - key: codex-high-l
+    kind: codex
+    family: openai
+    tier: Sol
+    model: sol
+    effort: "low"
+    cost: "medium"
+    use: "mechanical implementation from complete specs, bulk repetitive edits"
+  - key: codex-high-m
+    kind: codex
+    family: openai
+    tier: Sol
+    model: sol
+    effort: "medium"
+    cost: "medium+"
+    use: "general implementation, debugging, integration, technical review"
+  - key: claude-high-m
+    kind: claude
+    family: anthropic
+    tier: Opus
+    model: opus
+    effort: "medium"
+    cost: "highest"
+    use: "hard implementation and debugging, ambiguous design, deep review, adversarial verification"
+  - key: claude-medium-m
+    kind: claude
+    family: anthropic
+    tier: Sonnet
+    model: sonnet
+    effort: "medium"
+    cost: "low+"
+    use: "docs and writing, alternative implementation, code review, scenario QA"
+  - key: gemini-medium-m
+    kind: agy
+    family: google
+    tier: Gemini
+    model: gemini-flash
+    effort: ""
+    cost: "low"
+    use: "neutral verification, web and document research, multimodal inspection, rendering checks"
+aliases:
+  codex-medium-h: codex-low-h
+fallbacks:
+  explore: [codex-low-h, codex-medium-m, gemini-medium-m]
+  extract: [codex-low-h, codex-medium-m, codex-high-m, claude-medium-m]
+  web: [gemini-medium-m, claude-medium-m, claude-high-m]
+  synthesis: [claude-high-m, codex-high-m, claude-medium-m]
+  mech-impl: [codex-medium-m, codex-high-l, codex-high-m, claude-medium-m]
+  impl: [codex-high-m, claude-high-m, claude-medium-m]
+  hard-impl: [claude-high-m, codex-high-m, claude-medium-m]
+  alt: [claude-medium-m, codex-high-m, claude-high-m]
+  docs: [claude-medium-m, codex-high-m, claude-high-m]
+  analysis: [codex-high-m, claude-high-m, claude-medium-m]
+  integrate: [codex-high-m, claude-high-m]
+  image: [codex-high-m]
+  verify-mech: [codex-low-h, codex-high-m, claude-medium-m]
+  verify-critical: [claude-medium-m, claude-high-m, codex-high-l, codex-high-m]
+  verify-neutral: [gemini-medium-m, claude-medium-m, codex-high-m]
+  verify-adversarial: [claude-high-m, codex-high-m, claude-medium-m]
+rules:
+  legacy_model_env: {codex-low-h: CODEX_MEDIUM_H}
+  fallback_skip: {codex-medium-m: [codex-low-h]}
+  neutral_key: gemini-medium-m
+  adversarial_exclude: [gemini-medium-m]

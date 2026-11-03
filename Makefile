@@ -1,6 +1,6 @@
 BIN := bin/orch
 
-.PHONY: build test check install link herdr
+.PHONY: build test check docs-check install link herdr
 
 build:
 	go build -o $(BIN) .
@@ -8,7 +8,7 @@ build:
 test:
 	go test ./...
 
-check: build
+check: build docs-check
 	go vet ./...
 	go test ./...
 	./$(BIN) playbook check playbooks
@@ -45,4 +45,15 @@ herdr:
 	for layout in herdr/layouts/*.json; do \
 		[ -f "$$layout" ] || continue; \
 		cp "$$layout" "$(HOME)/.config/herdr-app/layouts/"; \
+	done
+
+# Regenerate in a temporary tree so the check never modifies tracked documents.
+docs-check: build
+	@set -eu; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	for file in README.md docs/setup.md skill/SKILL.md skill/references/design.md constitution/orch-block.md; do \
+		mkdir -p "$$tmp/$$(dirname "$$file")"; cp "$$file" "$$tmp/$$file"; \
+	done; \
+	./$(BIN) docs gen --root "$$tmp"; \
+	for file in README.md docs/setup.md skill/SKILL.md skill/references/design.md constitution/orch-block.md; do \
+		diff -u "$$file" "$$tmp/$$file"; \
 	done

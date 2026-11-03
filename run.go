@@ -15,6 +15,7 @@ import (
 )
 
 type Worker struct {
+	ModelID    string   `json:"model_id,omitempty"`
 	Terminal   string   `json:"terminal,omitempty"`
 	Name       string   `json:"name"`
 	Key        string   `json:"key"`

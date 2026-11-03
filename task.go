@@ -38,6 +38,7 @@ type TestResult struct {
 	Interrupted bool `json:"-"`
 }
 type Task struct {
+	ModelID         string            `json:"model_id,omitempty"`
 	ID              string            `json:"task"`
 	Run             string            `json:"run"`
 	Kind            string            `json:"kind"`
@@ -197,6 +198,17 @@ func newTask(kind, key, text, cwd string) (*Task, error) {
 
 // newTaskIn registers a one-off task in run id.
 func newTaskIn(id, kind, key, text, cwd string) (*Task, error) {
+	var resolvedID string
+	if key != "" {
+		m, err := modelByKey(key)
+		if err != nil {
+			return nil, err
+		}
+		resolvedID, err = modelID(m)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var t *Task
 	err := withRun(id, func(r *Run) error {
 		max := 0
@@ -206,7 +218,7 @@ func newTaskIn(id, kind, key, text, cwd string) (*Task, error) {
 			}
 		}
 		name := fmt.Sprintf("task-%d", max+1)
-		t = &Task{ID: name, Run: id, Kind: kind, Key: key, Status: "running", Dir: taskPath(id, name), Cwd: cwd, Pid: os.Getpid(), Heartbeat: time.Now()}
+		t = &Task{ID: name, Run: id, Kind: kind, Key: key, ModelID: resolvedID, Status: "running", Dir: taskPath(id, name), Cwd: cwd, Pid: os.Getpid(), Heartbeat: time.Now()}
 		if err := os.MkdirAll(t.Dir, 0700); err != nil {
 			return err
 		}
@@ -236,43 +248,11 @@ func saveTask(t *Task) error {
 	})
 }
 func taskArgs(m Model, kind, cwd, answer, prompt string) ([]string, error) {
-	ma, err := modelArgs(m)
+	a, err := adapterFor(m.Kind)
 	if err != nil {
 		return nil, err
 	}
-	switch m.Kind {
-	case "claude":
-		a := append([]string{"-p"}, ma...)
-		if kind == "ask" {
-			// dontAsk denies anything not pre-approved, so the read-only tools are listed twice:
-			// --tools makes them available, --allowedTools lets them run without a prompt.
-			a = append(a, "--tools", "Read,Grep,Glob,WebSearch,WebFetch", "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch", "--permission-mode", "dontAsk")
-		} else {
-			a = append(a, "--permission-mode", "bypassPermissions")
-		}
-		// No MCP connectors and no skill listing: a one-off task needs neither, and together
-		// they add a large prompt to every call that the cheaper key would pay for.
-		return append(a, "--strict-mcp-config", "--disable-slash-commands", "--output-format", "json", prompt), nil
-	case "codex":
-		a := append([]string{"exec"}, ma...)
-		if kind == "ask" {
-			a = append(a, "--sandbox", "read-only")
-		} else {
-			a = append(a, "--dangerously-bypass-approvals-and-sandbox")
-		}
-		return append(a, "--skip-git-repo-check", "--json", "-C", cwd, "-o", answer, prompt), nil
-	case "agy":
-		// agy's -p takes the prompt as its value (unlike claude's -p flag), so the
-		// prompt must follow -p directly; anything else is read as the prompt.
-		a := append([]string{}, ma...)
-		if kind == "ask" {
-			a = append(a, "--mode", "plan")
-		} else {
-			a = append(a, "--dangerously-skip-permissions")
-		}
-		return append(a, "--output-format", "json", "-p", prompt), nil
-	}
-	return nil, fmt.Errorf("unknown CLI kind %s", m.Kind)
+	return a.task(m, kind, cwd, answer, prompt)
 }
 func taskPrompt(t *Task, requirement string) string {
 	p := "You are an orch worker on a one-off task. There is no contract file. Do not delegate. ORCH_ROLE=worker.\n"
@@ -510,6 +490,17 @@ func runTask(t *Task) error {
 		t.Status = "failed"
 		return err
 	}
+	m, t.ModelID, _, err = freezeModel(m)
+	if err != nil {
+		t.Status = "failed"
+		return err
+	}
+	// A background runner may resolve newer settings than the process that queued it.
+	// Persist its actual selection before the child starts so in-flight records agree.
+	if err := saveTask(t); err != nil {
+		t.Status = "failed"
+		return err
+	}
 	acc, err := pickAccount(t.Account, m.Kind, nil)
 	if err != nil {
 		t.Status = "failed"
@@ -670,6 +661,9 @@ func taskReport(t *Task, asJSON bool) string {
 		}
 		if t.Key != "" {
 			v["key"] = t.Key
+			if t.ModelID != "" {
+				v["model_id"] = t.ModelID
+			}
 		}
 		if t.Note != "" {
 			v["note"] = t.Note
