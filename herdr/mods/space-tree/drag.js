@@ -163,6 +163,10 @@ export function executeMove(tab, originalPanes, targetId, api) {
         try { api.run("tab.rename", { id: newTabId, name: tab.name }); }
         catch { return fail("The tab moved, but its custom name could not be restored."); }
       }
+      // Herdr closes a space once its last tab leaves; say so instead of letting it vanish silently.
+      if (source && !api.spaces().some(s => s.id === source.id)) {
+        (api.notice ?? api.warn)(`Space "${source.name ?? source.id}" closed because its last tab moved.`);
+      }
       api.done(); return;
     }
     const next = plan[at++];

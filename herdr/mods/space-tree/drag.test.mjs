@@ -55,11 +55,11 @@ function harness({ named = true, stuck = false, inactiveTab = false, third = fal
     { id: "sp1", name: "Source", active: true, tabs: [tab, sibling] },
     { id: "sp2", name: "Target", active: false, tabs: [] },
   ];
-  const calls = [], queue = [], warnings = [];
+  const calls = [], queue = [], warnings = [], notices = [];
   let done = 0, nextTab = 0;
   const api = {
     panes: () => panes, spaces: () => spaces,
-    after: fn => queue.push(fn), warn: message => warnings.push(message), done: () => done++,
+    after: fn => queue.push(fn), warn: message => warnings.push(message), notice: message => notices.push(message), done: () => done++,
     run(command, args) {
       calls.push({ command, args });
       if (fault(command, args, calls)) throw new Error("host unavailable");
@@ -77,7 +77,7 @@ function harness({ named = true, stuck = false, inactiveTab = false, third = fal
       }));
     },
   };
-  return { api, calls, queue, warnings, spaces, get done() { return done; },
+  return { api, calls, queue, warnings, notices, spaces, get done() { return done; },
     start: () => executeMove({ ...tab, named }, original, "sp2", api),
     flush() { for (let i = 0; queue.length && i < 5000; i++) queue.shift()(); assert.equal(queue.length, 0); },
   };
@@ -249,14 +249,22 @@ test("recovery continues past a failed keep and retries until no terminal is par
   assert.match(h.warnings[0], /3 terminal\(s\) restored in Source/); assert.equal(h.done, 1);
 });
 
-test("moving the only tab is refused before parking can close its source space", () => {
-  assert.deepEqual(canMoveTab({ ...input, fromSpace: { id: "sp1", tabs: [tab] } }), {
-    ok: false, reason: "This is the only tab in its space; moving it would close the space.",
-  });
+test("moving the only tab is allowed", () => {
+  assert.equal(canMoveTab({ ...input, fromSpace: { id: "sp1", tabs: [tab] } }).ok, true);
   const h = harness(), view = { orchLoaded: true }, cx = { notify() {} };
   h.spaces[0].tabs = [tab];
   beginTabDrag(view, { id: tab.id, space: "sp1" }, cx, h.api);
-  assert.equal(view.tabDrag, null); assert.deepEqual(h.calls, []);
+  assert.deepEqual(view.tabDrag, { id: tab.id, space: "sp1" });
+});
+test("moving a tab announces when its source space closes", () => {
+  const h = harness();
+  h.start();
+  while (!h.spaces[1].active) h.queue.shift()();
+  h.spaces.shift();
+  h.flush();
+  assert.deepEqual(h.notices, ['Space "Source" closed because its last tab moved.']);
+  assert.deepEqual(h.warnings, []);
+  assert.equal(h.done, 1);
 });
 
 test("same-space tab drop highlights and reorders by the current 1-based index without parking", () => {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { tabIconColor, aggregateStatus, machineConnected, rowDisplay, buildTree, paneName, paneSub, foldDefault, pruneFolded, orchIndexes, aliasKey, machineId, renameAction } from "./model.js";
+import { tabIconColor, aggregateStatus, machineConnected, rowDisplay, buildTree, paneName, paneSub, foldDefault, pruneFolded, orchIndexes, aliasKey, machineId, renameAction, rowId } from "./model.js";
 
 const pane = (id, tab = "tab", extra = {}) => ({ pane: id, terminal: `t-${id}`, tab, program: { name: "Codex" }, status: "working", ...extra });
 const sp = (id, tabs = [], extra = {}) => ({ id, name: id, tabs, ...extra });
@@ -35,12 +35,13 @@ test("rename restores automatic names, clears aliases, or applies trimmed text",
 
 test("inactive folded repo still lists child worktree and active worktree tabs", () => {
   const spaces = [sp("repo", [tab("repo-tab")]), sp("wt", [tab("wt-tab")], { parentId: "repo", active: true })];
-  const rows = buildTree({ spaces });
+  const folded = { [rowId("space", "repo")]: true };
+  const rows = buildTree({ spaces, folded });
   assert.deepEqual(rows.map(r => r.id), [null, "repo", "wt", "wt-tab"]);
   assert.equal(rows.find(r => r.id === "repo").open, false);
   assert.equal(rows.find(r => r.id === "wt").open, true);
   assert.equal(rows.find(r => r.id === "wt").active, true);
-  assert.deepEqual(buildTree({ spaces, activeSpaceId: "elsewhere" }).map(r => r.id), [null, "repo", "wt"]);
+  assert.deepEqual(buildTree({ spaces, activeSpaceId: "elsewhere", folded: { ...folded, [rowId("space", "wt")]: true } }).map(r => r.id), [null, "repo", "wt"]);
 });
 
 test("only shown space's active tab and focused pane are highlighted", () => {
@@ -103,16 +104,16 @@ test("shipped ordered worktrees nest under repo; folded parent hides only its ta
   const child = rows.find(r => r.id === "wt");
   assert.equal(child.depth, 2); assert.equal(child.data.parentId, "repo"); assert.equal(child.guide, "└");
   assert.equal(rows.find(r => r.id === "repo").data.order, 2);
-  assert.deepEqual(buildTree({ ...input, folded: { "space:repo": true } }).map(r => r.id), [null, "repo", "wt", "other"]);
+  assert.deepEqual(buildTree({ ...input, folded: { [rowId("space", "repo")]: true, [rowId("space", "wt")]: true } }).map(r => r.id), [null, "repo", "wt", "other"]);
 });
 
-test("defaults open machines, active space and tabs; explicit fold values win", () => {
+test("defaults open machines, spaces and tabs; explicit fold values win", () => {
   assert.equal(foldDefault("machine", "local", "s"), false);
   assert.equal(foldDefault("space", "s", "s"), false);
-  assert.equal(foldDefault("space", "other", "s"), true);
+  assert.equal(foldDefault("space", "other", "s"), false);
   assert.equal(foldDefault("tab", "t", "s"), false);
   const input = { spaces: [sp("s", [tab("t")]), sp("other", [tab("o")])], activeSpaceId: "s" };
-  assert.deepEqual(buildTree(input).filter(r => r.kind === "tab").map(r => r.id), ["t"]);
+  assert.deepEqual(buildTree(input).filter(r => r.kind === "tab").map(r => r.id), ["t", "o"]);
   assert.deepEqual(buildTree({ ...input, folded: { "space:s": true, "space:other": false } }).filter(r => r.kind === "tab").map(r => r.id), ["o"]);
   assert.equal(buildTree({ ...input, folded: { [machineId(null)]: true } }).length, 1);
 });

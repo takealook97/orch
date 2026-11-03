@@ -131,7 +131,8 @@ export default class SpaceTree extends Plumbing {
   hoverTabTarget(row, cx) { hoverTabTarget(this, row, cx, this.dragApi()); }
   dragApi() {
     return { run, spaces, panes,
-      warn: body => notify({ title: "Cannot move tab", body, level: "warning", timeout: 5000 }) };
+      warn: body => notify({ title: "Cannot move tab", body, level: "warning", timeout: 5000 }),
+      notice: body => notify({ title: "Tab moved", body, level: "info", timeout: 5000 }) };
   }
   dropTab(row, cx) { return dropTab(this, row, cx, this.dragApi()); }
   dragOver(row, cx) {
