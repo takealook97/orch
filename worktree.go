@@ -476,7 +476,7 @@ func mergeOne(base, branch string) (string, error) {
 	if len(overlap) > 0 {
 		return "", fmt.Errorf("dirty files overlap branch %s: %s", branch, strings.Join(overlap, ", "))
 	}
-	if _, err := gitOutput(base, "merge", "--no-ff", "--no-edit", branch); err != nil {
+	if _, err := gitOutput(base, "merge", "--no-ff", "-m", "chore: merge "+branch, branch); err != nil {
 		if _, active := gitOutput(base, "rev-parse", "--verify", "MERGE_HEAD"); active == nil {
 			if _, abortErr := gitOutput(base, "merge", "--abort"); abortErr != nil {
 				return "", fmt.Errorf("branch %s conflicted: %v; abort failed: %w", branch, err, abortErr)
