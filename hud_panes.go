@@ -249,9 +249,17 @@ func hudPanes(ctx context.Context) HUDPanes {
 			}
 			worker := HUDWorker{Terminal: w.Terminal, Pane: w.Pane, Name: w.Name, Key: w.Key, Family: w.Family, Role: w.Role, Purpose: w.Purpose, Status: w.Status, Label: hudRoleLabel(w.Role, w.Purpose)}
 			if m, err := modelByKey(w.Key); err == nil {
-				worker.Model, _ = modelID(m)
-				worker.Model = hudModelDisplay(worker.Model)
-				worker.Effort = m.Effort
+				id, _ := modelID(m)
+				effort := m.Effort
+				if m.Kind == "claude" {
+					// Manifest names carry the effort as a suffix (opus-5.5-medium).
+					var suffix string
+					id, suffix = claudeModelArgs(id)
+					if effort == "" {
+						effort = suffix
+					}
+				}
+				worker.Model, worker.Effort = hudModelDisplay(id), effort
 			}
 			run.Workers = append(run.Workers, worker)
 		}

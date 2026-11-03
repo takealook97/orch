@@ -681,3 +681,10 @@ func TestHUDCPULinuxCounters(t *testing.T) {
 		t.Fatalf("Linux counters = %v, want 60", got)
 	}
 }
+
+func TestHUDClaudeCatalogSuffix(t *testing.T) {
+	id, suffix := claudeModelArgs("opus-5.5-medium")
+	if hudModelDisplay(id) != "opus-5.5" || suffix != "medium" {
+		t.Fatalf("got %q %q", hudModelDisplay(id), suffix)
+	}
+}
