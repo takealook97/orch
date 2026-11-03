@@ -35,9 +35,9 @@ function element(kind) {
 }
 const strip = code => code.replace(/^import .*;\n/gm, '').replace(/export default /g, '').replace(/export /g, '');
 const div = () => element('div'), h_flex = () => element('row'), v_flex = () => element('column');
-const ui = new Function('div', 'h_flex', 'v_flex', 'pctColorRole',
+const ui = new Function('div', 'h_flex', 'v_flex', 'pctColorRole', 'cellWidth', 'labelWidth',
   `${strip(readFileSync(new URL('./ui.js', import.meta.url), 'utf8'))}; return {cell, groupLabel, systemRow};`
-)(div, h_flex, v_flex, format.pctColorRole);
+)(div, h_flex, v_flex, format.pctColorRole, format.cellWidth, format.labelWidth);
 const source = strip(readFileSync(new URL('./main.js', import.meta.url), 'utf8'));
 const walk = node => typeof node === 'object' ? [node, ...node.nodes.flatMap(walk)] : [node];
 const text = node => walk(node).filter(value => typeof value === 'string');
@@ -95,14 +95,15 @@ test('provider cards retain placeholders, local labels, coupon text and stale op
   const codex = byID(tree, 'account-codex');
   const missing = codex.nodes[0].nodes[1];
   assert.deepEqual(text(missing), ['5h', '—', '']);
+  assert.equal(missing.style.w, 44);
   assert.equal(byID(tree, 'account-claude').nodes[0].style.opacity, 0.6);
   assert.equal(byID(tree, 'account-gemini').nodes[0].nodes[0].nodes.length, 1);
-  assert.ok(walk(tree).some(node => node?.style?.w === 36 && node?.style?.h === 2));
-  h.view.width = 979;
-  assert.ok(!walk(h.view.render(h.cx)).some(node => node?.style?.w === 36 && node?.style?.h === 2));
-  h.view.width = 819;
+  assert.ok(walk(tree).some(node => node?.style?.w === 32 && node?.style?.h === 2));
+  h.view.width = 1000;
+  assert.ok(!walk(h.view.render(h.cx)).some(node => node?.style?.w === 32 && node?.style?.h === 2));
+  h.view.width = 900;
   assert.ok(!text(h.view.render(h.cx)).includes('work'));
-  h.view.width = 699;
+  h.view.width = 700;
   const narrow = byID(h.view.render(h.cx), 'account-gemini');
   assert.equal(text(narrow.nodes[0].nodes[2]).at(-1), '');
   assert.equal(narrow.nodes[0].nodes[2].style.w, 58);

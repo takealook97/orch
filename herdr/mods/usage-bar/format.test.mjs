@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pctColorRole, formatReset, formatCouponExpiry, formatBytes, pickAccounts } from './format.js';
+import { pctColorRole, formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode } from './format.js';
 
 process.env.TZ = 'Asia/Seoul';
 const now = new Date('2026-11-03T13:00:00+09:00');
@@ -73,4 +73,12 @@ test('missing providers yield placeholders', () => {
   assert.equal(picked[0].five_hour, undefined);
   assert.equal(picked[1].label, 'me');
   assert.equal(picked[2].label, '');
+});
+
+test('layout adapts to the estimated card widths', () => {
+  const full = ['codex', 'claude', 'gemini'].map(provider => ({ provider, five_hour: { used_pct: 10 }, weekly: { used_pct: 20 } }));
+  assert.deepEqual(layoutMode(1600, full), { bars: true, accountLine: true, weekDetail: true });
+  assert.deepEqual(layoutMode(1100, full), { bars: false, accountLine: true, weekDetail: true });
+  assert.deepEqual(layoutMode(400, full), { bars: false, accountLine: false, weekDetail: false });
+  assert.deepEqual(layoutMode(1100, pickAccounts(null)), { bars: true, accountLine: true, weekDetail: true });
 });

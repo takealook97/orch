@@ -32,3 +32,23 @@ export function pickAccounts(usage) {
     return { ...account, label: provider === 'gemini' ? '' : (account.label ?? '').split('@')[0] };
   });
 }
+
+// These dimensions are shared with the rendered cells and card labels.
+export const cellWidth = (label, missing, hideDetail = false) =>
+  missing ? 44 : label === 'Week' ? (hideDetail ? 58 : 92) : label === '5h' ? 76 : 64;
+export const labelWidth = accountLine => accountLine ? 64 : 48;
+export function layoutMode(width, accounts) {
+  const mode = { bars: true, accountLine: true, weekDetail: true };
+  const needed = () => accounts.reduce((sum, account) => {
+    const fiveMissing = !Number.isFinite(account.five_hour?.used_pct);
+    const weekMissing = !Number.isFinite(account.weekly?.used_pct);
+    const cells = cellWidth('5h', fiveMissing) + cellWidth('Week', weekMissing, !mode.weekDetail);
+    // Padding, borders, inner gaps, and the gap following each provider.
+    return sum + labelWidth(mode.accountLine) + cells + 16 + 2 + 16 + 8 +
+      (account.provider === 'codex' ? cellWidth('', false) + 8 : 0);
+  }, 170 + 40 - (mode.bars ? 0 : 44));
+  if (width < needed()) mode.bars = false;
+  if (width < needed()) mode.accountLine = false;
+  if (width < needed()) mode.weekDetail = false;
+  return mode;
+}

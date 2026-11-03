@@ -3,7 +3,7 @@ const ORCH = "/Users/deepeet/.local/bin/orch";
 import { View } from 'gpui-kit';
 import { h_flex, v_flex } from 'gpui-base';
 import { exec, spaces, agents, theme } from 'herdr';
-import { formatReset, formatCouponExpiry, formatBytes, pickAccounts } from './format.js';
+import { formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode } from './format.js';
 import { cell, groupLabel, systemRow } from './ui.js';
 
 export default class UsageBar extends View {
@@ -87,14 +87,14 @@ export default class UsageBar extends View {
     this.refresh('usage', cx);
   }
 
-  percentCell(t, label, window, now) {
+  percentCell(t, label, window, now, mode) {
     const past = window?.resets_at && new Date(window.resets_at) <= now;
     const pct = past ? 0 : window?.used_pct;
     const known = Number.isFinite(pct);
     const reset = window ? formatReset(window.resets_at, now) : '';
     return cell(t, { label, value: known ? `${Math.round(pct)}%` : '—',
       pct: known ? pct : undefined, detail: reset ? `↻ ${reset}` : '',
-      hideDetail: label === 'Week' && this.width < 700, hideBar: this.width < 980 });
+      hideDetail: label === 'Week' && !mode.weekDetail, hideBar: !mode.bars });
   }
 
   render(cx) {
@@ -107,8 +107,9 @@ export default class UsageBar extends View {
     }
     const t = theme(), now = new Date();
     const accounts = pickAccounts(this.usage);
-    const group = id => h_flex().id(id).h(36).items_center().flex_none().px(8).gap(10)
-      .rounded(6).bg(t.raised).border(1).border_color(t.border).cursor_pointer()
+    const mode = layoutMode(this.width, accounts);
+    const group = id => h_flex().id(id).h(36).items_center().flex_none().px(8).gap(8)
+      .rounded(6).bg(t.chrome).border(1).border_color(t.border).cursor_pointer()
       .tooltip('Click to refresh usage')
       .on_mouse_down('left', (_event, cx) => cx.stop_propagation())
       .on_click((_event, cx) => this.refreshAll(cx));
@@ -117,15 +118,15 @@ export default class UsageBar extends View {
     const detail = total > 0 ? `${formatBytes(used).replace(/G$/, '')}/${formatBytes(total)}` : '';
     const system = group('system').child(v_flex().items_center().justify_center().gap(1)
       .opacity(this.stale.sys ? 0.6 : 1)
-      .child(systemRow(t, 'CPU', cpu, '', this.width < 980))
-      .child(systemRow(t, 'RAM', memory, detail, this.width < 980)));
+      .child(systemRow(t, 'CPU', cpu, '', !mode.bars))
+      .child(systemRow(t, 'RAM', memory, detail, !mode.bars)));
     const groups = [];
     for (const account of accounts) {
       const stale = account.stale || !!account.error || this.stale.usage;
-      const content = h_flex().items_center().gap(10).opacity(stale ? 0.6 : 1)
-        .child(groupLabel(t, account, this.width < 820))
-        .child(this.percentCell(t, '5h', account.five_hour, now))
-        .child(this.percentCell(t, 'Week', account.weekly, now));
+      const content = h_flex().items_center().gap(8).opacity(stale ? 0.6 : 1)
+        .child(groupLabel(t, account, !mode.accountLine))
+        .child(this.percentCell(t, '5h', account.five_hour, now, mode))
+        .child(this.percentCell(t, 'Week', account.weekly, now, mode));
       if (account.provider === 'codex') {
         const count = account.coupons?.available;
         const expiry = count > 0 ? formatCouponExpiry(account.coupons.next_expires_at, now) : { text: '—', urgent: false };
@@ -137,7 +138,7 @@ export default class UsageBar extends View {
     return h_flex().id('root').size_full().min_w(0).px(12).gap(8).items_center()
       .bg(t.chrome).border_b(1).border_color(t.border)
       .on_size_change((size, cx) => { if (this.width !== size.width) { this.width = size.width; cx.notify(); } })
-      .child(h_flex().id('groups').flex_none().min_w(0).items_center().gap(8).overflow_x_scrollbar().children(groups))
+      .child(h_flex().id('groups').flex_none().min_w(0).items_center().gap(8).children(groups))
       .child(h_flex().flex_1().min_w(0))
       .child(system);
   }
