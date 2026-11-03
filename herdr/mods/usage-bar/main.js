@@ -1,18 +1,14 @@
-const ORCH = "/Users/deepeet/.local/bin/orch";
-
 import { View } from 'gpui-kit';
 import { h_flex, v_flex } from 'gpui-base';
 import { exec, spaces, agents, theme } from 'herdr';
-import { formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode } from './format.js';
+import { formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode, hudCommand } from './format.js';
 import { cell, groupLabel, systemRow } from './ui.js';
 
 export default class UsageBar extends View {
   init(_props, cx) {
-    this.sys = null;
-    this.usage = null;
-    this.stale = { sys: false, usage: false };
-    this.busy = {};
-    this.request = {};
+    this.byMachine = Object.create(null);
+    this.busy = new Set();
+    this.request = new Set();
     this.width = 1200;
     this.observedKey = null;
     this.agentStatus = new Map();
@@ -27,7 +23,8 @@ export default class UsageBar extends View {
     const active = spaces().find(space => space.active);
     const statuses = agents().filter(agent => agent.space === active?.id && !agent.address.includes('/'))
       .map(agent => [agent.address, agent.status]).sort(([a], [b]) => a.localeCompare(b));
-    return { space: active?.id, statuses, key: JSON.stringify([active?.id, statuses]) };
+    const machine = active?.machine || '';
+    return { space: active?.id, machine, statuses, key: JSON.stringify([active?.id, machine, statuses]) };
   }
 
   scheduleUsage(delay, cx) {
@@ -36,52 +33,64 @@ export default class UsageBar extends View {
   }
 
   applyContext(snapshot, cx) {
+    const changedMachine = this.observedMachine !== undefined && snapshot.machine !== this.observedMachine;
     const completed = snapshot.space === this.observedSpace && snapshot.statuses.some(([address, status]) =>
       this.agentStatus.get(address) === 'working' && ['done', 'idle', 'blocked'].includes(status));
     this.observedSpace = snapshot.space;
+    this.observedMachine = snapshot.machine;
+    if (changedMachine) {
+      this.machineDebounce?.cancel();
+      this.machineDebounce = cx.timer.after(300, cx => this.refreshAll(cx));
+    }
     this.agentStatus = new Map(snapshot.statuses);
     this.observedKey = snapshot.key;
     if (completed) this.scheduleUsage(2000, cx);
   }
 
-  refresh(kind, cx) {
-    if (this.busy[kind]) {
-      this.request[kind] = true;
+  machineState(machine) {
+    return this.byMachine[machine] ??= { sys: null, usage: null, stale: { sys: false, usage: false } };
+  }
+
+  refresh(kind, cx, machine = this.context().machine) {
+    const key = JSON.stringify([kind, machine]);
+    if (this.busy.has(key)) {
+      this.request.add(key);
       return;
     }
-    this.busy[kind] = true;
-    const args = ['hud', kind === 'sys' ? 'sys' : 'usage'];
+    this.busy.add(key);
+    const state = this.machineState(machine);
+    const args = [kind];
     if (kind === 'usage') args.push('--selected', '--max-age', '45s');
     cx.spawn(async cx => {
       let quiet = false;
       try {
-        const result = await exec(ORCH, args);
+        const result = await exec(...hudCommand(machine, args));
         if (result.code !== 0) throw new Error('orch hud unavailable');
         const data = JSON.parse(result.stdout);
         if (!data || (kind === 'sys'
           ? !['cpu_pct', 'mem_used_bytes', 'mem_total_bytes'].every(field => Number.isFinite(data[field])) || data.mem_total_bytes <= 0
           : !Array.isArray(data.accounts))) throw new Error('invalid hud data');
         if (kind !== 'sys') data.accounts = data.accounts.map(account => {
-          const prior = this[kind]?.accounts.find(old => old.provider === account.provider &&
+          const prior = state.usage?.accounts.find(old => old.provider === account.provider &&
             old.home === account.home && old.id === account.id);
           return account.error && prior ? { ...prior, ...account,
             five_hour: account.five_hour ?? prior.five_hour,
             weekly: account.weekly ?? prior.weekly,
             coupons: account.coupons ?? prior.coupons, stale: true } : account;
         });
-        const before = kind === 'sys' ? sysSignature(this.sys, this.stale.sys) : null;
-        this[kind] = data;
-        this.stale[kind] = false;
+        const before = kind === 'sys' ? sysSignature(state.sys, state.stale.sys) : null;
+        state[kind] = data;
+        state.stale[kind] = false;
         // A 1 s sys poll redraws the window only when a shown number changes.
         if (kind === 'sys' && sysSignature(data, false) === before) quiet = true;
       } catch (_error) {
-        this.stale[kind] = true;
+        state[kind] = null;
+        state.stale[kind] = true;
       } finally {
-        delete this.busy[kind];
-        if (!quiet) cx.notify();
-        const pending = this.request[kind];
-        delete this.request[kind];
-        if (pending) this.refresh(kind, cx);
+        this.busy.delete(key);
+        if (!quiet && this.context().machine === machine) cx.notify();
+        const pending = this.request.delete(key);
+        if (pending) this.refresh(kind, cx, machine);
       }
     });
   }
@@ -110,23 +119,24 @@ export default class UsageBar extends View {
       this.observation = cx.timer.after(0, cx => { this.applyContext(snapshot, cx); cx.notify(); });
     }
     const t = theme(), now = new Date();
-    const accounts = pickAccounts(this.usage);
+    const state = this.machineState(snapshot.machine);
+    const accounts = pickAccounts(state.usage);
     const mode = layoutMode(this.width, accounts);
     const group = id => h_flex().id(id).h(38).items_center().flex_none().px(8).gap(6)
       .rounded(6).bg(t.chrome).border(1).border_color(t.border).cursor_pointer()
       .tooltip('Click to refresh usage')
       .on_mouse_down('left', (_event, cx) => cx.stop_propagation())
       .on_click((_event, cx) => this.refreshAll(cx));
-    const { cpu_pct: cpu, mem_used_bytes: used, mem_total_bytes: total } = this.sys ?? {};
+    const { cpu_pct: cpu, mem_used_bytes: used, mem_total_bytes: total } = state.sys ?? {};
     const memory = total > 0 ? used / total * 100 : undefined;
     const detail = total > 0 ? `${formatBytes(used).replace(/G$/, '')}/${formatBytes(total)}` : '';
     const system = group('system').child(v_flex().justify_center().gap(1)
-      .opacity(this.stale.sys ? 0.6 : 1)
+      .opacity(state.stale.sys ? 0.6 : 1)
       .child(systemRow(t, 'CPU', cpu, '', !mode.bars))
       .child(systemRow(t, 'RAM', memory, detail, !mode.bars)));
     const groups = [];
     for (const account of accounts) {
-      const stale = account.stale || !!account.error || this.stale.usage;
+      const stale = account.stale || !!account.error || state.stale.usage;
       const content = h_flex().items_center().gap(8).opacity(stale ? 0.6 : 1)
         .child(groupLabel(t, account, !mode.accountLine))
         .child(this.percentCell(t, account.weekly, now, mode));
