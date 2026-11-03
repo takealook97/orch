@@ -276,6 +276,10 @@ func nodeWorktree(s string) string {
 	return s
 }
 
+// worktreeRootAllowed is swappable in tests: test processes may add worktrees only to
+// throwaway repositories, never to the checkout the tests run from.
+var worktreeRootAllowed = func(root string) bool { return true }
+
 func prepareWorktree(runID, name, cwd, explicit string, disabled bool, out io.Writer) (worktreeState, error) {
 	var state worktreeState
 	if explicit != "" && disabled {
@@ -302,7 +306,7 @@ func prepareWorktree(runID, name, cwd, explicit string, disabled bool, out io.Wr
 			return state, err
 		}
 	} else {
-		if disabled || !isGitDir(cwd) {
+		if disabled || !isGitDir(cwd) || !worktreeRootAllowed(root) {
 			return state, nil
 		}
 		writers := liveWritersIn(root, func(ref writerRef) bool { return ref.Run == runID && ref.Name == name })
@@ -338,6 +342,9 @@ func prepareWorktree(runID, name, cwd, explicit string, disabled bool, out io.Wr
 	}
 	if state.Branch == "" {
 		state.Branch = "orch/" + runID + "-" + name
+	}
+	if !worktreeRootAllowed(root) {
+		return state, fmt.Errorf("refusing to add a worktree to %s", root)
 	}
 	_, err := gitOutput(root, "worktree", "add", "-b", state.Branch, state.Dir, "HEAD")
 	if err == nil && state.Auto {

@@ -679,3 +679,16 @@ func TestDoWorktreeFinalTestCannotCommitOutsideScope(t *testing.T) {
 		t.Fatal("out-of-scope test output committed")
 	}
 }
+
+func TestTestsNeverAddWorktreesToTheRealCheckout(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worktreeRootAllowed(canonicalRoot(wd)) {
+		t.Fatalf("test guard allows worktrees in %s", wd)
+	}
+	if !worktreeRootAllowed(canonicalRoot(t.TempDir())) {
+		t.Fatal("test guard blocks temp repositories")
+	}
+}

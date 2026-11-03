@@ -18,6 +18,8 @@ func TestMain(m *testing.M) {
 	hcRPC = func(method string, params any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("unstubbed RPC: %s", method)
 	}
+	// Tests run from the real checkout; worktrees may only go into throwaway repositories.
+	worktreeRootAllowed = func(root string) bool { return within(os.TempDir(), root) }
 	os.Exit(m.Run())
 }
 
