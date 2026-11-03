@@ -890,7 +890,8 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	if kind == "test" {
 		return testCommand(pos[0], *cwd, *maxLines, *timeout, *asJSON, stdout, stderr)
 	}
-	if _, err = modelByKey(*key); err != nil {
+	m, err := modelByKey(*key)
+	if err != nil {
 		fmt.Fprintln(stderr, "orch:", err)
 		return 1
 	}
@@ -900,10 +901,20 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	}
 	cacheKey := ""
 	if kind == "ask" {
-		cacheKey = askCacheKey(pos[0], *key, *maxOutput, *cwd)
+		m, id, _, e := freezeModel(m)
+		if e != nil {
+			fmt.Fprintln(stderr, "orch:", e)
+			return 1
+		}
+		identity, _ := json.Marshal([]string{m.Kind, id, m.Effort})
+		cacheKey = askCacheKey(pos[0], string(identity), *maxOutput, *cwd)
 		if !fresh {
 			if cached := lookupAskCache(cacheKey); cached != nil {
-				fmt.Fprintln(stdout, cachedAskReport(cached, *maxOutput, *asJSON))
+				if *background && !*asJSON {
+					fmt.Fprintf(stdout, "task: %s\nrun: %s\nwait: orch wait %s --run %s\ncached: %s (rerun with --fresh)\n", cached.ID, cached.Run, cached.ID, cached.Run, cached.Dir)
+				} else {
+					fmt.Fprintln(stdout, cachedAskReport(cached, *maxOutput, *asJSON))
+				}
 				return 0
 			}
 		}

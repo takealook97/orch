@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,5 +76,40 @@ func TestRecallKindsAndCommand(t *testing.T) {
 	}
 	if recallCommand([]string{"needle", "--limit", "0"}, &out, &errs) != 2 {
 		t.Fatal("invalid limit")
+	}
+}
+
+func TestRecallGitCallsOnlyForMatches(t *testing.T) {
+	t.Setenv("ORCH_HOME", t.TempDir())
+	repo := taskRepo(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	count := filepath.Join(t.TempDir(), "count")
+	t.Setenv("RECALL_COUNT", count)
+	t.Setenv("REAL_GIT", realGit)
+	script := "#!/bin/sh\nprintf 'x\\n' >> \"$RECALL_COUNT\"\nexec \"$REAL_GIT\" \"$@\"\n"
+	os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for i := 0; i < 30; i++ {
+		d := filepath.Join(runsDir(), fmt.Sprintf("r%d", i))
+		os.MkdirAll(filepath.Join(d, "results"), 0700)
+		data, _ := json.Marshal(map[string]any{"workers": []map[string]string{{"cwd": repo}, {"cwd": repo}}})
+		os.WriteFile(filepath.Join(d, "run.json"), data, 0600)
+		body := "irrelevant"
+		if i == 0 || i == 1 {
+			body = "needle"
+		}
+		os.WriteFile(filepath.Join(d, "results", "x.md"), []byte(body), 0600)
+	}
+	hits, err := recallSearch("needle", repo, false, 10)
+	if err != nil || len(hits) != 2 {
+		t.Fatalf("%v %v", hits, err)
+	}
+	b, _ := os.ReadFile(count)
+	if n := strings.Count(string(b), "x\n"); n > 2 {
+		t.Fatalf("git invoked %d times", n)
 	}
 }

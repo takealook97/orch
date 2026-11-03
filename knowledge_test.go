@@ -192,3 +192,48 @@ func TestKnowledgeMergeFailureStillCloses(t *testing.T) {
 		})
 	}
 }
+
+func TestUpstreamRefsFallback(t *testing.T) {
+	r := dagRunFixture(t, "nodes:\n  - {name: up, role: produce}\n  - {name: down, role: produce, needs: [up]}\n")
+	d, err := loadDag(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := loadDagState(r, d)
+	st.Nodes["up"].Worker = "up-f1"
+	if err := saveDagState(r, st); err != nil {
+		t.Fatal(err)
+	}
+	stale := r.resultPath("up")
+	current := r.resultPath("up-f1")
+	os.WriteFile(stale, []byte("partial"), 0600)
+	os.WriteFile(current, []byte("done"), 0600)
+	for _, name := range []string{"down", "down-f1"} {
+		got := promptReferences(r, name, roleProduce)
+		if !strings.Contains(got, current) || strings.Contains(got, stale+",") || strings.Contains(got, "Upstream results: "+stale+"\n") || strings.HasSuffix(got, "Upstream results: "+stale) {
+			t.Fatalf("%s: %s", name, got)
+		}
+	}
+	os.Remove(current)
+	if got := promptReferences(r, "down", roleProduce); strings.Contains(got, "Upstream results") {
+		t.Fatal(got)
+	}
+}
+
+func TestUpstreamRefsInlineResult(t *testing.T) {
+	r := dagRunFixture(t, "nodes:\n  - {name: up, run: 'true'}\n  - {name: down, role: produce, needs: [up]}\n")
+	d, err := loadDag(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := loadDagState(r, d)
+	st.Nodes["up"].Worker = "run"
+	if err := saveDagState(r, st); err != nil {
+		t.Fatal(err)
+	}
+	path := r.resultPath("up")
+	os.WriteFile(path, []byte("done"), 0600)
+	if got := promptReferences(r, "down", roleProduce); !strings.Contains(got, path) {
+		t.Fatal(got)
+	}
+}

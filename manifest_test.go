@@ -244,3 +244,40 @@ esac`)
 		t.Fatalf("task %+v err %v", task, err)
 	}
 }
+
+func TestManifestEmptyEffortOverride(t *testing.T) {
+	cleanModelEnv(t)
+	overlayFile(t, "keys: [{key: codex-low-h, effort: ''}]\n")
+	if _, err := modelByKey("codex-low-h"); err == nil {
+		t.Fatal("empty effort accepted")
+	}
+	overlayFile(t, "keys: [{key: gemini-medium-m, effort: ''}]\n")
+	if _, err := modelByKey("gemini-medium-m"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDoctorModelEnvWarning(t *testing.T) {
+	cleanModelEnv(t)
+	t.Setenv("CODEX_LOW_H", "override")
+	found := false
+	for _, c := range doctor() {
+		if strings.Contains(c.info, "CODEX_LOW_H") {
+			found = true
+			if !c.ok || !c.warn || !strings.Contains(c.info, "shadows") || !strings.Contains(c.info, "~/.orch/models.yaml") {
+				t.Fatalf("%+v", c)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing warning")
+	}
+}
+
+func TestManifestWorkerDocsDenied(t *testing.T) {
+	t.Setenv("ORCH_ROLE", "worker")
+	var out, errs bytes.Buffer
+	if code := run([]string{"docs", "gen"}, strings.NewReader(""), &out, &errs); code == 0 {
+		t.Fatal("worker docs permitted")
+	}
+}

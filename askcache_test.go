@@ -142,3 +142,48 @@ func TestAskCacheTrailingWhitespaceDiff(t *testing.T) {
 		t.Fatal("trailing whitespace edits must invalidate")
 	}
 }
+
+func TestAskCacheResolvedModelAndCwd(t *testing.T) {
+	t.Setenv("ORCH_HOME", t.TempDir())
+	t.Setenv("ORCH_ROLE", "")
+	t.Setenv("ORCH_RUN", "")
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HC_TERMINAL_ID", "")
+	cleanModelEnv(t)
+	repo := taskRepo(t)
+	for _, d := range []string{"a", "b"} {
+		if err := os.Mkdir(filepath.Join(repo, d), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := t.TempDir()
+	count := filepath.Join(t.TempDir(), "count")
+	t.Setenv("ASK_COUNT", count)
+	os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nprintf 'x\\n' >> \"$ASK_COUNT\"\necho '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"answer\"}}'\n"), 0700)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	call := func(dir string, extra ...string) string {
+		t.Helper()
+		args := append([]string{"--cwd", dir, "--model", "codex-low-h"}, extra...)
+		args = append(args, "q")
+		var out, errout bytes.Buffer
+		if c := taskCommand("ask", args, &out, &errout); c != 0 {
+			t.Fatalf("%d %s", c, errout.String())
+		}
+		return out.String()
+	}
+	a, b := filepath.Join(repo, "a"), filepath.Join(repo, "b")
+	call(a)
+	hit := call(a, "--background")
+	if !strings.Contains(hit, "wait: orch wait ") || !strings.Contains(hit, " --run ") || !strings.Contains(hit, "cached:") {
+		t.Fatal(hit)
+	}
+	call(b)
+	t.Setenv("CODEX_LOW_H", "future-model")
+	call(a)
+	overlayFile(t, "keys: [{key: codex-low-h, effort: low}]\n")
+	call(a)
+	data, _ := os.ReadFile(count)
+	if strings.Count(string(data), "x\n") != 4 {
+		t.Fatalf("calls: %s", data)
+	}
+}

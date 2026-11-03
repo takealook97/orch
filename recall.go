@@ -41,7 +41,19 @@ func recallSearch(query, cwd string, all bool, limit int) ([]recallHit, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo := recallRepo(cwd)
+	repos := map[string]string{}
+	resolve := func(p string) string {
+		if v, ok := repos[p]; ok {
+			return v
+		}
+		v := recallRepo(p)
+		repos[p] = v
+		return v
+	}
+	repo := ""
+	if !all {
+		repo = resolve(cwd)
+	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -55,14 +67,23 @@ func recallSearch(query, cwd string, all bool, limit int) ([]recallHit, error) {
 			Repo string `json:"repo"`
 		}
 		_ = json.Unmarshal(b, &meta)
-		runRepos := []string{meta.Cwd, meta.Repo}
+		runRepos := []string{}
+		seenRepos := map[string]bool{}
+		addRepo := func(p string) {
+			if p != "" && !seenRepos[p] {
+				seenRepos[p] = true
+				runRepos = append(runRepos, p)
+			}
+		}
+		addRepo(meta.Cwd)
+		addRepo(meta.Repo)
 		taskCwds := map[string]string{}
 		candidates := map[string]string{}
 		addTask := func(t *Task, p string) {
 			if t != nil && (t.Kind == "ask" || t.Kind == "do") {
 				taskCwds[p] = t.Cwd
 				candidates[p] = t.Kind
-				runRepos = append(runRepos, t.Cwd)
+				addRepo(t.Cwd)
 			}
 		}
 		for _, t := range r.Tasks {
@@ -87,7 +108,7 @@ func recallSearch(query, cwd string, all bool, limit int) ([]recallHit, error) {
 			if w.Worktree != "" {
 				root = w.Worktree
 			}
-			runRepos = append(runRepos, root)
+			addRepo(root)
 			resultRepos[filepath.Join(dir, "results", w.Name+".md")] = root
 			if w.Result != "" {
 				p := w.Result
@@ -102,7 +123,7 @@ func recallSearch(query, cwd string, all bool, limit int) ([]recallHit, error) {
 				return true
 			}
 			for _, p := range paths {
-				if p != "" && recallRepo(p) == repo {
+				if p != "" && resolve(p) == repo {
 					return true
 				}
 			}
@@ -115,15 +136,6 @@ func recallSearch(query, cwd string, all bool, limit int) ([]recallHit, error) {
 		candidates[filepath.Join(dir, "knowledge.md")] = "knowledge"
 		candidates[filepath.Join(dir, "findings.md")] = "knowledge"
 		for p, kind := range candidates {
-			roots := runRepos
-			if root, ok := taskCwds[p]; ok {
-				roots = []string{root}
-			} else if root, ok := resultRepos[p]; ok {
-				roots = []string{root}
-			}
-			if !matches(roots) {
-				continue
-			}
 			b, e := os.ReadFile(p)
 			if e != nil {
 				continue
@@ -137,6 +149,15 @@ func recallSearch(query, cwd string, all bool, limit int) ([]recallHit, error) {
 				}
 			}
 			if !matched {
+				continue
+			}
+			roots := runRepos
+			if root, ok := taskCwds[p]; ok {
+				roots = []string{root}
+			} else if root, ok := resultRepos[p]; ok {
+				roots = []string{root}
+			}
+			if !matches(roots) {
 				continue
 			}
 			info, e := os.Stat(p)

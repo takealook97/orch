@@ -602,10 +602,37 @@ func promptReferences(r *Run, name, role string) string {
 		lines = append(lines, "Run knowledge (read first, reuse instead of re-deriving): "+filepath.Join(r.dir(), "knowledge.md"))
 	}
 	if d, err := loadDag(r); err == nil {
-		if n := d.node(name); n != nil {
+		st := loadDagState(r, d)
+		n := d.node(name)
+		if n == nil {
+			for node, state := range st.Nodes {
+				if state.Worker == name {
+					n = d.node(node)
+					break
+				}
+			}
+		}
+		if n == nil {
+			if i := strings.LastIndex(name, "-f"); i > 0 {
+				if suffix := name[i+2:]; suffix != "" && strings.Trim(suffix, "0123456789") == "" {
+					n = d.node(name[:i])
+				}
+			}
+		}
+		if n != nil {
 			var paths []string
 			for _, need := range n.Needs {
-				path := r.resultPath(need)
+				worker := need
+				if state := st.Nodes[need]; state != nil && state.Worker != "" && (d.node(need) == nil || !d.node(need).inline()) {
+					worker = state.Worker
+				}
+				path := r.resultPath(worker)
+				if w := r.worker(worker); w != nil && w.Result != "" {
+					path = w.Result
+					if !filepath.IsAbs(path) {
+						path = filepath.Join(r.dir(), path)
+					}
+				}
 				if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 					paths = append(paths, path)
 				}

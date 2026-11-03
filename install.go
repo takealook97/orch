@@ -353,11 +353,12 @@ type check struct {
 	ok   bool
 	name string
 	info string
+	warn bool
 }
 
 func doctor() []check {
 	var out []check
-	add := func(ok bool, name, info string) { out = append(out, check{ok, name, info}) }
+	add := func(ok bool, name, info string) { out = append(out, check{ok: ok, name: name, info: info}) }
 	bins := []string{"codex", "claude", "agy", "git"}
 	if backend() == "app" {
 		bins = append(bins, "hc", "herdr-app")
@@ -406,6 +407,17 @@ func doctor() []check {
 		add(true, "account hook", envOrch("ACCOUNT_CMD"))
 	} else {
 		add(true, "account", "same (uses Head login, ORCH_ACCOUNT_CMD absent)")
+	}
+	for _, m := range catalog {
+		vars := []string{modelVar(m)}
+		if legacy := embeddedManifest.Rules.LegacyModelEnv[m.Key]; legacy != "" {
+			vars = append(vars, legacy)
+		}
+		for _, v := range vars {
+			if strings.TrimSpace(os.Getenv(v)) != "" {
+				out = append(out, check{ok: true, warn: true, name: "model override " + m.Key, info: v + " shadows models.yaml/~/.orch/models.yaml; move it to ~/.orch/models.yaml"})
+			}
+		}
 	}
 	return out
 }

@@ -350,13 +350,15 @@ func readModelOverlay() (*modelOverlay, error) {
 	seen := map[string]bool{}
 	for _, k := range ov.Keys {
 		found := false
+		embeddedEffort := ""
 		for _, m := range catalog {
 			if m.Key == k.Key {
 				found = true
+				embeddedEffort = m.Effort
 				break
 			}
 		}
-		if !found || seen[k.Key] || k.Effort == nil || !validEffort(*k.Effort) {
+		if !found || seen[k.Key] || k.Effort == nil || !validEffort(*k.Effort) || (*k.Effort == "" && embeddedEffort != "") {
 			return nil, fmt.Errorf("%s: invalid or duplicate effort override for %q", path, k.Key)
 		}
 		seen[k.Key] = true

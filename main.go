@@ -117,7 +117,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	cmd, rest := args[0], args[1:]
 	// A worker may only read: every command that changes runs or panes is Head-only.
-	readOnly := contains1([]string{"hook", "models", "doctor", "docs", "playbook", "help", "install", "status", "checklist", "hud", "recall"}, cmd) ||
+	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "hud", "recall"}, cmd) ||
 		(cmd == "goal" && len(rest) > 0 && (rest[0] == "status" || rest[0] == "check")) ||
 		(cmd == "run" && len(rest) > 0 && rest[0] == "list") ||
 		(cmd == "dag" && len(rest) > 0 && (rest[0] == "check" || rest[0] == "status"))
@@ -592,7 +592,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		code := 0
 		for _, c := range doctor() {
 			mark := "ok  "
-			if !c.ok {
+			if c.warn {
+				mark = "WARN"
+			} else if !c.ok {
 				mark, code = "FAIL", 1
 			}
 			fmt.Fprintf(stdout, "%s %s  %s\n", mark, c.name, c.info)

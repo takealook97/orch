@@ -66,7 +66,15 @@ func askCacheKey(question, model string, maxOutput int, cwd string) string {
 			h.Write([]byte{0})
 		}
 	}
-	data, _ := json.Marshal([]any{strings.Join(strings.Fields(question), " "), model, maxOutput, root, head, fmt.Sprintf("%x", h.Sum(nil))})
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return ""
+	}
+	relCwd, err := filepath.Rel(root, filepath.Clean(absCwd))
+	if err != nil {
+		return ""
+	}
+	data, _ := json.Marshal([]any{strings.Join(strings.Fields(question), " "), model, maxOutput, root, relCwd, head, fmt.Sprintf("%x", h.Sum(nil))})
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 func askCachePath(key string) string { return filepath.Join(orchHome(), "cache", "ask", key+".json") }
