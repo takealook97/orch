@@ -15,20 +15,20 @@ import (
 
 func TestCatalogFixed(t *testing.T) {
 	want := map[string]struct{ model, effort string }{
-		"codex-low-h":     {"gpt-6-luna", "high"},
-		"codex-medium-m":  {"gpt-6.1-terra", "medium"},
-		"codex-high-l":    {"gpt-6.1-sol", "low"},
-		"codex-high-m":    {"gpt-6.1-sol", "medium"},
+		"codex-low-h":     {"luna", "high"},
+		"codex-medium-m":  {"terra", "medium"},
+		"codex-high-l":    {"sol", "low"},
+		"codex-high-m":    {"sol", "medium"},
 		"claude-high-m":   {"opus", "medium"},
 		"claude-medium-m": {"sonnet", "medium"},
-		"gemini-medium-m": {"gemini-3.8-flash-medium", ""},
+		"gemini-medium-m": {"gemini-flash", ""},
 	}
 	if len(catalog) != len(want) {
 		t.Fatalf("catalog has %d keys, want seven", len(catalog))
 	}
 	for _, m := range catalog {
 		w, ok := want[m.Key]
-		if !ok || m.Default != w.model || m.Effort != w.effort {
+		if !ok || m.Default != embeddedManifest.Models[w.model] || m.Effort != w.effort {
 			t.Errorf("unexpected catalog entry: %+v", m)
 		}
 		delete(want, m.Key)
@@ -79,16 +79,16 @@ func TestLaunchArgs(t *testing.T) {
 	}
 	m, _ := modelByKey("codex-high-m")
 	got := joinArgs(t, m, true)
-	want := `--dangerously-bypass-approvals-and-sandbox --no-alt-screen --no-daemon --model gpt-6.1-sol -c model_reasoning_effort="medium"`
+	want := `--dangerously-bypass-approvals-and-sandbox --no-alt-screen --no-daemon --model ` + embeddedManifest.Models["sol"] + ` -c model_reasoning_effort="medium"`
 	if got != want {
 		t.Fatalf("got %q", got)
 	}
 	m, _ = modelByKey("claude-high-m")
-	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model opus --effort medium" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model "+embeddedManifest.Models["opus"]+" --effort medium" {
 		t.Fatalf("got %q", got)
 	}
 	m, _ = modelByKey("gemini-medium-m")
-	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model gemini-3.8-flash-medium" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model "+embeddedManifest.Models["gemini-flash"] {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -103,7 +103,7 @@ func TestModelOverride(t *testing.T) {
 	if got := joinArgs(t, m, false); got != `--dangerously-bypass-approvals-and-sandbox --no-alt-screen --model gpt-7-mini -c model_reasoning_effort="high"` {
 		t.Fatalf("got %q", got)
 	}
-	if got := joinArgs(t, key("codex-high-l"), false); !strings.Contains(got, "--model gpt-6.1-sol ") {
+	if got := joinArgs(t, key("codex-high-l"), false); !strings.Contains(got, "--model "+embeddedManifest.Models["sol"]+" ") {
 		t.Fatalf("codex-high-l followed codex-high-m override: %q", got)
 	}
 	m, _ = modelByKey("claude-high-m")
@@ -981,7 +981,7 @@ func TestLunaAliasAndOverridePrecedence(t *testing.T) {
 		canonical, legacy, want string
 		invalid                 bool
 	}{
-		{"", "", "gpt-6-luna", false},
+		{"", "", embeddedManifest.Models["luna"], false},
 		{"  ", " legacy-luna ", "legacy-luna", false},
 		{" canonical-luna ", "legacy-luna", "canonical-luna", false},
 		{"canonical-luna", "--invalid", "canonical-luna", false},
@@ -1008,7 +1008,7 @@ func TestLunaAliasAndOverridePrecedence(t *testing.T) {
 		t.Fatalf("Terra override: %q %v", got, err)
 	}
 	for _, k := range []string{"codex-high-l", "codex-high-m"} {
-		if got, err := modelID(key(k)); got != "gpt-6.1-sol" || err != nil {
+		if got, err := modelID(key(k)); got != embeddedManifest.Models["sol"] || err != nil {
 			t.Fatalf("Sol affected: %q %v", got, err)
 		}
 	}
@@ -1070,7 +1070,7 @@ func TestModelsCanonicalListing(t *testing.T) {
 			if fields[0] == "codex-medium-h" {
 				t.Fatal("alias exposed as canonical catalog row")
 			}
-			if fields[0] == "codex-medium-m" && (!strings.Contains(line, "gpt-6.1-terra") || !strings.Contains(line, `model_reasoning_effort="medium"`)) {
+			if fields[0] == "codex-medium-m" && (!strings.Contains(line, embeddedManifest.Models["terra"]) || !strings.Contains(line, `model_reasoning_effort="medium"`)) {
 				t.Fatalf("Terra args missing: %s", line)
 			}
 		}

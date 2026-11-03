@@ -82,19 +82,21 @@ CR launches keep unfocused owned panes, assign the worker name after detection, 
 
 `orch models` shows the full list. The Head picks by key only; `orch` assembles the CLI arguments.
 
-| Key | CLI | Family | Model variable | Default model |
-|---|---|---|---|---|
-| `codex-low-h` | codex, effort high | OpenAI | `CODEX_LOW_H` | `gpt-6-luna` |
-| `codex-medium-m` | codex, effort medium | OpenAI | `CODEX_MEDIUM_M` | `gpt-6.1-terra` |
-| `codex-high-l` | codex, effort low | OpenAI | `CODEX_HIGH_L` | `gpt-6.1-sol` |
-| `codex-high-m` | codex, effort medium | OpenAI | `CODEX_HIGH_M` | `gpt-6.1-sol` |
-| `claude-high-m` | claude, effort medium | Anthropic | `CLAUDE_HIGH_M` | `opus` |
-| `claude-medium-m` | claude, effort medium | Anthropic | `CLAUDE_MEDIUM_M` | `sonnet` |
-| `gemini-medium-m` | agy | Google | `GEMINI_MEDIUM_M` | `gemini-3.8-flash-medium` |
+<!-- orch:models:begin -->
+| Key | CLI | Family | Tier | Default model | Effort | Model variable |
+|---|---|---|---|---|---|---|
+| `codex-low-h` | codex | openai | Luna | `gpt-6-luna` | high | `CODEX_LOW_H` |
+| `codex-medium-m` | codex | openai | Terra | `gpt-6.1-terra` | medium | `CODEX_MEDIUM_M` |
+| `codex-high-l` | codex | openai | Sol | `gpt-6.1-sol` | low | `CODEX_HIGH_L` |
+| `codex-high-m` | codex | openai | Sol | `gpt-6.1-sol` | medium | `CODEX_HIGH_M` |
+| `claude-high-m` | claude | anthropic | Opus | `opus` | medium | `CLAUDE_HIGH_M` |
+| `claude-medium-m` | claude | anthropic | Sonnet | `sonnet` | medium | `CLAUDE_MEDIUM_M` |
+| `gemini-medium-m` | agy | google | Gemini | `gemini-3.8-flash-medium` | — | `GEMINI_MEDIUM_M` |
 
-Keys follow `<cli>-<tier>-<effort initial>` (`h`/`m`/`l`), where the tier is the model's rank in its vendor lineup, and each key's variable is the key upper-cased with underscores. When a CLI ships a new model, set the variable in the Head's shell (for example `export CODEX_HIGH_M=gpt-7`); no rebuild is needed. Keys and efforts stay the same; `orch models` shows the resolved arguments.
+OpenAI tiers: Luna < Terra < Sol (independent of effort). Deprecated alias: codex-medium-h -> codex-low-h. CODEX_LOW_H takes precedence over CODEX_MEDIUM_H.
 
-The seven canonical entries include the explicit OpenAI hierarchy **Luna < Terra < Sol**, independent of reasoning effort: Luna uses high, Terra medium, and Sol low or medium. `codex-medium-h` remains a deprecated alias for Luna (`codex-low-h`). `CODEX_LOW_H` wins over the legacy `CODEX_MEDIUM_H`; the legacy override is consulted only when the canonical value is empty after trimming. Saved runs need no migration. Terra uses the independent `CODEX_MEDIUM_M` override.
+Defaults are generated from `models.yaml`. Override shared model ids in `~/.orch/models.yaml` (or `ORCH_MODELS_FILE`), for example `models: {sol: new-model-id}` updates both Sol keys. An overlay may also set per-key effort with `keys: [{key: codex-high-l, effort: low}]`; other fields are rejected. Per-key environment variables override overlay model ids. `orch models` shows resolved ids and their source.
+<!-- orch:models:end -->
 
 Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default.
 

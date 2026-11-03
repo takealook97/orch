@@ -410,6 +410,113 @@ func doctor() []check {
 	return out
 }
 
+// probeExec is stubbed in tests. The normal doctor path never calls it.
+var probeExec = func(cwd, bin string, args []string, timeout time.Duration, log string) (execResult, error) {
+	return execLogged(cwd, bin, args, append(os.Environ(), "ORCH_ROLE=worker"), timeout, log, nil)
+}
+
+func probeModels(selection string, out io.Writer) error {
+	keys := splitList(selection)
+	if selection != "" && len(keys) == 0 {
+		return fmt.Errorf("--keys requires at least one catalog key")
+	}
+	if selection == "" {
+		for _, m := range catalog {
+			keys = append(keys, m.Key)
+		}
+	}
+	// Resolve the entire selection before making any live calls.
+	type resolved struct {
+		model      Model
+		id, source string
+	}
+	var models []resolved
+	seen := map[string]bool{}
+	for _, key := range keys {
+		m, err := modelByKey(key)
+		if err != nil {
+			return err
+		}
+		if seen[m.Key] {
+			continue
+		}
+		seen[m.Key] = true
+		m, id, source, err := freezeModel(m)
+		if err != nil {
+			return err
+		}
+		models = append(models, resolved{m, id, source})
+	}
+	dir, err := os.MkdirTemp("", "orch-probe-models-steps-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	failures := 0
+	for i, item := range models {
+		m := item.model
+		log := filepath.Join(dir, fmt.Sprintf("%d.log", i))
+		answerPath := filepath.Join(dir, fmt.Sprintf("%d.answer", i))
+		versionResult, versionErr := probeExec(dir, m.Kind, []string{"--version"}, 10*time.Second, log)
+		versionBytes, _ := os.ReadFile(log)
+		version := probeExcerpt(string(versionBytes))
+		_ = os.Remove(log)
+		args, err := taskArgs(m, "ask", dir, answerPath, "Reply with exactly: OK")
+		if err != nil {
+			return err
+		}
+		res, runErr := probeExec(dir, m.Kind, args, 120*time.Second, log)
+		raw, _ := os.ReadFile(log)
+		answer, _ := parseAnswer(m.Kind, raw)
+		if m.Kind == "codex" {
+			if data, err := os.ReadFile(answerPath); err == nil && len(data) > 0 {
+				answer = string(data)
+			}
+		}
+		var problems []string
+		if versionErr != nil {
+			problems = append(problems, "CLI --version: "+versionErr.Error())
+		} else if versionResult.Timed || versionResult.Interrupted || versionResult.Code != 0 {
+			problems = append(problems, fmt.Sprintf("CLI --version failed (exit %d): %s", versionResult.Code, version))
+		}
+		switch {
+		case runErr != nil:
+			problems = append(problems, runErr.Error())
+		case res.Timed:
+			problems = append(problems, "timed out after 120s")
+		case res.Interrupted:
+			problems = append(problems, "interrupted")
+		case res.Code != 0:
+			problems = append(problems, fmt.Sprintf("exit %d: %s", res.Code, string(raw)))
+		case strings.TrimSpace(answer) != "OK":
+			problems = append(problems, "expected OK: "+answer)
+		}
+		status := "ok"
+		if len(problems) > 0 {
+			status = "fail"
+			failures++
+		}
+		fmt.Fprintf(out, "%s model=%s source=%s cli=%q %s", m.Key, item.id, item.source, version, status)
+		if len(problems) > 0 {
+			fmt.Fprintf(out, " error=%q", probeExcerpt(strings.Join(problems, "; ")))
+		}
+		fmt.Fprintln(out)
+	}
+	if failures > 0 {
+		return fmt.Errorf("%d model probe(s) failed", failures)
+	}
+	return nil
+}
+
+func probeExcerpt(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) > 200 {
+		return string(runes[:199]) + "…"
+	}
+	return s
+}
+
 // UserPromptSubmit uses the same grouped hook shape without a tool matcher.
 func ensurePromptHook(hooks map[string]any, command string) bool {
 	list, _ := hooks["UserPromptSubmit"].([]any)

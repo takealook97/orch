@@ -1,17 +1,25 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Model is one fixed model × effort entry. Heads choose by Key only; orch assembles the CLI arguments.
 // Keys are <CLI>-<tier>-<effort initial>, where the tier is the model's rank in its vendor lineup,
-// so a key survives a model rename. Keys and efforts are fixed; each key's model id comes from its
-// own environment variable (see modelVar) so a CLI release can be picked up without a rebuild.
+// so a key survives a model rename. The embedded manifest supplies defaults; a local overlay
+// can update shared model ids and per-key effort, and per-key env vars override the model id.
 type Model struct {
+	Name    string
+	Tier    string
 	Key     string
 	Kind    string // herdr agent kind
 	Family  string
@@ -19,6 +27,9 @@ type Model struct {
 	Summary string
 	Default string // model id used when modelVar(m) is unset
 	Effort  string // empty when the CLI takes no effort flag (gemini carries it in the model id)
+	// An invocation pins its selection before slow account or pane setup begins.
+	resolvedID     string
+	resolvedSource string
 }
 
 const (
@@ -27,58 +38,20 @@ const (
 	familyGoogle    = "google"
 )
 
-var catalog = []Model{
-	{"codex-low-h", "codex", familyOpenAI, "low", "exploration, bulk classification, precise extraction, log and test analysis, focused verification", "gpt-6-luna", "high"},
-	{"codex-medium-m", "codex", familyOpenAI, "low+", "constrained writing, scoped code fixes, mechanical extraction; screen work candidate", "gpt-6.1-terra", "medium"},
-	{"codex-high-l", "codex", familyOpenAI, "medium", "mechanical implementation from complete specs, bulk repetitive edits", "gpt-6.1-sol", "low"},
-	{"codex-high-m", "codex", familyOpenAI, "medium+", "general implementation, debugging, integration, technical review", "gpt-6.1-sol", "medium"},
-	{"claude-high-m", "claude", familyAnthropic, "highest", "hard implementation and debugging, ambiguous design, deep review, adversarial verification", "opus", "medium"},
-	{"claude-medium-m", "claude", familyAnthropic, "low+", "docs and writing, alternative implementation, code review, scenario QA", "sonnet", "medium"},
-	{"gemini-medium-m", "agy", familyGoogle, "low", "neutral verification, web and document research, multimodal inspection, rendering checks", "gemini-3.8-flash-medium", ""},
-}
+var embeddedManifest = mustManifest()
+var catalog, _ = embeddedManifest.catalog()
 
 // modelVar is the environment variable that overrides m's model id: the key upper-cased with
 // underscores (codex-high-m -> CODEX_HIGH_M).
 func modelVar(m Model) string { return strings.ToUpper(strings.ReplaceAll(m.Key, "-", "_")) }
 
 // modelID returns the model id for m, preferring its environment variable over the default.
-func modelID(m Model) (string, error) {
-	override := modelVar(m)
-	id := strings.TrimSpace(os.Getenv(override))
-	if id == "" && m.Key == "codex-low-h" {
-		override = "CODEX_MEDIUM_H" // Deprecated Luna override, only if canonical is empty.
-		id = strings.TrimSpace(os.Getenv(override))
-	}
-	if id == "" {
-		return m.Default, nil
-	}
-	if strings.HasPrefix(id, "-") || strings.ContainsAny(id, " \t\n\"'") {
-		return "", fmt.Errorf("%s=%q is not a valid model id", override, id)
-	}
-	return id, nil
-}
-
-// modelArgs returns the CLI arguments that select m's model and effort.
-func modelArgs(m Model) ([]string, error) {
-	id, err := modelID(m)
-	if err != nil {
-		return nil, err
-	}
-	args := []string{"--model", id}
-	switch {
-	case m.Effort == "":
-	case m.Kind == "codex":
-		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", m.Effort))
-	default:
-		args = append(args, "--effort", m.Effort)
-	}
-	return args, nil
-}
+func modelID(m Model) (string, error) { id, _, err := resolvedModel(m); return id, err }
 
 // canonicalModelKey preserves saved runs and requests using the former Luna key.
 func canonicalModelKey(key string) string {
-	if key == "codex-medium-h" {
-		return "codex-low-h"
+	if k, ok := embeddedManifest.Aliases[key]; ok {
+		return k
 	}
 	return key
 }
@@ -87,7 +60,8 @@ func modelByKey(key string) (Model, error) {
 	key = canonicalModelKey(key)
 	for _, m := range catalog {
 		if m.Key == key {
-			return m, nil
+			resolved, _, _, err := resolveModel(m)
+			return resolved, err
 		}
 	}
 	keys := make([]string, 0, len(catalog))
@@ -99,22 +73,11 @@ func modelByKey(key string) (Model, error) {
 
 // launchArgs returns the native CLI arguments for a worker, including the bypass flag.
 func launchArgs(m Model, noDaemon bool) ([]string, error) {
-	margs, err := modelArgs(m)
+	a, err := adapterFor(m.Kind)
 	if err != nil {
 		return nil, err
 	}
-	var args []string
-	switch m.Kind {
-	case "codex":
-		// Inline screen so the Codex TUI scrolls in Herdr panes (matches the cxd alias).
-		args = append(args, "--dangerously-bypass-approvals-and-sandbox", "--no-alt-screen")
-		if noDaemon {
-			args = append(args, "--no-daemon")
-		}
-	case "claude", "agy":
-		args = append(args, "--dangerously-skip-permissions")
-	}
-	return append(args, margs...), nil
+	return a.interactive(m, noDaemon)
 }
 
 // Roles (contract stages). Verification roles carry family constraints.
@@ -134,25 +97,7 @@ var roles = []string{roleRecon, roleDesign, roleProduce, roleIntegrate, roleMech
 func isVerifyRole(role string) bool { return strings.HasPrefix(role, "verify-") }
 
 // Fallback chains by purpose (design §9.4). The first entry is the primary key.
-var chains = map[string][]string{
-	"explore":     {"codex-low-h", "codex-medium-m", "gemini-medium-m"},
-	"extract":     {"codex-low-h", "codex-medium-m", "codex-high-m", "claude-medium-m"},
-	"web":         {"gemini-medium-m", "claude-medium-m", "claude-high-m"},
-	"synthesis":   {"claude-high-m", "codex-high-m", "claude-medium-m"},
-	"mech-impl":   {"codex-medium-m", "codex-high-l", "codex-high-m", "claude-medium-m"},
-	"impl":        {"codex-high-m", "claude-high-m", "claude-medium-m"},
-	"hard-impl":   {"claude-high-m", "codex-high-m", "claude-medium-m"},
-	"alt":         {"claude-medium-m", "codex-high-m", "claude-high-m"},
-	"docs":        {"claude-medium-m", "codex-high-m", "claude-high-m"},
-	"analysis":    {"codex-high-m", "claude-high-m", "claude-medium-m"},
-	"integrate":   {"codex-high-m", "claude-high-m"},
-	"image":       {"codex-high-m"},
-	"verify-mech": {"codex-low-h", "codex-high-m", "claude-medium-m"},
-	// Verification chains are filtered by family constraints at spawn time.
-	"verify-critical":    {"claude-medium-m", "claude-high-m", "codex-high-l", "codex-high-m"},
-	"verify-neutral":     {"gemini-medium-m", "claude-medium-m", "codex-high-m"},
-	"verify-adversarial": {"claude-high-m", "codex-high-m", "claude-medium-m"},
-}
+var chains = embeddedManifest.Fallbacks
 
 func purposeNames() []string {
 	out := make([]string, 0, len(chains))
@@ -182,12 +127,12 @@ func checkLane(role string, m Model, authors, critics []string) (warnings []stri
 		if slices.Contains(authors, m.Family) {
 			return nil, fmt.Errorf("neutral lane must use a different family from the author: %s(%s)", m.Key, m.Family)
 		}
-		if m.Key != "gemini-medium-m" {
-			warnings = append(warnings, fmt.Sprintf("%s takes the neutral lane instead of gemini-medium-m. Mark it as 'gemini-medium-m substitute' in the final report", m.Key))
+		if m.Key != embeddedManifest.Rules.NeutralKey {
+			warnings = append(warnings, fmt.Sprintf("%s takes the neutral lane instead of %s. Mark it as '%s substitute' in the final report", m.Key, embeddedManifest.Rules.NeutralKey, embeddedManifest.Rules.NeutralKey))
 		}
 	case roleAdversarial:
-		if m.Key == "gemini-medium-m" {
-			return nil, fmt.Errorf("do not use gemini-medium-m for an adversarial lane")
+		if slices.Contains(embeddedManifest.Rules.AdversarialExclude, m.Key) {
+			return nil, fmt.Errorf("do not use %s for an adversarial lane", m.Key)
 		}
 		if slices.Contains(authors, m.Family) {
 			return nil, fmt.Errorf("adversarial lane must use a different family from the author: %s(%s)", m.Key, m.Family)
@@ -209,7 +154,7 @@ func nextFallback(purpose, current, role string, authors, critics []string, trie
 		triedCanonical = append(triedCanonical, canonicalModelKey(key))
 	}
 	for _, key := range chain[start:] {
-		if slices.Contains(triedCanonical, key) || (canonicalModelKey(current) == "codex-medium-m" && key == "codex-low-h") {
+		if slices.Contains(triedCanonical, key) || slices.Contains(embeddedManifest.Rules.FallbackSkip[canonicalModelKey(current)], key) {
 			continue
 		}
 		m, err := modelByKey(key)
@@ -222,4 +167,253 @@ func nextFallback(purpose, current, role string, authors, critics []string, trie
 		return m, true
 	}
 	return Model{}, false
+}
+
+//go:embed models.yaml
+var embeddedModels []byte
+
+type manifestKey struct {
+	Key    string `yaml:"key"`
+	Kind   string `yaml:"kind"`
+	Family string `yaml:"family"`
+	Tier   string `yaml:"tier"`
+	Model  string `yaml:"model"`
+	Effort string `yaml:"effort"`
+	Cost   string `yaml:"cost"`
+	Use    string `yaml:"use"`
+}
+type manifestRules struct {
+	LegacyModelEnv     map[string]string   `yaml:"legacy_model_env"`
+	FallbackSkip       map[string][]string `yaml:"fallback_skip"`
+	NeutralKey         string              `yaml:"neutral_key"`
+	AdversarialExclude []string            `yaml:"adversarial_exclude"`
+}
+type modelManifest struct {
+	Version   int                 `yaml:"version"`
+	Models    map[string]string   `yaml:"models"`
+	Keys      []manifestKey       `yaml:"keys"`
+	Aliases   map[string]string   `yaml:"aliases"`
+	Fallbacks map[string][]string `yaml:"fallbacks"`
+	Rules     manifestRules       `yaml:"rules"`
+}
+
+func decodeModels(data []byte, out any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("models manifest must contain one YAML document")
+	}
+	return nil
+}
+func validModelID(id string) bool {
+	return id != "" && id == strings.TrimSpace(id) && !strings.HasPrefix(id, "-") && !strings.ContainsAny(id, " \t\r\n\"'")
+}
+func validEffort(e string) bool {
+	return slices.Contains([]string{"", "low", "medium", "high", "xhigh"}, e)
+}
+func loadManifest(data []byte) (*modelManifest, error) {
+	var mf modelManifest
+	if err := decodeModels(data, &mf); err != nil {
+		return nil, fmt.Errorf("model manifest: %w", err)
+	}
+	if mf.Version != 1 {
+		return nil, fmt.Errorf("unsupported model manifest version %d", mf.Version)
+	}
+	if len(mf.Models) == 0 || len(mf.Keys) == 0 {
+		return nil, fmt.Errorf("model manifest needs models and keys")
+	}
+	for name, id := range mf.Models {
+		if !validModelID(id) {
+			return nil, fmt.Errorf("invalid model id for %s: %q", name, id)
+		}
+	}
+	keys := map[string]bool{}
+	for _, k := range mf.Keys {
+		if k.Key == "" || keys[k.Key] {
+			return nil, fmt.Errorf("empty or duplicate model key %q", k.Key)
+		}
+		keys[k.Key] = true
+		if _, ok := mf.Models[k.Model]; !ok {
+			return nil, fmt.Errorf("%s: unknown model name %q", k.Key, k.Model)
+		}
+		if _, err := adapterFor(k.Kind); err != nil {
+			return nil, err
+		}
+		if k.Family != map[string]string{"codex": familyOpenAI, "claude": familyAnthropic, "agy": familyGoogle}[k.Kind] || k.Tier == "" || !validEffort(k.Effort) {
+			return nil, fmt.Errorf("invalid family, tier or effort for %s", k.Key)
+		}
+	}
+	for alias, target := range mf.Aliases {
+		if alias == "" || keys[alias] || !keys[target] {
+			return nil, fmt.Errorf("invalid alias %s -> %s", alias, target)
+		}
+	}
+	checkTargets := func(label string, targets []string) error {
+		for _, k := range targets {
+			if !keys[k] {
+				return fmt.Errorf("%s: unknown target %s", label, k)
+			}
+		}
+		return nil
+	}
+	for name, chain := range mf.Fallbacks {
+		if len(chain) == 0 {
+			return nil, fmt.Errorf("empty fallback chain %s", name)
+		}
+		if err := checkTargets(name, chain); err != nil {
+			return nil, err
+		}
+	}
+	for key, targets := range mf.Rules.FallbackSkip {
+		if !keys[key] {
+			return nil, fmt.Errorf("unknown fallback rule key %s", key)
+		}
+		if err := checkTargets(key, targets); err != nil {
+			return nil, err
+		}
+	}
+	for key, env := range mf.Rules.LegacyModelEnv {
+		if !keys[key] || env == "" {
+			return nil, fmt.Errorf("invalid legacy env rule %s", key)
+		}
+	}
+	if err := checkTargets("neutral", []string{mf.Rules.NeutralKey}); err != nil {
+		return nil, err
+	}
+	if err := checkTargets("adversarial", mf.Rules.AdversarialExclude); err != nil {
+		return nil, err
+	}
+	return &mf, nil
+}
+func mustManifest() *modelManifest {
+	mf, err := loadManifest(embeddedModels)
+	if err != nil {
+		panic(err)
+	}
+	return mf
+}
+func (mf *modelManifest) catalog() ([]Model, error) {
+	out := make([]Model, 0, len(mf.Keys))
+	for _, k := range mf.Keys {
+		id, ok := mf.Models[k.Model]
+		if !ok {
+			return nil, fmt.Errorf("unknown model name %s", k.Model)
+		}
+		out = append(out, Model{Key: k.Key, Kind: k.Kind, Family: k.Family, Tier: k.Tier, Name: k.Model, Cost: k.Cost, Summary: k.Use, Default: id, Effort: k.Effort})
+	}
+	return out, nil
+}
+
+type modelOverlay struct {
+	Version *int              `yaml:"version"`
+	Models  map[string]string `yaml:"models"`
+	Keys    []struct {
+		Key    string  `yaml:"key"`
+		Effort *string `yaml:"effort"`
+	} `yaml:"keys"`
+}
+
+func readModelOverlay() (*modelOverlay, error) {
+	path := os.Getenv("ORCH_MODELS_FILE")
+	if path == "" {
+		path = filepath.Join(orchHome(), "models.yaml")
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return &modelOverlay{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ov modelOverlay
+	if err := decodeModels(data, &ov); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if ov.Version != nil && *ov.Version != 1 {
+		return nil, fmt.Errorf("%s: unsupported overlay version %d", path, *ov.Version)
+	}
+	for name, id := range ov.Models {
+		if _, ok := embeddedManifest.Models[name]; !ok {
+			return nil, fmt.Errorf("%s: unknown model name %s", path, name)
+		}
+		if !validModelID(id) {
+			return nil, fmt.Errorf("%s: invalid model id %q", path, id)
+		}
+	}
+	seen := map[string]bool{}
+	for _, k := range ov.Keys {
+		found := false
+		for _, m := range catalog {
+			if m.Key == k.Key {
+				found = true
+				break
+			}
+		}
+		if !found || seen[k.Key] || k.Effort == nil || !validEffort(*k.Effort) {
+			return nil, fmt.Errorf("%s: invalid or duplicate effort override for %q", path, k.Key)
+		}
+		seen[k.Key] = true
+	}
+	return &ov, nil
+}
+
+// resolveModel applies the shared model-name overlay, then the existing per-key env overrides.
+// It leaves the embedded catalog immutable, so reads never leak settings into later commands.
+func resolveModel(m Model) (Model, string, string, error) {
+	if m.resolvedID != "" {
+		return m, m.resolvedID, m.resolvedSource, nil
+	}
+	// Start from immutable defaults even if the caller retained a previously resolved entry.
+	for _, base := range catalog {
+		if base.Key == m.Key {
+			m = base
+			break
+		}
+	}
+	ov, err := readModelOverlay()
+	if err != nil {
+		return m, "", "", err
+	}
+	source := "embedded"
+	if id, ok := ov.Models[m.Name]; ok {
+		m.Default = id
+		source = "overlay"
+	}
+	for _, k := range ov.Keys {
+		if k.Key == m.Key {
+			m.Effort = *k.Effort
+		}
+	}
+	env := modelVar(m)
+	id := strings.TrimSpace(os.Getenv(env))
+	if legacy := embeddedManifest.Rules.LegacyModelEnv[m.Key]; id == "" && legacy != "" {
+		env = legacy
+		id = strings.TrimSpace(os.Getenv(env))
+	}
+	if id != "" {
+		if !validModelID(id) {
+			return m, "", "", fmt.Errorf("%s=%q is not a valid model id", env, id)
+		}
+		return m, id, "env", nil
+	}
+	return m, m.Default, source, nil
+}
+func resolvedModel(m Model) (string, string, error) {
+	_, id, source, err := resolveModel(m)
+	return id, source, err
+}
+
+func freezeModel(m Model) (Model, string, string, error) {
+	m, id, source, err := resolveModel(m)
+	if err == nil {
+		m.resolvedID, m.resolvedSource = id, source
+	}
+	return m, id, source, err
 }

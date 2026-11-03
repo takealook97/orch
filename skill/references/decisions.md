@@ -158,3 +158,9 @@ The former codex-medium-h key is a deprecated Luna alias, including saved runs. 
 - Kill, wait for finished/not_found, rm, then confirm disappearance with app inventory. Last-terminal exit automatically removes tabs and empty spaces; explicitly close only an owned empty overflow tab that remains.
 
 - Herdr.app layout normalization tolerates an auto-removed overflow tab only after `hc get` confirms its recorded workers are no longer live; a missing Head tab or an inconclusive lookup remains an error. Readiness checks the screen for folder trust even before agent status arrives, and the `hc run` guard parses value-taking options and launch wrappers.
+
+## D20. One model manifest and CLI adapters (2026-11-03)
+
+Embed `models.yaml` as the source for named model ids, canonical keys, tiers, aliases, fallback chains and key rules; a local `models.yaml` overlay changes only shared ids and key effort, below existing per-key env overrides.
+Generate marked catalog documentation from embedded defaults and reject drift in `make check`; keep historical decisions unchanged. Record the resolved model id on worker and task records.
+Keep each CLI's pane and one-shot argv in one adapter, pinned by golden tests. Live compatibility probes are opt-in through `doctor --probe-models`; tests use stubs and `make check` never probes models.

@@ -15,7 +15,9 @@
 - Delegate by cost, not time: the Head (usually the top-tier model) keeps judgment and review; execution that needs no top-tier judgment goes to a cheaper catalog key whatever its length — bounded one-off tasks expected to finish in under 5 minutes through `orch ask` (read-only) or `orch do` (writes, scope-checked); work expected to take 5+ minutes or of unknown length, parallel work, work the user watches, and every independent review or verification (read-only included) through pane workers (`orch spawn`). Run tests with `orch test` so full logs stay out of the Head's context. Do it directly only when the instruction would be as long as the work.
 - Inside Herdr (legacy `HERDR_ENV=1` or app `HC_TERMINAL_ID`; `ORCH_MUX=herdr|app` overrides detection), delegate subtasks only through `orch`. Do not use built-in Agent/Workflow/subagent tools. If a command or skill instructs a subagent, run it through `orch` instead (`orch ask`/`orch do` for a single one, pane workers for parallel ones).
 - The only allowed models are the 7 canonical keys in `orch models` (`codex-low-h` `codex-medium-m` `codex-high-l` `codex-high-m` `claude-high-m` `claude-medium-m` `gemini-medium-m`). Do not set a model or effort directly.
-- OpenAI tiers are Luna (`codex-low-h`, high effort) < Terra (`codex-medium-m`, medium effort) < Sol (`codex-high-l`/`codex-high-m`). Use Terra for scoped fixes and constrained writing; larger planned implementation uses Sol low. The deprecated `codex-medium-h` alias still resolves to Luna; `CODEX_LOW_H` takes precedence over `CODEX_MEDIUM_H`.
+<!-- orch:models:begin -->
+- OpenAI tiers: Luna < Terra < Sol (independent of effort). Deprecated alias: codex-medium-h -> codex-low-h. CODEX_LOW_H takes precedence over CODEX_MEDIUM_H.
+<!-- orch:models:end -->
 - An author cannot be the independent verifier of their own output. Critical verification goes to a different model family than the author.
 - Judge by evidence, not by model vote. Accept a review finding only if it is reproduced or proven.
 - Do not perform external writes (deploy, payment, ordering, publishing) without separate approval. A bypass flag is not authorization.

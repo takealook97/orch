@@ -26,7 +26,7 @@ Delegation
   orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
-  orch models                             seven canonical keys (codex-medium-h: deprecated Luna alias)
+  orch models [--markdown]                seven canonical keys (codex-medium-h: deprecated Luna alias)
   orch contract new <name> --role R --model K [--run ID]    create contract template
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
            [--cwd D|--worktree D] [--account auto|cr|same|hook] [--run ID]
@@ -47,7 +47,8 @@ Maintenance
   orch resume --run ID                    resume /goal: make this pane Head and mark missing workers
   orch gc [--orphans]                     clean panes spawned by this Head for closed runs
                                         --orphans: also clean runs whose Head disappeared (abnormal exit)
-  orch doctor
+  orch doctor [--probe-models] [--keys k1,k2]
+  orch docs gen [--root DIR]             regenerate marked model catalog blocks
   orch install [--repo DIR] [--dry-run]   install constitution, hooks, skill, and playbooks (after backup)
   orch playbook check [DIR]
   orch goal new|freeze|status|check|note|extend|end  Frozen goals and budgets
@@ -114,7 +115,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	cmd, rest := args[0], args[1:]
 	// A worker may only read: every command that changes runs or panes is Head-only.
-	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist"}, cmd) ||
+	readOnly := contains1([]string{"hook", "models", "doctor", "docs", "playbook", "help", "install", "status", "checklist"}, cmd) ||
 		(cmd == "goal" && len(rest) > 0 && (rest[0] == "status" || rest[0] == "check")) ||
 		(cmd == "run" && len(rest) > 0 && rest[0] == "list") ||
 		(cmd == "dag" && len(rest) > 0 && (rest[0] == "check" || rest[0] == "status"))
@@ -155,20 +156,50 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHook(rest[0], stdin, stdout, stderr)
 
 	case "models":
+		markdown := fs.Bool("markdown", false, "print the embedded catalog as Markdown")
+		pos, err := parse(fs, rest)
+		if err != nil {
+			return 2
+		}
+		if len(pos) != 0 {
+			return fail(fmt.Errorf("usage: orch models [--markdown]"))
+		}
+		if *markdown {
+			fmt.Fprint(stdout, modelMarkdown())
+			return 0
+		}
+		if _, err := readModelOverlay(); err != nil {
+			return fail(err)
+		}
 		tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "key\tCLI\tfamily\tcost\targs\toverride\tstrengths")
+		fmt.Fprintln(tw, "key\tCLI\tfamily\tcost\targs\tmodel id\tsource\toverride\tstrengths")
 		for _, m := range catalog {
 			args, err := modelArgs(m)
 			shown := strings.Join(args, " ")
 			if err != nil {
 				shown = "invalid: " + err.Error()
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Key, m.Kind, m.Family, m.Cost, shown, modelVar(m), m.Summary)
+			id, source, err := resolvedModel(m)
+			if err != nil {
+				return fail(err)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Key, m.Kind, m.Family, m.Cost, shown, id, source, modelVar(m), m.Summary)
 		}
 		tw.Flush()
-		fmt.Fprintln(stdout, "\nOpenAI tiers: Luna < Terra < Sol (independent of effort). Deprecated alias: codex-medium-h -> codex-low-h; CODEX_LOW_H takes precedence over CODEX_MEDIUM_H.")
+		fmt.Fprintln(stdout, "\n"+tierSummary())
 		fmt.Fprintf(stdout, "\npurposes(fallback chain): %s\n", strings.Join(purposeNames(), " "))
 		return 0
+
+	case "docs":
+		root := fs.String("root", ".", "repository root")
+		pos, err := parse(fs, rest)
+		if err != nil {
+			return 2
+		}
+		if len(pos) != 1 || pos[0] != "gen" {
+			return fail(fmt.Errorf("usage: orch docs gen [--root DIR]"))
+		}
+		return failIf(fail, generateModelDocs(*root))
 
 	case "run":
 		if len(rest) == 0 {
@@ -534,6 +565,24 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return failIf(fail, err)
 
 	case "doctor":
+		probe := fs.Bool("probe-models", false, "run opt-in read-only model probes (120s per key)")
+		keys := fs.String("keys", "", "comma-separated catalog keys for --probe-models")
+		pos, err := parse(fs, rest)
+		if err != nil {
+			if err == flag.ErrHelp {
+				return 0
+			}
+			return 2
+		}
+		if len(pos) != 0 || (!*probe && *keys != "") {
+			return fail(fmt.Errorf("usage: orch doctor [--probe-models] [--keys k1,k2]"))
+		}
+		if *probe {
+			if envOrch("ROLE") == "worker" {
+				return fail(fmt.Errorf("ORCH_ROLE=worker: model probes are Head only"))
+			}
+			return failIf(fail, probeModels(*keys, stdout))
+		}
 		code := 0
 		for _, c := range doctor() {
 			mark := "ok  "

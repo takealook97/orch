@@ -156,7 +156,8 @@ func spawn(o spawnOpts) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := modelArgs(m); err != nil {
+	m, resolvedID, _, err := freezeModel(m)
+	if err != nil {
 		return nil, err
 	}
 	if !nameRE.MatchString(o.Name) {
@@ -329,7 +330,7 @@ func spawn(o spawnOpts) (*Worker, error) {
 			triedAcc = append(triedAcc, acc.Label)
 		}
 		w := &Worker{
-			Terminal: terminal, Name: o.Name, Key: m.Key, Family: m.Family, Kind: m.Kind, Pane: pane, Tab: tab, Role: o.Role,
+			Terminal: terminal, Name: o.Name, Key: m.Key, ModelID: resolvedID, Family: m.Family, Kind: m.Kind, Pane: pane, Tab: tab, Role: o.Role,
 			Purpose: o.Purpose, Reviews: o.Reviews, Account: acc.Label, Cwd: cwd, Worktree: o.Worktree,
 			Result: r.resultPath(o.Name), Status: "spawned", Started: time.Now(),
 			FallbackOf: o.Fallback, Tried: append(slices.Clone(o.Tried), m.Key), TriedAccounts: triedAcc,

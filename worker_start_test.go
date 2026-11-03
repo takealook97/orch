@@ -24,8 +24,10 @@ func startupTest(t *testing.T) {
 }
 
 // Herdr can acknowledge start without ever registering the requested agent.
-func TestSpawnUnregisteredCustomCwdClosesPane(t *testing.T) {
+func TestManifestSpawnUnregisteredCustomCwdClosesPane(t *testing.T) {
 	startupTest(t)
+	cleanModelEnv(t)
+	overlayFile(t, "models: {sol: manifest-sol}\n")
 	t.Setenv("ORCH_HOME", t.TempDir())
 	t.Setenv("ORCH_ROLE", "")
 	t.Setenv("HERDR_ENV", "1")
@@ -88,6 +90,9 @@ func TestSpawnUnregisteredCustomCwdClosesPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	saved := r.worker("cwd-probe")
+	if saved.ModelID != "manifest-sol" {
+		t.Fatalf("resolved model id not saved: %+v", saved)
+	}
 	if saved.Status != "failed" || saved.Pane != "" || saved.Closed.IsZero() {
 		t.Fatalf("failed worker not cleaned: %+v", saved)
 	}
