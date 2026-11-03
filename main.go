@@ -531,6 +531,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil {
 			return fail(err)
 		}
+		if backend() == "app" {
+			if err := refreshAppLocations(headID()); err != nil {
+				return fail(err)
+			}
+		}
 		r, err := loadRun(id)
 		if err != nil {
 			return fail(err)

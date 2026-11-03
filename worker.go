@@ -259,6 +259,15 @@ func spawn(o spawnOpts) (*Worker, error) {
 			return nil, "", err
 		}
 
+		if backend() == "app" {
+			if err := refreshAppLocations(head); err != nil {
+				return nil, "", err
+			}
+			if r, err = loadRun(r.ID); err != nil {
+				return nil, "", err
+			}
+		}
+
 		// The run cap is independent of the number of visible rows.
 		if err := workerCapacity(r); err != nil {
 			return nil, "", err

@@ -418,6 +418,14 @@ func appLaunch(r *Run, tab, cwd, name string, env, argv []string) (string, strin
 	}
 }
 func appSelectTab(r *Run, l Layout) (string, error) {
+	if err := refreshAppLocations(r.HeadPane); err != nil {
+		return "", err
+	}
+	fresh, err := loadRun(r.ID)
+	if err != nil {
+		return "", err
+	}
+	*r = *fresh
 	if err := workerCapacity(r); err != nil {
 		return "", err
 	}

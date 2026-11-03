@@ -44,17 +44,32 @@ func appHeadLocation() (string, string) {
 	if err != nil {
 		return "", ""
 	}
+	space, tab := findAppTerminalTab(ls, id)
+	if tab != "" {
+		headLocation.terminal, headLocation.space, headLocation.tab = id, space, tab
+	}
+	return space, tab
+}
+
+// findAppTerminalTab returns the space and tab that hold terminal id, or empty strings.
+func findAppTerminalTab(ls appInventory, id string) (string, string) {
 	for _, s := range ls.Spaces {
 		for _, t := range s.Tabs {
 			for _, p := range t.Terminals {
 				if p.Terminal == id {
-					headLocation.terminal, headLocation.space, headLocation.tab = id, s.ID, t.ID
 					return s.ID, t.ID
 				}
 			}
 		}
 	}
 	return "", ""
+}
+
+// setAppHeadLocation replaces the cached Head location after an uncached lookup.
+func setAppHeadLocation(id, space, tab string) {
+	headLocation.Lock()
+	defer headLocation.Unlock()
+	headLocation.terminal, headLocation.space, headLocation.tab = id, space, tab
 }
 func headSpace() string {
 	if backend() == "app" {
