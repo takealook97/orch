@@ -41,8 +41,8 @@ func requireHead() error {
 	if envOrch("ROLE") == "worker" {
 		return errors.New("ORCH_ROLE=worker: workers cannot delegate (orch spawn denied)")
 	}
-	if os.Getenv("HERDR_ENV") != "1" || os.Getenv("HERDR_PANE_ID") == "" {
-		return errors.New("not inside a Herdr pane (HERDR_ENV=1, HERDR_PANE_ID required)")
+	if !inHerdr() || headID() == "" {
+		return errors.New("not inside a Herdr pane (HERDR_ENV=1 with HERDR_PANE_ID, or HC_TERMINAL_ID required)")
 	}
 	return nil
 }
@@ -55,12 +55,29 @@ func resolveFamily(v string) (string, error) {
 	case familyOpenAI, familyAnthropic, familyGoogle:
 		return v, nil
 	case "head":
+		if backend() == "app" {
+			t, err := hcGet(headID())
+			if err != nil {
+				return "", err
+			}
+			if t.Status != nil {
+				switch t.Status.App {
+				case "codex":
+					return familyOpenAI, nil
+				case "claude-code", "claude":
+					return familyAnthropic, nil
+				case "antigravity", "agy", "gemini":
+					return familyGoogle, nil
+				}
+			}
+			return "", fmt.Errorf("cannot infer app Head family; pass --author-family")
+		}
 		var res struct {
 			Pane struct {
 				Agent string `json:"agent"`
 			} `json:"pane"`
 		}
-		if err := herdrJSON(&res, "pane", "get", os.Getenv("HERDR_PANE_ID")); err != nil {
+		if err := herdrJSON(&res, "pane", "get", headID()); err != nil {
 			return "", err
 		}
 		if f, ok := kindFamily[res.Pane.Agent]; ok {
@@ -167,11 +184,11 @@ func spawn(o spawnOpts) (*Worker, error) {
 	}()
 	if o.Fallback == "" {
 		var err error
-		if release, err = admit(os.Getenv("HERDR_PANE_ID"), admission{"spawn", o.Name, o.Serves, o.FixOf}); err != nil {
+		if release, err = admit(headID(), admission{"spawn", o.Name, o.Serves, o.FixOf}); err != nil {
 			return nil, err
 		}
 	}
-	head := os.Getenv("HERDR_PANE_ID")
+	head := headID()
 	runID, err := resolveRun(o.Run)
 	if err != nil {
 		return nil, err
@@ -273,10 +290,37 @@ func spawn(o spawnOpts) (*Worker, error) {
 			cwd = real
 		}
 		env := append([]string{"ORCH_ROLE=worker", "ORCH_RUN=" + r.ID, "ORCH_WORKER=" + o.Name, "ORCH_MODEL=" + m.Key}, acc.Env...)
-		noDaemon = envHas(env, "CR_CODEX_NO_DAEMON=1")
+		noDaemon = backend() == "app" || envHas(env, "CR_CODEX_NO_DAEMON=1")
 		workerEnv = env
 
-		pane, tab, err := placeWorker(r, l, cwd, env)
+		var pane, tab, terminal string
+		if backend() == "app" {
+			err = normalizeAppLayouts(head)
+			if err == nil {
+				tab, err = appSelectTab(r, l)
+			}
+			if err == nil {
+				trustArgs, terr := pretrustLaunch(m.Kind, cwd, env, o.Cwd != "" || o.Worktree != "")
+				if terr != nil {
+					fmt.Fprintln(os.Stderr, "orch: folder pretrust warning:", terr)
+				}
+				launch, lerr := launchArgs(m, true)
+				err = lerr
+				if err == nil {
+					launch = append(launch, trustArgs...)
+					argv := append([]string{m.Kind}, launch...)
+					if crPath != "" {
+						argv = []string{"/bin/sh", "-c", crPaneCommand(crPath, m.Kind, cwd, env, launch)}
+					}
+					terminal, pane, err = appLaunch(r, tab, cwd, o.Name, env, argv)
+					if err == nil && tab != r.Tab && !slices.Contains(r.OverflowTabs, tab) {
+						_, _ = appRun("do", "tab.rename", "--id", tab, "--name", r.OverflowNames[tab])
+					}
+				}
+			}
+		} else {
+			pane, tab, err = placeWorker(r, l, cwd, env)
+		}
 		if err != nil {
 			return nil, "", err
 		}
@@ -285,7 +329,7 @@ func spawn(o spawnOpts) (*Worker, error) {
 			triedAcc = append(triedAcc, acc.Label)
 		}
 		w := &Worker{
-			Name: o.Name, Key: m.Key, Family: m.Family, Kind: m.Kind, Pane: pane, Tab: tab, Role: o.Role,
+			Terminal: terminal, Name: o.Name, Key: m.Key, Family: m.Family, Kind: m.Kind, Pane: pane, Tab: tab, Role: o.Role,
 			Purpose: o.Purpose, Reviews: o.Reviews, Account: acc.Label, Cwd: cwd, Worktree: o.Worktree,
 			Result: r.resultPath(o.Name), Status: "spawned", Started: time.Now(),
 			FallbackOf: o.Fallback, Tried: append(slices.Clone(o.Tried), m.Key), TriedAccounts: triedAcc,
@@ -302,7 +346,11 @@ func spawn(o spawnOpts) (*Worker, error) {
 			r.event("spawn %s key=%s role=%s pane=%s account=%s", w.Name, w.Key, w.Role, w.Pane, w.Account)
 			return nil
 		}); err != nil {
-			_ = closePane(pane)
+			if backend() == "app" {
+				_ = appClose(terminal, appIdentity{r.ID, o.Name})
+			} else {
+				_ = closePane(pane)
+			}
 			// Reload ownership under the run lock; the pre-split snapshot is stale.
 			_ = withRun(r.ID, func(current *Run) error {
 				if tab != current.Tab && !slices.Contains(current.OverflowTabs, tab) {
@@ -328,6 +376,15 @@ func spawn(o spawnOpts) (*Worker, error) {
 		return nil, err
 	}
 
+	if backend() == "app" {
+		if err := appWaitReady(w.Terminal, w.Cwd); err != nil {
+			abortWorker(runID, o.Name, err)
+			return nil, err
+		}
+		ensureReaper(runID)
+		committed = true
+		return w, nil
+	}
 	// Pre-trust the selected launch directory, including an explicit cwd outside Head cwd.
 	trustArgs, terr := pretrustLaunch(m.Kind, w.Cwd, workerEnv, o.Cwd != "" || o.Worktree != "")
 	if terr != nil {
@@ -474,6 +531,14 @@ func withinHeadCwd(dir string) bool {
 
 // paneShowsTrust reads the raw pane (the agent name may not be registered yet).
 func paneShowsTrust(pane string) bool {
+	if backend() == "app" {
+		t, err := hcGet(appAddress(pane))
+		if err == nil && t.Status != nil && t.Status.State == "blocked" && t.Status.Kind == "permission" {
+			return true
+		}
+		text, err := agentRead(pane, 40)
+		return err == nil && trustDialog.MatchString(text)
+	}
 	out, err := herdrRun("pane", "read", pane, "--source", "recent-unwrapped", "--lines", "40")
 	return err == nil && trustDialog.MatchString(string(out))
 }
@@ -482,6 +547,9 @@ func paneShowsTrust(pane string) bool {
 // The Head already works in its cwd with bypass permissions, so a worker's folder-trust
 // dialog is accepted only for that directory or below it (trustDialog: heuristics.go).
 func acceptTrust(name, cwd string) bool {
+	if backend() == "app" {
+		return appTrust(name, cwd)
+	}
 	if !trustable(cwd) {
 		debugf("trust %s: cwd %s is outside Head cwd", name, cwd)
 		return false
@@ -493,10 +561,10 @@ func acceptTrust(name, cwd string) bool {
 	}
 	debugf("trust %s: trust dialog approved", name)
 	if strings.Contains(text, claudeTrustChoice) { // Claude: the default choice is "No, exit"
-		_, _ = herdrRun("agent", "send-keys", name, "down")
+		_, _ = muxKeys(name, "down")
 		time.Sleep(timings.KeyGap)
 	}
-	_, _ = herdrRun("agent", "send-keys", name, "enter") // Codex/agy: "Trust" is preselected
+	_, _ = muxKeys(name, "enter") // Codex/agy: "Trust" is preselected
 	return true
 }
 
@@ -619,41 +687,49 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		return nil
 	}
 	// A slow CLI may raise its folder-trust dialog after start; clear it before typing.
-	settleTrust(name, w.Cwd, timings.TrustSettlePrompt)
+	settleTrust(workerAgent(w), w.Cwd, timings.TrustSettlePrompt)
 	// Herdr's agent.prompt moves the UI to the agent's workspace and tab, which drags the
 	// user back to the Head. Type the one-line prompt into the pane and press Enter instead;
 	// neither pane.send_text nor agent.send_keys changes focus.
 	send := func() error {
-		if info, err := agentGet(name); err == nil && info.Status == "blocked" {
+		if info, err := agentGet(workerAgent(w)); err == nil && info.Status == "blocked" {
 			return fmt.Errorf("agent %s is stopped at an approval or question dialog; inspect with orch read %s", name, name)
+		}
+		if backend() == "app" {
+			_, err := hcRun("send", w.Terminal, msg)
+			return err
 		}
 		if _, err := herdrRun("pane", "send-text", w.Pane, msg); err != nil {
 			return err
 		}
 		time.Sleep(timings.KeyGap)
-		_, err := herdrRun("agent", "send-keys", name, "enter")
+		_, err := muxKeys(name, "enter")
 		return err
 	}
 	if err := send(); err != nil {
 		return fmt.Errorf("prompt send failed: %w", err)
 	}
-	if !delivered(name, w.Cwd, w.Result, timings.Delivery) {
+	if !deliveredTo(name, workerAgent(w), w.Cwd, w.Result, timings.Delivery) {
 		// An agent that is still booting can swallow input. Resend once, only when the
 		// marker is not in its transcript and it is not working on anything.
-		text, _ := agentRead(name, 400)
-		if !strings.Contains(text, promptMarker(name)) && !busy(name) && resultStatus(w.Result) == "" {
+		text, _ := agentRead(workerAgent(w), 400)
+		if !strings.Contains(text, promptMarker(name)) && !busy(workerAgent(w)) && resultStatus(w.Result) == "" {
 			debugf("prompt %s: delivery check failed; resend once", name)
 			if err := send(); err != nil {
 				return fmt.Errorf("prompt resend failed: %w", err)
 			}
-			if !delivered(name, w.Cwd, w.Result, timings.Delivery) {
+			if !deliveredTo(name, workerAgent(w), w.Cwd, w.Result, timings.Delivery) {
 				return fmt.Errorf("prompt was not delivered (%s). orch read %s to inspect", name, name)
 			}
 		}
 	}
 	if wait {
 		// agent wait only observes state; it does not move focus.
-		_, _ = herdrRun("agent", "wait", name, "--timeout", fmt.Sprint(timeoutMS))
+		if backend() == "app" {
+			_, _ = hcRun("wait", w.Terminal, "--timeout", fmt.Sprint((timeoutMS+999)/1000))
+		} else {
+			_, _ = herdrRun("agent", "wait", name, "--timeout", fmt.Sprint(timeoutMS))
+		}
 	}
 	return withRun(runID, func(r *Run) error {
 		w := r.worker(name)
@@ -670,24 +746,28 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 // A single "working" flash is not proof (a booting CLI can flash it and drop the input), and
 // a transcript check alone fails for CLIs that redraw the screen (Codex's alternate screen).
 func delivered(name, cwd, result string, within time.Duration) bool {
+	return deliveredTo(name, name, cwd, result, within)
+}
+
+func deliveredTo(name, agent, cwd, result string, within time.Duration) bool {
 	marker := promptMarker(name)
 	deadline := time.Now().Add(within)
 	working := 0
 	for time.Now().Before(deadline) {
-		if acceptTrust(name, cwd) {
+		if acceptTrust(agent, cwd) {
 			return false // the prompt went into the dialog; the caller resends
 		}
 		if resultStatus(result) != "" {
 			return true
 		}
-		if info, err := agentGet(name); err == nil && info.Status == "working" {
+		if info, err := agentGet(agent); err == nil && info.Status == "working" {
 			if working++; working >= workingPollsForDelivery {
 				return true
 			}
 		} else {
 			working = 0
 		}
-		if text, err := agentRead(name, 400); err == nil && strings.Contains(text, marker) {
+		if text, err := agentRead(agent, 400); err == nil && strings.Contains(text, marker) {
 			return true
 		}
 		time.Sleep(timings.Poll)

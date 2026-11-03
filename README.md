@@ -1,6 +1,6 @@
 # orch
 
-`orch` is a multi-agent executor that runs on Herdr panes. The main session (the Head) hands subtasks to workers as contract files, then has a different model family verify the results.
+`orch` is a multi-agent executor that runs on legacy Herdr and Herdr.app panes. The main session (the Head) hands subtasks to workers as contract files, then has a different model family verify the results.
 
 The Head usually runs on the top-tier model, so orch delegates by cost, not time: the Head keeps judgment and review, and execution goes to cheaper catalog keys. One-off tasks skip panes entirely with `orch ask`/`orch do`; `orch test` keeps full test logs out of the Head's context.
 
@@ -8,6 +8,8 @@ The Head usually runs on the top-tier model, so orch delegates by cost, not time
 - Design doc: `skill/references/design.md`
 - Decisions and changes made during implementation: `skill/references/decisions.md`
 - Operating manual for the Head: `skill/SKILL.md` (skill name `orch`)
+
+Detection: `ORCH_MUX=herdr|app` overrides `HERDR_ENV=1` (legacy), then `HC_TERMINAL_ID` (app). Herdr.app requires `hc`, a running hc server, and `herdr-app`; legacy requires `herdr`. Runs retain their backend. Both preserve focus and protect foreign panes.
 
 ## Four layers
 

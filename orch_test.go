@@ -1075,3 +1075,47 @@ func TestModelsCanonicalListing(t *testing.T) {
 		t.Fatalf("listing: %s", out.String())
 	}
 }
+
+func TestHookAppBackendCommands(t *testing.T) {
+	for _, tt := range []struct {
+		cmd   string
+		block bool
+	}{
+		{"herdr-app do pane.split --id p", true},
+		{"herdr-app do tab.new", true},
+		{"herdr-app do space.new", true},
+		{"herdr-app do terminal.open", true},
+		{"herdr-app do terminal.keep", true},
+		{"hc run --bg --json -- codex --no-daemon", true},
+		{"hc run -- claude", true},
+		{"hc run agy", true},
+		{"hc run --bg --cwd /tmp --label x=y codex", true},
+		{"hc run --bg --cwd codex echo hello", false},
+		{"hc run -- env ORCH_ROLE=worker /bin/codex", true},
+		{"hc run -- cr codex", true},
+		{"hc run -- gemini", true},
+		{"hc run -- echo hello", false},
+		{"herdr-app do pane.split --help", false},
+		{"hc run --help", false},
+		{`rg 'herdr-app do pane.split' docs`, false},
+	} {
+		t.Run(tt.cmd, func(t *testing.T) {
+			t.Setenv("ORCH_RAW_HERDR", "")
+			raw, _ := json.Marshal(map[string]string{"command": tt.cmd})
+			in := hookInput{ToolName: "Bash", ToolInput: raw}
+			if got := decide(in, "", true); (got != "") != tt.block {
+				t.Fatalf("block=%v reason=%s", tt.block, got)
+			}
+			if tt.block {
+				if decide(in, "worker", true) == "" {
+					t.Fatal("worker escaped")
+				}
+				raw, _ = json.Marshal(map[string]string{"command": "ORCH_RAW_HERDR=1 " + tt.cmd})
+				in.ToolInput = raw
+				if got := decide(in, "", true); got != "" {
+					t.Fatalf("bypass denied: %s", got)
+				}
+			}
+		})
+	}
+}

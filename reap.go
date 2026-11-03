@@ -75,7 +75,7 @@ func reaperRunning(runID string) bool {
 // agentStopped reports whether a worker's agent is not working. A failed agent lookup means
 // the agent is gone only when its pane is gone too; a transient Herdr error is not proof.
 func agentStopped(w *Worker) bool {
-	info, err := agentGet(w.Name)
+	info, err := agentGet(workerAgent(w))
 	if err == nil {
 		return info.Status != "working"
 	}

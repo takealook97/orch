@@ -147,3 +147,12 @@ Keep the Head full-height on the left third and at most rowCap workers on the ri
 2026-10-30: supersedes the 2026-09-30 retirement of codex-medium-m (history above is retained). Seven canonical entries now include codex-low-h = gpt-6-luna/high, codex-medium-m = gpt-6.1-terra/medium, and the unchanged Sol low/medium entries. Model hierarchy is Luna < Terra < Sol regardless of effort. Terra handles constrained writing, scoped known fixes and mechanical extraction; larger complete plans start at Sol low. Screen work is a candidate role, not a measured advantage. Sonnet/Opus writing and deep-document defaults and Gemini independent-neutral review remain unchanged.
 
 The former codex-medium-h key is a deprecated Luna alias, including saved runs. CODEX_LOW_H takes precedence; CODEX_MEDIUM_H is used only when the canonical override is trimmed empty. CODEX_MEDIUM_M is separate. Fallbacks: explore Luna -> Terra -> Gemini; extract Luna -> Terra -> Sol medium -> Sonnet; mech-impl Terra -> Sol low -> Sol medium -> Sonnet. Normalize alias attempts to prevent retrying Luna; never downgrade Terra to Luna. Relative costs are planning weights, not vendor prices or benchmark claims.
+
+## 2026-11-03 — Herdr.app / herdr-core backend
+
+- Detect explicit `ORCH_MUX=herdr|app`, legacy `HERDR_ENV=1`, then app `HC_TERMINAL_ID`. Keep old runs on legacy and persist new backend identity.
+- Place hc terminals with `herdr.space` / `herdr.tab` labels; unknown tab IDs create unfocused overflow tabs. Rename afterwards. Keep hc addresses separate from app block IDs.
+- Normalize the versioned `herdr-app` document through `hc connect` (`doc.get` / `doc.set`), retry conflicts, re-read to verify, and reject every foreign terminal or mod block. Preserve leaf data and use Head/column weights 1:2 with equal worker rows.
+- Always strip `HC_TERMINAL_ID` for hc run/send, use `--no-parent --no-notify`, and pass worker environment through an `env` argv prefix. This prevents child notifications into Head and hc sender tags in prompt text.
+- Codex on hc requires `--no-daemon`. Trust is reported through blocked permission status or terminal text and remains restricted by `trustable(cwd)`; Claude needs down then enter.
+- Kill, wait for finished/not_found, rm, then confirm disappearance with app inventory. Last-terminal exit automatically removes tabs and empty spaces; explicitly close only an owned empty overflow tab that remains.

@@ -188,6 +188,9 @@ func layoutOK(l Layout, headID string) bool {
 // nothing is zoomed, which drags the user back to the Head from wherever they are. So zoom
 // is turned off only when the layout reports it zoomed. pane.resize does not move focus.
 func normalizeLayout(headID string) error {
+	if backend() == "app" {
+		return normalizeAppLayouts(headID)
+	}
 	for round := 0; round < 3; round++ {
 		l, err := getLayout(headID)
 		if err != nil {

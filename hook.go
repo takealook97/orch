@@ -29,7 +29,70 @@ var subagentTools = regexp.MustCompile(`(?i)(^([\w-]+(\.|__))*(agent|task|workfl
 // not: markdown code spans in reports would trip it, and $( ) already covers substitution.
 const cmdPos = `(?m)(^|[;&|(]|\$\(|\b(?:ba|z|da|k|fi)?sh\s+(?:-\w+\s+)*-\w*c\w*\s+['"]?|\beval\s+['"]?|\bxargs\s+(?:-\S+\s+)*)\s*((\w+=\S*|env(\s+-\S+(\s+\w+)?)*|exec|command|sudo|nohup|time)\s+)*`
 
-var paneCreate = regexp.MustCompile(cmdPos + `(\S*/)?herdr\s+(pane\s+split|agent\s+start|tab\s+create|workspace\s+create|worktree\s+create)\b`)
+var paneCreate = regexp.MustCompile(cmdPos + `(\S*/)?(herdr\s+(pane\s+split|agent\s+start|tab\s+create|workspace\s+create|worktree\s+create)|herdr-app\s+do\s+(pane\.split|tab\.new|space\.new|terminal\.open|terminal\.keep)|hc\s+run\s+(?:(?:[^;\n|&]*?--\s+)|(?:(?:--(?:bg|json|no-parent|no-notify)\s+)|(?:--(?:cwd|label|name)\s+\S+\s+))*)(env\s+(\w+=\S*\s+)*)?(\S*/)?(claude|codex|agy|gemini|cr))\b`)
+
+var hcRunStart = regexp.MustCompile(cmdPos + `(\S*/)?hc\s+run\s+`)
+var hcWord = regexp.MustCompile(`'[^']*'|"[^"]*"|[^\s]+`)
+
+func hcRunsAgent(cmd string) bool {
+	for _, m := range hcRunStart.FindAllStringIndex(cmd, -1) {
+		tail := cmd[m[1]:]
+		if end := strings.IndexAny(tail, ";|&\n"); end >= 0 {
+			tail = tail[:end]
+		}
+		words := hcWord.FindAllString(tail, -1)
+		for i := range words {
+			words[i] = strings.Trim(words[i], `'"`)
+		}
+		i := 0
+		for i < len(words) {
+			w := words[i]
+			if w == "--" {
+				i++
+				break
+			}
+			if !strings.HasPrefix(w, "-") {
+				break
+			}
+			i++
+			if (w == "--cwd" || w == "--label" || w == "--name" || w == "--on") && i < len(words) {
+				i++
+			}
+		}
+		if i >= len(words) {
+			continue
+		}
+		program := filepath.Base(words[i])
+		i++
+		if program == "env" {
+			for i < len(words) && (strings.Contains(words[i], "=") || strings.HasPrefix(words[i], "-")) {
+				i++
+			}
+			if i >= len(words) {
+				continue
+			}
+			program = filepath.Base(words[i])
+			i++
+		}
+		if program == "sh" || program == "bash" || program == "zsh" {
+			if i+1 < len(words) && strings.Contains(words[i], "c") {
+				script := strings.Fields(words[i+1])
+				if len(script) > 0 {
+					program = filepath.Base(script[0])
+				}
+			}
+		}
+		switch program {
+		case "claude", "codex", "agy", "gemini", "cr":
+			return true
+		case "npx", "bunx":
+			if i < len(words) && (words[i] == "@openai/codex" || words[i] == "@anthropic-ai/claude-code") {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 var orchDelegate = regexp.MustCompile(cmdPos + `(\S*/)?orch\s+(spawn|prompt|run\s+new|fallback)\b`)
 
@@ -108,7 +171,7 @@ func decide(in hookInput, role string, inHerdr bool) string {
 		switch {
 		case subagentTools.MatchString(tool):
 			return "orch workers cannot delegate. Work within the contract scope and list any blockers in the result report."
-		case paneCreate.MatchString(cmd) || orchDelegate.MatchString(cmd) || orchAny.MatchString(cmd):
+		case paneCreate.MatchString(cmd) || hcRunsAgent(cmd) || orchDelegate.MatchString(cmd) || orchAny.MatchString(cmd):
 			return "orch workers cannot create panes, agents, or orch delegation. List any blockers in the result report."
 		case agentCLI.MatchString(cmd):
 			return "orch workers cannot call another agent CLI (no delegation)."
@@ -158,6 +221,9 @@ var quoteJoiner = strings.NewReplacer("'", "", `"`, "", `\`, "")
 func headCreatesPane(cmd string) bool {
 	lit := literalEscapedSeparators(cmd)
 	for _, text := range []string{lit, quoteJoiner.Replace(lit)} {
+		if hcRunsAgent(text) && !helpFlag.MatchString(text) {
+			return true
+		}
 		for _, m := range paneCreate.FindAllStringIndex(text, -1) {
 			args := text[m[1]:]
 			if i := strings.IndexAny(args, ";&|()'\"<>`\n"); i >= 0 {
@@ -218,7 +284,7 @@ func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := json.Unmarshal(data, &in); err != nil {
 		return 0
 	}
-	reason := decide(in, envOrch("ROLE"), os.Getenv("HERDR_ENV") == "1")
+	reason := decide(in, envOrch("ROLE"), inHerdr())
 	if reason == "" {
 		if cli == "agy" {
 			// agy fails closed without a decision. Workers already bypass permissions, so
@@ -321,14 +387,14 @@ func codexGoalCompileReason(in hookInput) string {
 	if in.TranscriptPath == "" {
 		return ""
 	}
-	if g, _ := activeGoalFor(os.Getenv("HERDR_PANE_ID")); g != nil {
+	if g, _ := activeGoalFor(headID()); g != nil {
 		return ""
 	}
 	objective, active := codexGoalState(in.TranscriptPath)
 	if !active {
 		return ""
 	}
-	if endedGoalMatches(os.Getenv("HERDR_PANE_ID"), objective) {
+	if endedGoalMatches(headID(), objective) {
 		return ""
 	}
 	if goalShellTool.MatchString(in.tool()) && goalCompileCommand.MatchString(in.commandText()) {
@@ -360,7 +426,7 @@ func goalScopeReason(in hookInput) string {
 	if !goalEditTool.MatchString(in.tool()) && !patch {
 		return ""
 	}
-	g, e := activeGoalFor(os.Getenv("HERDR_PANE_ID"))
+	g, e := activeGoalFor(headID())
 	if e != nil || g == nil {
 		return ""
 	}
@@ -396,7 +462,7 @@ func goalScopeReason(in hookInput) string {
 var goalPrompt = regexp.MustCompile(`(?m)^\s*/goal\b`)
 
 func goalPromptHook(data []byte, stdout io.Writer) int {
-	if os.Getenv("HERDR_ENV") != "1" || envOrch("ROLE") == "worker" {
+	if !inHerdr() || envOrch("ROLE") == "worker" {
 		return 0
 	}
 	var in struct {
@@ -408,7 +474,7 @@ func goalPromptHook(data []byte, stdout io.Writer) int {
 	if !goalPrompt.MatchString(in.Prompt) && !strings.Contains(in.Prompt, "<command-name>/goal</command-name>") {
 		return 0
 	}
-	g, e := activeGoalFor(os.Getenv("HERDR_PANE_ID"))
+	g, e := activeGoalFor(headID())
 	if e != nil || g != nil {
 		return 0
 	}

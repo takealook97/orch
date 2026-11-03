@@ -8,7 +8,7 @@ description: Head's operating manual for multi-agent work with the `orch` execut
 Enforcement lives in the `orch` executor and its hooks. This document is the judgment guide. Everything this skill needs ships in its own directory: the full design doc is `references/design.md`, and `references/decisions.md` records later decisions (it wins where the two differ).
 A worker (`ORCH_ROLE=worker`) does not use this document. It follows only its contract.
 
-Check whether you're inside Herdr first: `test "$HERDR_ENV" = 1`. If not, pane delegation is impossible, but `orch ask`, `orch do`, and `orch test` still work (they open no pane).
+Backend detection: `ORCH_MUX=herdr|app` overrides automatic selection; otherwise `HERDR_ENV=1` selects legacy Herdr, then a nonempty `HC_TERMINAL_ID` selects Herdr.app. Outside both, pane delegation is impossible; `orch ask`, `orch do`, and `orch test` still work. A run belongs to its original backend.
 Delegate only through `orch`, in Claude and Codex alike. Don't drive Herdr panes directly, even if a Herdr skill is installed.
 
 ## 0. What the Head spends (priority order)
@@ -239,4 +239,4 @@ Pane workers default to `--account auto`: Codex/Claude use the resolved `cr code
 
 ## 9. Layout (enforced by orch)
 
-The Head takes the full-height left third; workers stack top to bottom at equal height in the right two-thirds column. Every spawn uses `--no-focus`. **Don't steal the user's focus:** Herdr's `pane zoom` and `agent prompt` move the UI to the target tab, so don't call them directly (orch doesn't either). If a tab has a user pane, spawn stops (it never moves or closes it). If the layout breaks, use `orch layout`. If you need a pane for a plain command rather than delegation, prefix the command with `ORCH_RAW_HERDR=1` to get past the hook. Help lookups (`herdr pane split --help`) pass the hook without it.
+The Head takes the full-height left third; workers stack top to bottom at equal height in the right two-thirds column. Legacy spawns use `--no-focus`; Herdr.app spawns use space/tab labels without moving focus. Herdr.app rewrites the split document with version checks: Head weight 1, worker column weight 2, equal worker rows. Overflow tabs use full-width equal rows. Foreign terminal or mod blocks stop layout changes (I6). **Don't steal the user's focus:** Herdr's `pane zoom` and `agent prompt` move the UI to the target tab, so don't call them directly (orch doesn't either). If a tab has a user pane, spawn stops (it never moves or closes it). If the layout breaks, use `orch layout`. If you need a pane for a plain command rather than delegation, prefix the command with `ORCH_RAW_HERDR=1` to get past the hook. Help lookups (`herdr pane split --help`, `herdr-app do pane.split --help`) pass the hook without it. Raw app pane creation and `hc run -- <agent>` are guarded too.

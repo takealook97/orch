@@ -182,7 +182,7 @@ func heartbeat(t *Task) func() {
 	return func() { close(stop); <-done }
 }
 func activeTaskRun() (string, error) {
-	if envOrch("RUN") == "" && os.Getenv("HERDR_PANE_ID") == "" {
+	if envOrch("RUN") == "" && headID() == "" {
 		return "", errors.New("no active Head pane")
 	}
 	return resolveRun("")
@@ -658,7 +658,7 @@ func paneHint(t *Task, inHerdr bool) string {
 }
 
 func taskReport(t *Task, asJSON bool) string {
-	hint := paneHint(t, os.Getenv("HERDR_ENV") == "1")
+	hint := paneHint(t, inHerdr())
 	if asJSON {
 		v := map[string]any{"task": t.ID, "run": t.Run, "status": t.Status, "exit_code": t.ExitCode, "duration_ms": t.DurationMS, "dir": t.Dir}
 		if hint != "" {
@@ -904,7 +904,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 	if kind == "do" {
-		if release, err = admit(os.Getenv("HERDR_PANE_ID"), admission{"do", "", serves, fixOf}); err != nil {
+		if release, err = admit(headID(), admission{"do", "", serves, fixOf}); err != nil {
 			fmt.Fprintln(stderr, "orch:", err)
 			return 1
 		}

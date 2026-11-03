@@ -52,7 +52,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 	var outcomes []waitOutcome
 	deadline := time.Now().Add(timeout)
 	lastRead := time.Time{}
-	head := os.Getenv("HERDR_PANE_ID")
+	head := headID()
 	reported := map[string]bool{}
 	for len(pending) > 0 {
 		r, err = loadRun(runID)
@@ -125,20 +125,20 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 						continue
 					} else {
 						detail += " · pane closure confirmed"
-						_ = normalizeOwnedLayouts(os.Getenv("HERDR_PANE_ID"))
+						_ = normalizeOwnedLayouts(headID())
 					}
 				}
 				markReported(runID, name)
 				outcomes = append(outcomes, waitOutcome{name, st, detail})
 				continue
 			}
-			info, _ := agentGet(name)
+			info, _ := agentGet(workerAgent(w))
 			if info.Status == "blocked" {
 				outcomes = append(outcomes, waitOutcome{name, "agent-blocked", "orch read " + name + " to inspect, then decide"})
 				continue
 			}
 			if readNow {
-				if text, err := agentRead(name, 80); err == nil && quotaText(text) {
+				if text, err := agentRead(workerAgent(w), 80); err == nil && quotaText(text) {
 					saveTail(r, w, text)
 					if fallback {
 						nw, ferr := doFallback(runID, name, "quota exhausted")
@@ -373,7 +373,7 @@ func collectWorker(runFlag, name string) (string, string, error) {
 	if st == "" {
 		fmt.Fprintf(&b, "result file or status line missing: %s\n", w.Result)
 		if w.Pane != "" && w.Status != "closed" {
-			if text, err := agentRead(name, 120); err == nil {
+			if text, err := agentRead(workerAgent(w), 120); err == nil {
 				p := saveTail(r, w, text)
 				fmt.Fprintf(&b, "terminal output backup: %s\n", p)
 			}
@@ -455,12 +455,12 @@ func closeWorker(runID, name string) error { return closeWorkerAs(runID, name, "
 // closeWorkerAs closes name's pane. A non-empty expect is the pane the caller observed: if the
 // name now points at another pane (the worker was closed and the name reused), nothing is closed.
 func closeWorkerAs(runID, name, expect string, reap bool) error {
-	unlock, err := lockHead(os.Getenv("HERDR_PANE_ID"))
+	unlock, err := lockHead(headID())
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	var pane string
+	var pane, terminal string
 	err = withRun(runID, func(r *Run) error {
 		if err := ownRun(r); err != nil {
 			return err
@@ -470,6 +470,7 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 			return fmt.Errorf("worker %q not found", name)
 		}
 		pane = w.Pane
+		terminal = w.Terminal
 		return nil
 	})
 	if err != nil {
@@ -484,7 +485,11 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 	}
 	var cerr error
 	if pane != "" {
-		cerr = closePane(pane) // closes if live and confirms removal; lookup errors are failures
+		if backend() == "app" {
+			cerr = appClose(terminal, appIdentity{runID, name})
+		} else {
+			cerr = closePane(pane)
+		}
 	}
 	_ = withRun(runID, func(r *Run) error {
 		w := r.worker(name)
@@ -512,6 +517,14 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 	})
 	if cerr == nil {
 		cleanRunOverflowWarning(runID)
+		if backend() == "app" {
+			if err := normalizeAppLayouts(headID()); err != nil {
+				_ = withRun(runID, func(r *Run) error {
+					r.event("warning: app layout normalization after close %s: %v", name, err)
+					return nil
+				})
+			}
+		}
 		return nil
 	}
 	return cerr
@@ -588,7 +601,10 @@ func closeRun(runID string, end bool) ([]string, error) {
 
 // ownRun enforces that a Head only ever closes panes it spawned itself.
 func ownRun(r *Run) error {
-	if head := os.Getenv("HERDR_PANE_ID"); r.HeadPane != head {
+	if err := checkRunBackend(r); err != nil {
+		return err
+	}
+	if head := headID(); r.HeadPane != head {
 		return fmt.Errorf("run %s was spawned by another Head (%s). close only panes you spawned (to take over, use orch resume --run %s)", r.ID, r.HeadPane, r.ID)
 	}
 	return nil
@@ -611,13 +627,20 @@ func gc(orphans bool) ([]string, error) {
 	for _, p := range panes {
 		live[p.ID] = true
 	}
-	head := os.Getenv("HERDR_PANE_ID")
+	head := headID()
 	for _, r := range runs {
-		if r.Adhoc {
+		if r.Adhoc || runBackend(r) != currentBackend() {
 			continue
 		}
 		mine := r.HeadPane == head
 		deadHead := !live[r.HeadPane]
+		if backend() == "app" {
+			exists, err := paneExists(r.HeadPane)
+			if err != nil {
+				return report, err
+			}
+			deadHead = !exists
+		}
 		switch {
 		case mine && r.Status != "active":
 		case orphans && deadHead:
@@ -625,8 +648,23 @@ func gc(orphans bool) ([]string, error) {
 			continue
 		}
 		for _, w := range r.liveWorkers() {
-			if live[w.Pane] {
-				if err := closePane(w.Pane); err != nil {
+			exists := live[w.Pane]
+			if backend() == "app" {
+				var err error
+				exists, err = paneExists(w.Terminal)
+				if err != nil {
+					report = append(report, fmt.Sprintf("%s/%s: %v", r.ID, w.Name, err))
+					continue
+				}
+			}
+			if exists || backend() == "app" {
+				var closeErr error
+				if backend() == "app" {
+					closeErr = appClose(w.Terminal, appIdentity{r.ID, w.Name})
+				} else {
+					closeErr = closePane(w.Pane)
+				}
+				if err := closeErr; err != nil {
 					report = append(report, fmt.Sprintf("%s/%s: %v", r.ID, w.Name, err))
 					continue
 				}
@@ -684,7 +722,10 @@ func pruneAdhoc(runs []*Run, keep time.Duration) []string {
 // resume re-attaches a run to the current Head pane and marks vanished workers as lost.
 func resume(runID string) ([]string, error) {
 	var report []string
-	head := os.Getenv("HERDR_PANE_ID")
+	head := headID()
+	if backend() == "app" && (headSpace() == "" || headTab() == "") {
+		return nil, fmt.Errorf("cannot resolve app Head location")
+	}
 	err := withRun(runID, func(r *Run) error {
 		if r.HeadPane != head {
 			// Only a run whose Head is gone can be taken over; a live Head keeps its panes.
@@ -696,9 +737,13 @@ func resume(runID string) ([]string, error) {
 				return fmt.Errorf("run %s Head pane %s is still alive; do not take over another Head run", r.ID, r.HeadPane)
 			}
 			report = append(report, fmt.Sprintf("Head pane %s → %s", r.HeadPane, head))
+			space, tab := headSpace(), headTab()
+			if backend() == "app" && (space == "" || tab == "") {
+				return fmt.Errorf("cannot resolve app Head location")
+			}
 			r.HeadPane = head
-			r.Workspace = os.Getenv("HERDR_WORKSPACE_ID")
-			r.Tab = os.Getenv("HERDR_TAB_ID")
+			r.Workspace = space
+			r.Tab = tab
 		}
 		r.Status = "active"
 		for _, w := range r.liveWorkers() {
@@ -707,6 +752,9 @@ func resume(runID string) ([]string, error) {
 				return err
 			}
 			if !exists {
+				if backend() == "app" {
+					appRemoveFinished(w.Terminal, appIdentity{r.ID, w.Name})
+				}
 				w.Status = "lost"
 				report = append(report, fmt.Sprintf("%s: pane %s missing; marked lost (restart from contract)", w.Name, w.Pane))
 				w.Pane = ""

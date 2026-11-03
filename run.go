@@ -14,6 +14,7 @@ import (
 )
 
 type Worker struct {
+	Terminal   string   `json:"terminal,omitempty"`
 	Name       string   `json:"name"`
 	Key        string   `json:"key"`
 	Family     string   `json:"family"`
@@ -49,21 +50,23 @@ type Event struct {
 }
 
 type Run struct {
-	ID           string    `json:"id"`
-	Created      time.Time `json:"created"`
-	HeadPane     string    `json:"head_pane"`
-	Workspace    string    `json:"workspace"`
-	Tab          string    `json:"tab"`
-	Mode         string    `json:"mode"`
-	Playbook     string    `json:"playbook,omitempty"`
-	Goal         string    `json:"goal,omitempty"`
-	Status       string    `json:"status"` // active, closed
-	Adhoc        bool      `json:"adhoc,omitempty"`
-	OverflowTabs []string  `json:"overflow_tabs,omitempty"`
-	OverflowSeq  int       `json:"overflow_seq,omitempty"`
-	Workers      []*Worker `json:"workers"`
-	Tasks        []*Task   `json:"tasks,omitempty"`
-	Events       []Event   `json:"events"`
+	Backend       string            `json:"backend,omitempty"`
+	ID            string            `json:"id"`
+	Created       time.Time         `json:"created"`
+	HeadPane      string            `json:"head_pane"`
+	Workspace     string            `json:"workspace"`
+	Tab           string            `json:"tab"`
+	Mode          string            `json:"mode"`
+	Playbook      string            `json:"playbook,omitempty"`
+	Goal          string            `json:"goal,omitempty"`
+	Status        string            `json:"status"` // active, closed
+	Adhoc         bool              `json:"adhoc,omitempty"`
+	OverflowTabs  []string          `json:"overflow_tabs,omitempty"`
+	OverflowSeq   int               `json:"overflow_seq,omitempty"`
+	OverflowNames map[string]string `json:"overflow_names,omitempty"`
+	Workers       []*Worker         `json:"workers"`
+	Tasks         []*Task           `json:"tasks,omitempty"`
+	Events        []Event           `json:"events"`
 }
 
 // envOrch reads ORCH_<key>.
@@ -206,7 +209,7 @@ func resolveRun(flag string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	head := os.Getenv("HERDR_PANE_ID")
+	head := headID()
 	for i := len(runs) - 1; i >= 0; i-- {
 		if runs[i].Status == "active" && runs[i].HeadPane == head {
 			return runs[i].ID, nil
@@ -223,7 +226,7 @@ func ownedPanes(head string) ([]string, error) {
 	}
 	var out []string
 	for _, r := range runs {
-		if r.Status != "active" || r.HeadPane != head {
+		if runBackend(r) != currentBackend() || (r.Status != "active" && runBackend(r) != "app") || r.HeadPane != head {
 			continue
 		}
 		for _, w := range r.liveWorkers() {
@@ -261,21 +264,25 @@ func createRun(request, mode, playbook, goal string) (*Run, error) {
 // save, so no other orch call can ever resolve it as the active run.
 func newRun(request, mode, playbook, goal string, adhoc bool) (*Run, error) {
 	if goal == "" {
-		if g, err := activeGoal(os.Getenv("HERDR_PANE_ID")); err == nil && g != nil {
+		if g, err := activeGoal(headID()); err == nil && g != nil {
 			goal = g.ID
 		}
 	}
 	r := &Run{
 		ID:        newRunID(),
+		Backend:   backend(),
 		Created:   time.Now(),
-		HeadPane:  os.Getenv("HERDR_PANE_ID"),
-		Workspace: os.Getenv("HERDR_WORKSPACE_ID"),
-		Tab:       os.Getenv("HERDR_TAB_ID"),
+		HeadPane:  headID(),
+		Workspace: headSpace(),
+		Tab:       headTab(),
 		Mode:      mode,
 		Playbook:  playbook,
 		Goal:      goal,
 		Status:    "active",
 		Workers:   []*Worker{},
+	}
+	if backend() == "app" && !adhoc && (r.Workspace == "" || r.Tab == "") {
+		return nil, fmt.Errorf("cannot resolve Head space/tab from herdr-app ls")
 	}
 	for _, sub := range []string{"contracts", "results", "evidence"} {
 		if err := os.MkdirAll(filepath.Join(r.dir(), sub), 0700); err != nil {

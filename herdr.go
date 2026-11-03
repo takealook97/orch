@@ -70,6 +70,9 @@ type Layout struct {
 }
 
 func getLayout(pane string) (Layout, error) {
+	if backend() == "app" {
+		return appGetLayout(pane)
+	}
 	var res struct {
 		Layout Layout `json:"layout"`
 	}
@@ -106,6 +109,9 @@ type PaneInfo struct {
 }
 
 func listPanes(workspace string) ([]PaneInfo, error) {
+	if backend() == "app" {
+		return appPanes(workspace)
+	}
 	args := []string{"pane", "list"}
 	if workspace != "" {
 		args = append(args, "--workspace", workspace)
@@ -119,6 +125,9 @@ func listPanes(workspace string) ([]PaneInfo, error) {
 
 // paneExists reports whether a pane is live. A failed lookup is an error, never "absent".
 func paneExists(id string) (bool, error) {
+	if backend() == "app" {
+		return appExists(id)
+	}
 	panes, err := listPanes("")
 	if err != nil {
 		return false, err
@@ -133,6 +142,9 @@ func paneExists(id string) (bool, error) {
 
 // closePane closes a pane and confirms its removal from the live pane list.
 func closePane(id string) error {
+	if backend() == "app" {
+		return appClose(id)
+	}
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		_, closeErr := herdrRun("pane", "close", id)
@@ -156,6 +168,9 @@ type AgentInfo struct {
 }
 
 func agentGet(name string) (AgentInfo, error) {
+	if backend() == "app" {
+		return appAgentGet(name)
+	}
 	var raw map[string]any
 	if err := herdrJSON(&raw, "agent", "get", name); err != nil {
 		return AgentInfo{}, err
@@ -192,6 +207,10 @@ func agentGet(name string) (AgentInfo, error) {
 }
 
 func agentRead(name string, lines int) (string, error) {
+	if backend() == "app" {
+		out, err := hcRun("read", appAddress(name), "--lines", fmt.Sprint(lines))
+		return string(out), err
+	}
 	out, err := herdrRun("agent", "read", name, "--source", "recent-unwrapped", "--lines", fmt.Sprint(lines))
 	if err != nil {
 		return "", err
@@ -220,6 +239,16 @@ func agentRead(name string, lines int) (string, error) {
 
 // paneShellPID returns the shell PID Herdr reports for a pane.
 func paneShellPID(pane string) (int, error) {
+	if backend() == "app" {
+		t, err := hcGet(appAddress(pane))
+		if err != nil {
+			return 0, err
+		}
+		if t.PID == 0 {
+			return 0, fmt.Errorf("terminal %s pid unavailable", pane)
+		}
+		return t.PID, nil
+	}
 	var res struct {
 		Info struct {
 			ShellPID int `json:"shell_pid"`

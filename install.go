@@ -358,11 +358,24 @@ type check struct {
 func doctor() []check {
 	var out []check
 	add := func(ok bool, name, info string) { out = append(out, check{ok, name, info}) }
-	for _, bin := range []string{"herdr", "codex", "claude", "agy", "git"} {
+	bins := []string{"codex", "claude", "agy", "git"}
+	if backend() == "app" {
+		bins = append(bins, "hc", "herdr-app")
+		_, err := hcRun("server", "status")
+		add(err == nil, "hc server", fmt.Sprint(err))
+	} else {
+		bins = append(bins, "herdr")
+	}
+	add(inHerdr(), "backend", backend())
+	for _, bin := range bins {
 		p, err := exec.LookPath(bin)
 		add(err == nil, "CLI "+bin, p)
 	}
-	add(os.Getenv("HERDR_ENV") == "1", "Herdr session", "HERDR_PANE_ID="+os.Getenv("HERDR_PANE_ID"))
+	key := "HERDR_PANE_ID"
+	if backend() == "app" {
+		key = "HC_TERMINAL_ID"
+	}
+	add(inHerdr(), "Herdr session", key+"="+headID())
 	add(envOrch("ROLE") != "worker", "role", "ORCH_ROLE="+envOrch("ROLE"))
 	want := strings.TrimSpace(constitutionBlock)
 	for _, f := range constitutionFiles() {

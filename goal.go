@@ -498,7 +498,7 @@ func goalCommand(rest []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch:", e)
 		return code
 	}
-	head := os.Getenv("HERDR_PANE_ID")
+	head := headID()
 	if sub != "status" && sub != "check" {
 		if e := requireHead(); e != nil {
 			return fail(e, 1)

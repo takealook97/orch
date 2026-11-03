@@ -122,8 +122,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return fail(fmt.Errorf("ORCH_ROLE=worker: workers cannot use orch %s (Head only)", cmd))
 	}
 	// A detached __task or __reap was verified by its parent before launch (it is reparented).
-	if !readOnly && cmd != "__task" && cmd != "__reap" && os.Getenv("HERDR_PANE_ID") != "" {
-		if err := verifyCaller(os.Getenv("HERDR_PANE_ID")); err != nil {
+	if !readOnly && cmd != "__task" && cmd != "__reap" && headID() != "" {
+		if err := verifyCaller(headID()); err != nil {
 			if os.Getppid() == 1 {
 				err = fmt.Errorf("%w; detached orch processes cannot manage panes; run orch wait in the foreground or with your harness's background-task feature (not &, nohup or setsid)", err)
 			}
@@ -389,7 +389,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil || len(pos) != 1 {
 			return fail(fmt.Errorf("usage: orch read <name>"))
 		}
-		text, err := agentRead(pos[0], *lines)
+		id, err := resolveRun(*runFlag)
+		if err != nil {
+			return fail(err)
+		}
+		r, err := loadRun(id)
+		if err != nil {
+			return fail(err)
+		}
+		w := r.worker(pos[0])
+		if w == nil {
+			return fail(fmt.Errorf("worker %q not found", pos[0]))
+		}
+		text, err := agentRead(workerAgent(w), *lines)
 		if err != nil {
 			return fail(err)
 		}
@@ -419,7 +431,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err != nil {
 			return 2
 		}
-		head := os.Getenv("HERDR_PANE_ID")
+		head := headID()
 		var cerr error
 		switch {
 		case *all:
@@ -481,7 +493,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 
 	case "layout":
-		head := os.Getenv("HERDR_PANE_ID")
+		head := headID()
 		if head == "" {
 			return fail(fmt.Errorf("HERDR_PANE_ID missing"))
 		}

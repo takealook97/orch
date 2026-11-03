@@ -59,7 +59,18 @@ func refreshOverflow(r *Run) {
 			continue
 		}
 		exists := slices.ContainsFunc(panes, func(p PaneInfo) bool { return p.ID == w.Pane })
+		if backend() == "app" {
+			var err error
+			exists, err = paneExists(w.Terminal)
+			if err != nil {
+				r.event("overflow inventory warning: %v", err)
+				continue
+			}
+		}
 		if !exists {
+			if backend() == "app" {
+				appRemoveFinished(w.Terminal, appIdentity{r.ID, w.Name})
+			}
 			r.event("%s: pane %s missing; marked lost", w.Name, w.Pane)
 			w.Status, w.Pane = "lost", ""
 		}
@@ -197,6 +208,9 @@ func cleanupCreatedOverflow(label string) {
 
 // cleanupOverflowTabs is called under the Head lock. Retain failed tab IDs for retry.
 func cleanupOverflowTabs(r *Run) error {
+	if backend() == "app" {
+		return appCleanupTabs(r)
+	}
 	if len(r.OverflowTabs) == 0 {
 		return nil
 	}
@@ -254,6 +268,9 @@ func cleanupOverflowTabs(r *Run) error {
 
 // normalizeOwnedLayouts keeps the Head geometry and gives overflow tabs equal full-width rows.
 func normalizeOwnedLayouts(head string) error {
+	if backend() == "app" {
+		return normalizeAppLayouts(head)
+	}
 	if err := normalizeLayout(head); err != nil {
 		return err
 	}

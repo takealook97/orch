@@ -8,7 +8,7 @@ This guide takes a machine from nothing to a working `orch` Head. It covers prer
 |---|---|---|
 | macOS or Linux with a POSIX shell | `orch` shells out to `herdr`, `git`, `ps`, `sh` | — |
 | Go 1.27+ | builds the `orch` binary | `go version` |
-| Herdr (tested with 0.8.2) | every worker runs in a Herdr pane | `command -v herdr` |
+| Legacy Herdr (tested with 0.8.2) or Herdr.app with herdr-core | pane backend | legacy: `command -v herdr`; app: `command -v hc`, `command -v herdr-app`, `hc server status` |
 | `git` | contract scope checks and changed-file detection | `git --version` |
 | `codex` CLI, logged in | runs `codex-low-h` `codex-medium-m` `codex-high-l` `codex-high-m` | `command -v codex` |
 | `claude` CLI, logged in | runs `claude-high-m` `claude-medium-m` | `command -v claude` |
@@ -19,6 +19,10 @@ This guide takes a machine from nothing to a working `orch` Head. It covers prer
 You can install with only some of the model CLIs, but keys whose CLI is missing cannot be spawned. Install all three for full catalog coverage.
 
 `orch` does not depend on any other skill. The `herdr` or `hd` skills may be installed alongside it, but the Head must not use them to drive panes; the hook blocks direct `herdr pane` calls.
+
+Backend detection uses `ORCH_MUX=herdr|app` first, otherwise `HERDR_ENV=1`, otherwise nonempty `HC_TERMINAL_ID`. Doctor reports the selected backend and Head identity (`HERDR_PANE_ID` or `HC_TERMINAL_ID`). Start the Head inside the intended backend; existing runs cannot be managed from the other backend.
+
+Herdr.app workers are placed by space/tab labels without focus changes. Layout uses versioned document rewrites, protects foreign terminals and mod blocks, and uses the Head terminal height for row limits. Empty overflow tabs normally disappear automatically. `ORCH_RAW_HERDR=1` also bypasses Head redirects for raw app creation and agent `hc run` commands.
 
 ## 2. Install
 
@@ -61,8 +65,8 @@ orch doctor
 
 `orch doctor` checks:
 
-- the `herdr`, `codex`, `claude`, `agy`, `git` binaries are on `PATH`
-- you are inside a Herdr session (`HERDR_ENV=1`)
+- `codex`, `claude`, `agy`, `git`, and the selected backend binaries are on `PATH` (`herdr` for legacy; `hc` and `herdr-app` plus a healthy `hc server status` for app)
+- the backend and Head identity resolve (`HERDR_ENV=1` / `HERDR_PANE_ID` for legacy; `HC_TERMINAL_ID` for app; `ORCH_MUX` overrides selection)
 - you are not a worker (`ORCH_ROLE` is not `worker`)
 - each constitution file contains the orch block and it matches `constitution/orch-block.md`
 - each CLI's hook file references `orch hook <cli>`
@@ -155,7 +159,7 @@ Close any open runs first with `orch run end` or `orch gc --orphans`.
 | `orch doctor`: "Herdr session" fails | running outside Herdr | start the Head inside a Herdr pane |
 | constitution "differs from source" | repo updated, install not rerun | `make install` |
 | Head's `Agent`/`Workflow` calls are blocked | the hook is working as intended inside Herdr | use `orch ask` (read-only) or `orch do` (writes) for a one-off task, `orch spawn` for long or parallel work |
-| a plain `herdr pane` command is blocked | same hook | prefix it with `ORCH_RAW_HERDR=1` |
+| a raw `herdr pane`, `herdr-app do` creation, or agent `hc run` command is blocked | same hook | prefix it with `ORCH_RAW_HERDR=1` |
 | Codex worker ignores the hook | hook not trusted | Codex `/hooks` -> trust `orch hook codex` |
 | worker stalls on a folder-trust prompt | first run in a new folder | `orch` pre-trusts worker folders; if one still stalls, `orch read <name>` to see it, then `orch close <name>` and respawn |
 | `orch wait` fails with "detached orch processes cannot manage panes" | it was started with `&`, `nohup`, or `setsid`, so it failed the Head identity check | run it in the foreground or with the harness's background-task feature. Finished panes still close through the run's reaper |

@@ -5,6 +5,14 @@
 
 ---
 
+## Herdr backends (2026-11-03)
+
+`ORCH_MUX=herdr|app` takes precedence, then `HERDR_ENV=1` selects legacy Herdr, then `HC_TERMINAL_ID` selects Herdr.app. Runs persist the backend (missing means legacy); worker pane IDs and hc terminal addresses are separate. Legacy CLI details below remain specific to that backend.
+
+The app backend resolves Head space/tab/pane with `herdr-app ls`, launches independent hc terminals with space/tab and orch ownership labels, and uses hc status/read/send/keys/wait for agent I/O. Codex always uses `--no-daemon`. Run/send remove `HC_TERMINAL_ID` from their environment. Readiness requires a live terminal and non-null status; permission trust acceptance retains the cwd trust rule.
+
+App layout reads the `herdr-app` core document, rejects foreign terminal/mod leaves, and rewrites owned tabs canonically with optimistic versions, three conflict attempts, and a verification read. The Head occupies weight 1 beside a weight 2 column of equally weighted workers; overflow tabs contain a full-width worker column. The Head's hc row count determines row capacity. Close kills, waits for finished/not_found, removes the terminal, and confirms app inventory removal; lookup errors never prove absence. Empty owned overflow tabs are closed only after confirming no foreign terminals.
+
 ## 0. Summary
 
 - **The main session is always a separate, standing Head (commander).** It owns judgment, decomposition, assignment, integration, confidence, and the final answer. The scope of work Head does directly is set by the direct-mode threshold in §8 and the delegation break-even point.
