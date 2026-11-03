@@ -1,5 +1,5 @@
 import { div, svg, image } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex } from "gpui-base";
 import { run, shared } from "herdr";
 import { nameElement } from "./rename.js";
 import { tabIconColor, machineConnected, rowDisplay } from "./model.js";
@@ -26,7 +26,7 @@ function icon(row, t) {
 export function treeRow(view, row, t) {
   const stop = (_e, cx) => cx.stop_propagation();
   const name = nameElement(view, row, t);
-  const main = h_flex().w_full().min_w(0).items_center().gap(5)
+  const main = h_flex().w_full().min_w(0).items_center().gap(row.kind === "pane" ? 6 : 5)
     .child(div().w(9).h(17).self_start().mt(-4).flex_none()
       .when(Boolean(row.guide), el => el.border_l(1).border_b(1).rounded_bl(6).border_color(t.border)))
     .child(row.foldable ? div().id(`fold-${row.key}`).size(12).flex_none()
@@ -34,8 +34,8 @@ export function treeRow(view, row, t) {
       .on_click((_e, cx) => { cx.stop_propagation(); view.toggle(row, cx); })
       .child(svg(asset(row.open ? "chevron-down" : "chevron-right")).size(12).text_color(t.dim)) : div().w(12).flex_none())
     .child(icon(row, t))
-    .child(row.kind === "pane" ? v_flex().flex_1().min_w(0).gap(1).child(name)
-      .child(div().truncate().text_size(10.8).text_color(t.dim).child(row.sub)) : name);
+    .child(row.kind === "pane" ? h_flex().flex_none().min_w(0).max_w_3_5().text_size(12).text_color(t.foreground).child(name) : name)
+    .when(row.kind === "pane", el => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(row.sub)));
   const display = rowDisplay(row);
   if (display.count) main.child(div().text_size(11).text_color(t.dim).child(display.count));
   if (row.kind === "machine") {
@@ -52,8 +52,8 @@ export function treeRow(view, row, t) {
       .on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: row.id ?? "" }); }).child("+"));
     if (!connected) main.child(div().size(6).flex_none().rounded(3).bg(t.dim));
   } else if (display.dot) main.child(dot(row, t));
-  const el = h_flex().id(row.key).relative().h(row.kind === "pane" ? 36 : row.kind === "space" ? row.data.parentId ? 28 : 30 : 26)
-    .flex_none().pl(2 + row.depth * 14).pr(6).items_center().rounded(5).text_size(row.kind === "pane" ? 12.5 : 12)
+  const el = h_flex().id(row.key).relative().h(row.kind === "space" && !row.data.parentId ? 26 : 24)
+    .flex_none().pl(2 + row.depth * 12).pr(6).items_center().rounded(5).text_size(12)
     .text_color(row.kind === "machine" ? t.muted : row.orch && view.orchStale ? t.dim : t.foreground)
     .bg(row.active ? row.kind === "pane" ? t.raised : t.selected : row.key === view.highlight ? t.raised : t.chrome)
     .hover(s => s.bg(t.hover))
@@ -61,7 +61,7 @@ export function treeRow(view, row, t) {
     .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); view.contextMenu(row); })
     .when(row.kind === "pane" && row.active, e => e.child(div().absolute().left(0).top(0).bottom(0).w(2).bg(t.accent)))
     .when(row.guide === "├", e => e.child(div().absolute().top(0).bottom(0)
-      .left(2 + row.depth * 14).border_l(1).border_color(t.border)))
+      .left(2 + row.depth * 12).border_l(1).border_color(t.border)))
     .child(main)
     .when(view.tabDrag && view.tabOver === row.key, e => e.child(div().absolute().inset_0()
       .rounded(5).border_1().border_color(t.accent)));
