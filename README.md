@@ -125,7 +125,7 @@ Review, QA, Adversarial, Head), catalog model/effort, and agent terminal models
 from `hc ls` identity plus `hc get` argv, including shell launch wrappers.
 Terminal detail reads run with concurrency 8 and a three-second timeout each.
 
-`orch hud usage [--terminals t1,t2] [--max-age 120s] [--refresh]` prints Codex/Claude/Gemini
+`orch hud usage [--terminals t1,t2 | --selected] [--max-age 120s] [--refresh]` prints Codex/Claude/Gemini
 usage windows and available Codex reset coupons. With terminals, it resolves local
 agent processes and their account homes; without terminals, it uses non-ignored CR
 registry accounts. Gemini is always included when `agy` is installed, including
@@ -133,6 +133,14 @@ with an explicit empty `--terminals=`. Remote terminal addresses are skipped
 silently. Gemini uses `agy -p /usage --output-format json --print-timeout 20s`
 from the temporary directory and maps only the Gemini group. Labels use registry email local
 parts; credentials and full emails are never included.
+
+`--selected` re-reads the CR registry on every call and selects one ready, non-ignored
+account per provider using CR's custom rank or plan/capacity ordering, followed by
+Gemini when installed. Each returned account has `"selected": true`; providers
+without a usable account are omitted. It cannot be combined with `--terminals`.
+Selection uses the registry snapshot; CR may refresh stale probes before launching,
+so a subsequent launch can choose differently. Elapsed reset times alone do not
+restore exhausted registry quotas.
 
 Usage is cached at `$ORCH_HOME/cache/hud-usage.json` (default `~/.orch/cache/`,
 mode 0600). Failed refreshes retain cached values with `stale` and `error` fields.

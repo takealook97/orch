@@ -16,7 +16,7 @@ import (
 // Operational errors remain in JSON so mods can retain their last good values.
 func cmdHud(args []string, stdout, stderr io.Writer) int {
 	usage := func() int {
-		fmt.Fprintln(stderr, "usage: orch hud sys|usage|panes [--terminals t1,t2] [--max-age 120s] [--refresh]")
+		fmt.Fprintln(stderr, "usage: orch hud sys|usage|panes [--terminals t1,t2 | --selected] [--max-age 120s] [--refresh]")
 		return 2
 	}
 	if len(args) == 0 {
@@ -43,6 +43,7 @@ func cmdHud(args []string, stdout, stderr io.Writer) int {
 	case "usage":
 		fs := flag.NewFlagSet("orch hud usage", flag.ContinueOnError)
 		fs.SetOutput(stderr)
+		selected := fs.Bool("selected", false, "show CR current account selections")
 		terminals := fs.String("terminals", "", "comma-separated terminal addresses")
 		age := fs.Duration("max-age", 120*time.Second, "cache freshness")
 		refresh := fs.Bool("refresh", false, "refresh usage")
@@ -55,7 +56,10 @@ func cmdHud(args []string, stdout, stderr io.Writer) int {
 				specified = true
 			}
 		})
-		out = hudUsage(ctx, *terminals, specified, *age, *refresh)
+		if *selected && specified {
+			return usage()
+		}
+		out = hudUsageMode(ctx, *terminals, specified, *age, *refresh, *selected)
 	default:
 		return usage()
 	}

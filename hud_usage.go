@@ -31,6 +31,7 @@ type HUDCoupons struct {
 	Items         []HUDCoupon `json:"items"`
 }
 type HUDAccount struct {
+	Selected  bool        `json:"selected,omitempty"`
 	Provider  string      `json:"provider"`
 	Home      string      `json:"home"`
 	ID        string      `json:"id"`
@@ -49,14 +50,27 @@ type HUDUsage struct {
 	Accounts []HUDAccount `json:"accounts"`
 	Error    string       `json:"error,omitempty"`
 }
+type hudRegistryWindow struct {
+	Remaining *float64  `json:"remaining,omitempty"`
+	ResetsAt  time.Time `json:"resets_at,omitempty"`
+}
+type hudRegistryAccount struct {
+	Provider     string            `json:"provider"`
+	Home         string            `json:"home"`
+	Email        string            `json:"email"`
+	Plan         string            `json:"plan"`
+	PlanOverride string            `json:"plan_override"`
+	State        string            `json:"state"`
+	Rank         int               `json:"rank"`
+	FiveHour     hudRegistryWindow `json:"five_hour"`
+	Weekly       hudRegistryWindow `json:"weekly"`
+}
 type hudRegistry struct {
-	Accounts []struct {
-		Provider string `json:"provider"`
-		Home     string `json:"home"`
-		Email    string `json:"email"`
-		Plan     string `json:"plan"`
-	} `json:"accounts"`
-	Ignored []string `json:"ignored"`
+	Accounts    []hudRegistryAccount `json:"accounts"`
+	Ignored     []string             `json:"ignored"`
+	Priority    string               `json:"priority"`
+	Capacity    string               `json:"capacity"`
+	PlanWeights map[string]int       `json:"plan_weights"`
 }
 
 func hudReadRegistry() (hudRegistry, error) {
@@ -331,13 +345,22 @@ func (e *hudRateLimitError) Error() string { return "HTTP 429" }
 var hudFindGemini = hudGeminiBinary
 
 func hudUsage(ctx context.Context, terminals string, specified bool, age time.Duration, refresh bool) HUDUsage {
+	return hudUsageMode(ctx, terminals, specified, age, refresh, false)
+}
+func hudUsageMode(ctx context.Context, terminals string, specified bool, age time.Duration, refresh, selected bool) HUDUsage {
 	out := HUDUsage{At: time.Now(), Accounts: []HUDAccount{}}
-	accounts, err := hudDiscover(ctx, terminals, specified)
+	var accounts []HUDAccount
+	var err error
+	if selected {
+		accounts, err = hudDiscoverSelected(out.At)
+	} else {
+		accounts, err = hudDiscover(ctx, terminals, specified)
+	}
 	if err != nil {
 		out.Error = err.Error()
 	}
 	if _, err := hudFindGemini(); err == nil {
-		accounts = append(accounts, HUDAccount{Provider: "gemini", ID: "agy", Terminals: []string{}})
+		accounts = append(accounts, HUDAccount{Provider: "gemini", ID: "agy", Selected: selected, Terminals: []string{}})
 	}
 	out.Accounts = hudCachedUsage(ctx, accounts, age, refresh, map[string]hudFetchFunc{"codex": fetchCodexUsage, "claude": fetchClaudeUsage, "gemini": fetchGeminiUsage})
 	return out
@@ -405,6 +428,7 @@ func hudMergeCache(updates map[string]hudCacheEntry) error {
 
 // Discovery metadata is always current; cache entries never retain terminal lists.
 func hudOverlay(cached, identity HUDAccount) HUDAccount {
+	cached.Selected = identity.Selected
 	cached.Provider = identity.Provider
 	cached.Home = identity.Home
 	cached.ID = identity.ID
@@ -535,4 +559,177 @@ func hudUsageFloor(provider string) time.Duration {
 		return 300 * time.Second
 	}
 	return 0
+}
+
+// Ported from capacity-roller/main.go:17-152,159-167 (ranking/usable),
+// runner.go:225-243 (first usable candidate), and store.go:49-59 (ignored key).
+// Like cr, elapsed reset timestamps do not change registry remaining values.
+// This read-only snapshot does not run runPreferred's network refresh probes.
+func hudCRPlanWeight(provider, plan string) float64 {
+	p := strings.ToLower(strings.TrimSpace(plan))
+	if provider == "codex" {
+		switch {
+		case strings.Contains(p, "business"):
+			if strings.Contains(p, "100") || strings.Contains(p, "5x") {
+				return 4
+			}
+			return 3
+		case strings.Contains(p, "enterprise") || strings.Contains(p, "edu"):
+			return 0
+		case strings.Contains(p, "pro") && strings.Contains(p, "lite"):
+			return 3.5
+		case strings.Contains(p, "pro") && strings.Contains(p, "20x"):
+			return 5
+		case strings.Contains(p, "pro"):
+			return 4
+		case strings.Contains(p, "plus"):
+			return 3
+		case strings.Contains(p, "go"):
+			return 2
+		case strings.Contains(p, "free"):
+			return 1
+		}
+	} else {
+		switch {
+		case strings.Contains(p, "max") && strings.Contains(p, "20x"):
+			return 4
+		case strings.Contains(p, "max"):
+			return 3
+		case strings.Contains(p, "pro"):
+			return 2
+		case strings.Contains(p, "free"):
+			return 1
+		}
+	}
+	return 0
+}
+
+func hudCREffectivePlan(a hudRegistryAccount) string {
+	if a.PlanOverride != "" {
+		return a.PlanOverride
+	}
+	return a.Plan
+}
+
+func hudCRScoreWindow(w hudRegistryWindow) float64 {
+	if w.Remaining == nil {
+		return -1
+	}
+	return *w.Remaining
+}
+
+func hudCREffectiveWeight(r hudRegistry, a hudRegistryAccount) float64 {
+	plan := hudCREffectivePlan(a)
+	if n, ok := r.PlanWeights[a.Provider+":"+strings.ToLower(plan)]; ok {
+		return float64(n)
+	}
+	return hudCRPlanWeight(a.Provider, plan)
+}
+func hudCRUsable(a hudRegistryAccount) bool {
+	if a.State != "ready" {
+		return false
+	}
+	if a.FiveHour.Remaining != nil && *a.FiveHour.Remaining <= 0 {
+		return false
+	}
+	if a.Weekly.Remaining != nil && *a.Weekly.Remaining <= 0 {
+		return false
+	}
+	return true
+}
+func hudCRSortedAccounts(r hudRegistry, provider string) []hudRegistryAccount {
+	list := make([]hudRegistryAccount, 0)
+	for _, a := range r.Accounts {
+		if provider == "" || a.Provider == provider {
+			list = append(list, a)
+		}
+	}
+	mode := r.Priority
+	if mode == "" {
+		mode = "plan-high"
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		a, b := list[i], list[j]
+		if mode == "custom" && a.Rank != b.Rank {
+			if a.Rank == 0 {
+				return false
+			}
+			if b.Rank == 0 {
+				return true
+			}
+			return a.Rank < b.Rank
+		}
+		if mode == "custom" {
+			return hudCREmailLess(a.Email, b.Email)
+		}
+		if mode == "plan-high" || mode == "plan-low" {
+			x, y := hudCREffectiveWeight(r, a), hudCREffectiveWeight(r, b)
+			if x != y {
+				if mode == "plan-high" {
+					return x > y
+				}
+				return x < y
+			}
+		}
+		if hudCRUsable(a) != hudCRUsable(b) {
+			return hudCRUsable(a)
+		}
+		if r.Capacity != "neutral" && (a.Weekly.Remaining == nil) != (b.Weekly.Remaining == nil) {
+			return a.Weekly.Remaining != nil
+		}
+		if r.Capacity != "neutral" && hudCRScoreWindow(a.Weekly) != hudCRScoreWindow(b.Weekly) {
+			if r.Capacity == "least" && mode != "custom" {
+				return hudCRScoreWindow(a.Weekly) < hudCRScoreWindow(b.Weekly)
+			}
+			return hudCRScoreWindow(a.Weekly) > hudCRScoreWindow(b.Weekly)
+		}
+		if r.Capacity != "neutral" && (a.FiveHour.Remaining == nil) != (b.FiveHour.Remaining == nil) {
+			return a.FiveHour.Remaining != nil
+		}
+		if r.Capacity != "neutral" && hudCRScoreWindow(a.FiveHour) != hudCRScoreWindow(b.FiveHour) {
+			if r.Capacity == "least" && mode != "custom" {
+				return hudCRScoreWindow(a.FiveHour) < hudCRScoreWindow(b.FiveHour)
+			}
+			return hudCRScoreWindow(a.FiveHour) > hudCRScoreWindow(b.FiveHour)
+		}
+		return hudCREmailLess(a.Email, b.Email)
+	})
+	return list
+}
+
+func hudCREmailLess(a, b string) bool {
+	aLocal, _, _ := strings.Cut(a, "@")
+	bLocal, _, _ := strings.Cut(b, "@")
+	if aLocal != bLocal {
+		return aLocal < bLocal
+	}
+	return a < b
+}
+
+func hudCRPick(reg hudRegistry, provider string, now time.Time) (hudRegistryAccount, bool) {
+	_ = now // cr's snapshot ranking does not adjust elapsed resets.
+	for _, a := range hudCRSortedAccounts(reg, provider) {
+		if contains1(reg.Ignored, a.Provider+":"+strings.ToLower(strings.TrimSpace(a.Email))) {
+			continue
+		}
+		if hudCRUsable(a) {
+			return a, true
+		}
+	}
+	return hudRegistryAccount{}, false
+}
+func hudDiscoverSelected(now time.Time) ([]HUDAccount, error) {
+	r, err := hudReadRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("registry: %w", err)
+	}
+	accounts := []HUDAccount{}
+	for _, provider := range []string{"codex", "claude"} {
+		if a, ok := hudCRPick(r, provider, now); ok {
+			identity := hudAccount(provider, a.Home, r)
+			identity.Selected = true
+			accounts = append(accounts, identity)
+		}
+	}
+	return accounts, nil
 }
