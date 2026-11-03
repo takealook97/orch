@@ -18,6 +18,7 @@ export default class SpaceTree extends Plumbing {
     try { this.treeFolded = JSON.parse(localStorage.getItem("tree.folded") ?? "{}"); } catch { this.treeFolded = {}; }
     this.orch = {};
     this.orchStale = false;
+    this.orchLoaded = false;
     this.highlight = null;
     this.refreshOrch(cx);
     cx.timer.every(3000, cx => this.refreshOrch(cx));
@@ -39,7 +40,7 @@ export default class SpaceTree extends Plumbing {
         if (r.code !== 0) throw new Error("hud unavailable");
         const data = JSON.parse(r.stdout);
         if (!Array.isArray(data.runs) || !Array.isArray(data.terminals)) throw new Error("bad hud data");
-        this.orch = data; this.orchStale = false;
+        this.orch = data; this.orchStale = false; this.orchLoaded = true;
       } catch { this.orchStale = true; }
       this.polling = false;
       cx.notify();
@@ -126,12 +127,13 @@ export default class SpaceTree extends Plumbing {
       props: { treeMenu: true, kind: row.kind, id: renameId(row), current: row.name,
         target: { pane: row.id, terminal: row.terminal } } });
   }
-  beginTabDrag(row, cx) { beginTabDrag(this, row, cx); }
-  hoverTabTarget(row, cx) { hoverTabTarget(this, row, cx); }
-  dropTab(row, cx) {
-    return dropTab(this, row, cx, { run, spaces, panes,
-      warn: body => notify({ title: "Cannot move tab", body, level: "warning", timeout: 5000 }) });
+  beginTabDrag(row, cx) { beginTabDrag(this, row, cx, this.dragApi()); }
+  hoverTabTarget(row, cx) { hoverTabTarget(this, row, cx, this.dragApi()); }
+  dragApi() {
+    return { run, spaces, panes,
+      warn: body => notify({ title: "Cannot move tab", body, level: "warning", timeout: 5000 }) };
   }
+  dropTab(row, cx) { return dropTab(this, row, cx, this.dragApi()); }
   dragOver(row, cx) {
     if (this.tabDrag) { this.hoverTabTarget(row, cx); return; }
     const source = spaces()[this.pressed];

@@ -47,9 +47,12 @@ test("plan parks panes in their original order, selects target, then keeps tab a
   assert.equal(moveTabPlan(tab.id, ps.slice(0, 2), "sp2").at(-1).args.place, "tab");
 });
 
-function harness({ named = true, stuck = false, changeSelection = false } = {}) {
-  let panes = ps.map(p => ({ ...p })), spaces = [
-    { id: "sp1", active: true, tabs: [tab] }, { id: "sp2", active: false, tabs: [] },
+function harness({ named = true, stuck = false, inactiveTab = false, third = false,
+  fault = () => false } = {}) {
+  const original = third ? [...ps, { tab: "tb1", terminal: "t3" }] : ps;
+  let panes = original.map(p => ({ ...p })), spaces = [
+    { id: "sp1", name: "Source", active: true, tabs: [tab] },
+    { id: "sp2", name: "Target", active: false, tabs: [] },
   ];
   const calls = [], queue = [], warnings = [];
   let done = 0;
@@ -58,21 +61,24 @@ function harness({ named = true, stuck = false, changeSelection = false } = {}) 
     after: fn => queue.push(fn), warn: message => warnings.push(message), done: () => done++,
     run(command, args) {
       calls.push({ command, args });
-      if (stuck) return;
+      if (fault(command, args, calls)) throw new Error("host unavailable");
+      if (stuck && command === "terminal.park") return;
       // Delay host effects longer than one polling tick.
       queue.push(() => queue.push(() => {
         if (command === "terminal.park") panes = panes.filter(p => p.terminal !== args.terminal);
         if (command === "space.select") spaces.forEach(s => s.active = s.id === args.id);
         if (command === "terminal.keep") {
-          if (args.place === "tab") spaces[1].tabs.push({ id: "new-tab", active: !changeSelection });
+          const selected = spaces.find(s => s.active);
+          if (args.place === "tab") selected.tabs.push({ id: "new-tab", active: !inactiveTab });
+          panes = panes.filter(p => p.terminal !== args.terminal);
           panes.push({ terminal: args.terminal, tab: "new-tab" });
         }
       }));
     },
   };
   return { api, calls, queue, warnings, spaces, get done() { return done; },
-    start: () => executeMove({ ...tab, named }, ps, "sp2", api),
-    flush() { for (let i = 0; queue.length && i < 1000; i++) queue.shift()(); assert.equal(queue.length, 0); },
+    start: () => executeMove({ ...tab, named }, original, "sp2", api),
+    flush() { for (let i = 0; queue.length && i < 5000; i++) queue.shift()(); assert.equal(queue.length, 0); },
   };
 }
 
@@ -90,34 +96,73 @@ test("automatic tab names are not renamed after moving", () => {
   assert.deepEqual(h.calls, moveTabPlan(tab, ps, "sp2")); assert.equal(h.done, 1);
 });
 
-test("failed park times out without selecting target or keeping terminals", () => {
-  const h = harness({ stuck: true }); h.start(); h.flush();
-  assert.equal(h.calls.length, 1); assert.match(h.warnings[0], /timed out/); assert.equal(h.done, 1);
+test("a park timeout restores the potentially parked terminal before finishing", () => {
+  const h = harness({ stuck: true }); h.start();
+  for (let i = 0; i < 199; i++) h.queue.shift()();
+  assert.equal(h.calls.length, 1); // 200 x 50 ms = ten seconds per step.
+  h.flush();
+  assert.deepEqual(h.calls.at(-1), { command: "terminal.keep", args: { terminal: "t2", place: "tab" } });
+  assert.match(h.warnings[0], /1 terminal\(s\) restored in Source/); assert.equal(h.done, 1);
 });
 
-test("vanished target stops the move and releases the busy state", () => {
+test("vanished target restores parked terminals in the selected space", () => {
   const h = harness(); h.start(); h.spaces.pop(); h.flush();
-  assert.equal(h.calls.length, 1); assert.match(h.warnings[0], /disappeared/); assert.equal(h.done, 1);
+  assert.equal(h.calls.filter(c => c.command === "terminal.keep").length, 1);
+  assert.match(h.warnings[0], /restored in Source/); assert.equal(h.done, 1);
 });
 
-test("a selection change before keep stops without placing terminals elsewhere", () => {
-  const h = harness({ changeSelection: true }); h.start(); h.flush();
-  assert.equal(h.calls.filter(c => c.command === "terminal.keep").length, 1);
-  assert.match(h.warnings[0], /Selection changed/); assert.equal(h.done, 1);
+test("a new tab need not be marked active for a multi-pane move to succeed", () => {
+  const h = harness({ inactiveTab: true }); h.start(); h.flush();
+  assert.deepEqual(h.calls, [...moveTabPlan(tab, ps, "sp2"),
+    { command: "tab.rename", args: { id: "new-tab", name: "Custom" } }]);
+  assert.deepEqual(h.warnings, []); assert.equal(h.done, 1);
+});
+
+test("failure after one of three parks restores every parked terminal", () => {
+  const h = harness({ third: true, fault: (cmd, args) => cmd === "terminal.park" && args.terminal === "t1" });
+  h.start(); h.flush();
+  assert.deepEqual(h.calls.filter(c => c.command === "terminal.keep").map(c => c.args),
+    [{ terminal: "t2", place: "tab" }]);
+  assert.match(h.warnings[0], /1 terminal\(s\) restored in Source/);
+  assert.equal(h.api.panes().filter(p => p.terminal !== "ignore").length, 3);
+});
+
+test("a failed second keep restores all remaining parked terminals", () => {
+  let failed = false;
+  const h = harness({ third: true, fault: (cmd, args) => {
+    if (!failed && cmd === "terminal.keep" && args.terminal === "t1") { failed = true; return true; }
+  } });
+  h.start(); h.flush();
+  assert.deepEqual(h.calls.filter(c => c.command === "terminal.keep").slice(2).map(c => c.args),
+    [{ terminal: "t1", place: "tab" }, { terminal: "t3", place: "right" }]);
+  assert.match(h.warnings[0], /2 terminal\(s\) restored in Target/); assert.equal(h.done, 1);
+  assert.equal(h.api.panes().filter(p => p.terminal !== "ignore").length, 3);
+});
+
+test("selection changed after parking restores into whichever space is selected now", () => {
+  const h = harness(); h.start();
+  while (!h.calls.some(c => c.command === "space.select")) h.queue.shift()();
+  // Let selection finish, then change it before the first keep is issued.
+  h.queue.shift()(); h.queue.shift()(); h.queue.shift()();
+  h.spaces.forEach(s => s.active = s.id === "sp1");
+  h.flush();
+  assert.match(h.warnings[0], /restored in Source/); assert.equal(h.done, 1);
 });
 
 test("drag candidates clear on cancel; editing and busy moves cannot start another drag", () => {
-  const view = {}, cx = { notify() {} }, row = { id: "tb1", space: "sp1", key: "tab:tb1" };
-  beginTabDrag(view, row, cx); assert.deepEqual(view.tabDrag, { id: "tb1", space: "sp1" });
-  hoverTabTarget(view, { key: "space:sp2" }, cx); assert.equal(view.tabOver, "space:sp2");
+  const h = harness(), view = { orchLoaded: true }, cx = { notify() {} };
+  const row = { id: "tb1", space: "sp1", key: "tab:tb1" };
+  beginTabDrag(view, row, cx, h.api); assert.deepEqual(view.tabDrag, { id: "tb1", space: "sp1" });
+  hoverTabTarget(view, { kind: "space", id: "sp2", key: "space:sp2" }, cx, h.api);
+  assert.equal(view.tabOver, "space:sp2");
   clearDrag(view, cx); assert.equal(view.tabDrag, null); assert.equal(view.tabOver, null);
   for (const flag of ["editing", "movingTab"]) {
-    view[flag] = true; beginTabDrag(view, row, cx); assert.equal(view.tabDrag, null); view[flag] = false;
+    view[flag] = true; beginTabDrag(view, row, cx, h.api); assert.equal(view.tabDrag, null); view[flag] = false;
   }
 });
 
 test("drop on another tab resolves its space and rechecks newly protected orch data", () => {
-  const view = { tabDrag: { id: "tb1", space: "sp1" }, orch: { runs: [{ tab: "tb1" }] } };
+  const view = { orchLoaded: true, tabDrag: { id: "tb1", space: "sp1" }, orch: { runs: [{ tab: "tb1" }] } };
   const warnings = [], cx = { notify() {} };
   const api = { spaces: () => [{ id: "sp1", tabs: [tab] }, { id: "sp2", tabs: [] }],
     panes: () => ps, warn: message => warnings.push(message) };
@@ -128,7 +173,7 @@ test("drop on another tab resolves its space and rechecks newly protected orch d
 
 
 test("dropping on a target tab moves into its space and clears the busy state", () => {
-  const h = harness(), view = { tabDrag: { id: "tb1", space: "sp1" }, orch: {} };
+  const h = harness(), view = { orchLoaded: true, tabDrag: { id: "tb1", space: "sp1" }, orch: {} };
   const cx = { notify() {}, timer: { after: (_ms, fn) => h.queue.push(() => fn(cx)) } };
   assert.equal(dropTab(view, { kind: "tab", id: "target-tab", space: "sp2" }, cx, h.api), true);
   assert.equal(view.movingTab, true); assert.equal(view.tabDrag, null);
@@ -141,4 +186,59 @@ test("a command exception stops the sequence and clears the busy state", () => {
   const h = harness(); h.api.run = () => { throw new Error("host unavailable"); };
   h.start(); h.flush();
   assert.equal(h.done, 1); assert.match(h.warnings[0], /failed/);
+});
+
+test("drops fail closed before the first orch poll and with stale orch data", () => {
+  for (const flags of [{}, { polling: true }, { orchLoaded: true, orchStale: true }]) {
+    const h = harness(), view = { ...flags, orch: {}, tabDrag: { id: "tb1", space: "sp1" } };
+    dropTab(view, { kind: "space", id: "sp2" }, { notify() {} }, h.api);
+    assert.deepEqual(h.calls, []);
+    assert.deepEqual(h.warnings, ["orch status not loaded yet; try again in a moment"]);
+  }
+});
+
+test("protected sources refuse drag start without a ghost or target highlight", () => {
+  const h = harness(), cx = { notify() {} };
+  const view = { orchLoaded: true, orch: { runs: [{ tab: "tb1" }] } };
+  beginTabDrag(view, { id: "tb1", space: "sp1" }, cx, h.api);
+  assert.equal(view.tabDrag, null); assert.equal(view.tabOver, null);
+  assert.match(h.warnings[0], /active orch run/);
+});
+
+test("only valid destinations highlight, and source movability is rechecked on hover", () => {
+  const h = harness(), cx = { notify() {} };
+  h.spaces.push({ id: "remote/sp3", tabs: [] });
+  const view = { orchLoaded: true, orch: {}, tabDrag: { id: "tb1", space: "sp1" } };
+  const valid = { kind: "space", id: "sp2", key: "space:sp2" };
+  for (const row of [{ kind: "tab", id: "tb1", space: "sp1" },
+    { kind: "space", id: "sp1" }, { kind: "tab", space: "sp1", id: "other" },
+    { kind: "space", id: "remote/sp3" }]) {
+    hoverTabTarget(view, valid, cx, h.api); assert.equal(view.tabOver, valid.key);
+    hoverTabTarget(view, { ...row, key: "invalid" }, cx, h.api); assert.equal(view.tabOver, null);
+  }
+  view.orch = { runs: [{ tab: "tb1" }] };
+  hoverTabTarget(view, valid, cx, h.api); assert.equal(view.tabOver, null);
+});
+
+test("changing spaces while parking stops and restores immediately", () => {
+  const h = harness({ third: true }); h.start();
+  h.queue.shift()();
+  h.spaces.forEach(s => s.active = s.id === "sp2");
+  h.flush();
+  assert.equal(h.calls.filter(c => c.command === "terminal.park").length, 1);
+  assert.match(h.warnings[0], /1 terminal\(s\) restored in Target/);
+  assert.equal(h.done, 1);
+});
+
+test("recovery continues past a failed keep and retries until no terminal is parked", () => {
+  let failures = 0;
+  const h = harness({ third: true, fault: (cmd, args) => {
+    if (cmd === "space.select") return true;
+    if (cmd === "terminal.keep" && args.terminal === "t2" && failures++ === 0) return true;
+  } });
+  h.start(); h.flush();
+  assert.deepEqual(h.calls.filter(c => c.command === "terminal.keep").map(c => c.args.terminal),
+    ["t2", "t1", "t3", "t2"]);
+  assert.equal(h.api.panes().filter(p => p.terminal !== "ignore").length, 3);
+  assert.match(h.warnings[0], /3 terminal\(s\) restored in Source/); assert.equal(h.done, 1);
 });
