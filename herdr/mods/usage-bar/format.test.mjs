@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pctColorRole, formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode } from './format.js';
+import { pctColorRole, formatReset, formatCouponExpiry, formatBytes, pickAccounts, layoutMode, cellWidth, labelWidth } from './format.js';
 
 process.env.TZ = 'Asia/Seoul';
 const now = new Date('2026-11-03T13:00:00+09:00');
@@ -13,10 +13,10 @@ test('reset labels use local weekday and 24-hour time', () => {
   for (const [iso, expected] of [
     ['2026-11-03T12:59:00+09:00', 'soon'],
     ['2026-11-03T13:00:00+09:00', 'soon'],
-    ['2026-11-03T13:42:00+09:00', 'Tue 13:42'],
-    ['2026-11-04T15:37:06+09:00', 'Wed 15:37'],
-    ['2026-11-08T01:05:00+09:00', 'Sun 01:05'],
-    ['2026-11-10T10:59:59+09:00', 'Tue 10:59'],
+    ['2026-11-03T13:42:00+09:00', '11/3(Tue) 13:42'],
+    ['2026-11-04T15:37:06+09:00', '11/4(Wed) 15:37'],
+    ['2026-11-08T01:05:00+09:00', '11/8(Sun) 01:05'],
+    ['2026-11-10T10:59:59+09:00', '11/10(Tue) 10:59'],
   ]) assert.equal(formatReset(iso, now), expected);
   assert.equal(formatReset(null, now), '');
   assert.equal(formatReset('invalid', now), '');
@@ -25,7 +25,7 @@ test('calendar and coupon dates use local time in a non-KST timezone', () => {
   const original = process.env.TZ;
   try {
     process.env.TZ = 'America/Los_Angeles';
-    assert.equal(formatReset('2026-11-10T01:59:00Z', now), 'Mon 17:59');
+    assert.equal(formatReset('2026-11-10T01:59:00Z', now), '11/9(Mon) 17:59');
     assert.deepEqual(formatCouponExpiry('2026-12-01T00:00:00Z', now), { text: 'until 11/30', urgent: false });
     // Calendar days stay consecutive across the spring DST change.
     const beforeDST = new Date('2027-03-13T12:00:00-08:00');
@@ -59,6 +59,7 @@ test('selected response supplies one account per provider in fixed order', () =>
   assert.equal(picked[0].five_hour, null);
   assert.equal(picked[0].coupons.available, 0);
   assert.equal(picked[2].label, '');
+  assert.equal(pickAccounts({ accounts: [{ ...gemini, label: 'gem@example.com' }] })[2].label, 'gem');
   assert.equal(codex.label, 'work@example.com');
 });
 test('missing providers yield placeholders', () => {
@@ -72,8 +73,9 @@ test('missing providers yield placeholders', () => {
 
 test('layout hides bars before account lines at compact widths', () => {
   const accounts = ['codex', 'claude', 'gemini'].map(provider => ({ provider }));
-  assert.deepEqual(layoutMode(904, accounts), { bars: true, accountLine: true });
-  assert.deepEqual(layoutMode(903, accounts), { bars: false, accountLine: true });
-  assert.deepEqual(layoutMode(859, accounts), { bars: false, accountLine: false });
-  assert.deepEqual(layoutMode(904, pickAccounts(null)), { bars: true, accountLine: true });
+  const fullWidth = 170 + 40 + accounts.length * (labelWidth(true) + cellWidth('weekly') + 16 + 2 + 8 + 8) + cellWidth('coupon') + 8;
+  assert.deepEqual(layoutMode(fullWidth, accounts), { bars: true, accountLine: true });
+  assert.deepEqual(layoutMode(fullWidth - 1, accounts), { bars: false, accountLine: true });
+  assert.deepEqual(layoutMode(fullWidth - 45, accounts), { bars: false, accountLine: false });
+  assert.deepEqual(layoutMode(fullWidth, pickAccounts(null)), { bars: true, accountLine: true });
 });

@@ -10,7 +10,7 @@ export function formatReset(iso, now = new Date()) {
   const reset = new Date(iso);
   if (!iso || !Number.isFinite(reset.getTime())) return '';
   if (reset <= now) return 'soon';
-  return `${weekdays[reset.getDay()]} ${clock(reset)}`;
+  return `${reset.getMonth() + 1}/${reset.getDate()}(${weekdays[reset.getDay()]}) ${clock(reset)}`;
 }
 export function formatCouponExpiry(iso, now = new Date()) {
   const expires = new Date(iso);
@@ -25,12 +25,12 @@ export function formatBytes(bytes) {
 export function pickAccounts(usage) {
   return ['codex', 'claude', 'gemini'].map(provider => {
     const account = usage?.accounts?.find(account => account.provider === provider) ?? { provider };
-    return { ...account, label: provider === 'gemini' ? '' : (account.label ?? '').split('@')[0] };
+    return { ...account, label: (account.label ?? '').split('@')[0] };
   });
 }
 
 // Dimensions shared by the provider cards and their width estimates.
-export const cellWidth = label => label === 'coupon' ? 62 : 78;
+export const cellWidth = label => label === 'coupon' ? 52 : 96;
 export const labelWidth = accountLine => accountLine ? 96 : 48;
 export function layoutMode(width, accounts) {
   const mode = { bars: true, accountLine: true };

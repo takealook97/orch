@@ -112,7 +112,7 @@ export default class UsageBar extends View {
     const t = theme(), now = new Date();
     const accounts = pickAccounts(this.usage);
     const mode = layoutMode(this.width, accounts);
-    const group = id => h_flex().id(id).h(36).items_center().flex_none().px(8).gap(8)
+    const group = id => h_flex().id(id).h(38).items_center().flex_none().px(10).gap(8)
       .rounded(6).bg(t.chrome).border(1).border_color(t.border).cursor_pointer()
       .tooltip('Click to refresh usage')
       .on_mouse_down('left', (_event, cx) => cx.stop_propagation())
@@ -120,14 +120,14 @@ export default class UsageBar extends View {
     const { cpu_pct: cpu, mem_used_bytes: used, mem_total_bytes: total } = this.sys ?? {};
     const memory = total > 0 ? used / total * 100 : undefined;
     const detail = total > 0 ? `${formatBytes(used).replace(/G$/, '')}/${formatBytes(total)}` : '';
-    const system = group('system').child(v_flex().items_center().justify_center().gap(1)
+    const system = group('system').child(v_flex().items_center().justify_center().gap(3)
       .opacity(this.stale.sys ? 0.6 : 1)
       .child(systemRow(t, 'CPU', cpu, '', !mode.bars))
       .child(systemRow(t, 'RAM', memory, detail, !mode.bars)));
     const groups = [];
     for (const account of accounts) {
       const stale = account.stale || !!account.error || this.stale.usage;
-      const content = h_flex().items_center().gap(8).opacity(stale ? 0.6 : 1)
+      const content = h_flex().items_center().gap(12).opacity(stale ? 0.6 : 1)
         .child(groupLabel(t, account, !mode.accountLine))
         .child(this.percentCell(t, account.weekly, now, mode));
       if (account.provider === 'codex') {
