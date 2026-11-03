@@ -29,7 +29,7 @@ var subagentTools = regexp.MustCompile(`(?i)(^([\w-]+(\.|__))*(agent|task|workfl
 // not: markdown code spans in reports would trip it, and $( ) already covers substitution.
 const cmdPos = `(?m)(^|[;&|(]|\$\(|\b(?:ba|z|da|k|fi)?sh\s+(?:-\w+\s+)*-\w*c\w*\s+['"]?|\beval\s+['"]?|\bxargs\s+(?:-\S+\s+)*)\s*((\w+=\S*|env(\s+-\S+(\s+\w+)?)*|exec|command|sudo|nohup|time)\s+)*`
 
-var paneCreate = regexp.MustCompile(cmdPos + `(\S*/)?(herdr\s+(pane\s+split|agent\s+start|tab\s+create|workspace\s+create|worktree\s+create)|herdr-app\s+do\s+(pane\.split|tab\.new|space\.new|terminal\.open|terminal\.keep)|hc\s+run\s+(?:(?:[^;\n|&]*?--\s+)|(?:(?:--(?:bg|json|no-parent|no-notify)\s+)|(?:--(?:cwd|label|name)\s+\S+\s+))*)(env\s+(\w+=\S*\s+)*)?(\S*/)?(claude|codex|agy|gemini|cr))\b`)
+var paneCreate = regexp.MustCompile(cmdPos + `(\S*/)?(herdr\s+(pane\s+split|agent\s+start|tab\s+create|workspace\s+create|worktree\s+create)|herdr-app\s+do\s+(pane\.split|tab\.new|space\.new|terminal\.open|terminal\.keep))\b`)
 
 var hcRunStart = regexp.MustCompile(cmdPos + `(\S*/)?hc\s+run\s+`)
 var hcWord = regexp.MustCompile(`'[^']*'|"[^"]*"|[^\s]+`)
@@ -47,6 +47,10 @@ func hcRunsAgent(cmd string) bool {
 		i := 0
 		for i < len(words) {
 			w := words[i]
+			if w == "--help" || w == "-h" {
+				i = len(words)
+				break
+			}
 			if w == "--" {
 				i++
 				break
@@ -55,7 +59,7 @@ func hcRunsAgent(cmd string) bool {
 				break
 			}
 			i++
-			if (w == "--cwd" || w == "--label" || w == "--name" || w == "--on") && i < len(words) {
+			if (w == "--cwd" || w == "--label" || w == "--name" || w == "--on" || w == "--parent" || w == "--timeout") && i < len(words) {
 				i++
 			}
 		}
@@ -221,7 +225,7 @@ var quoteJoiner = strings.NewReplacer("'", "", `"`, "", `\`, "")
 func headCreatesPane(cmd string) bool {
 	lit := literalEscapedSeparators(cmd)
 	for _, text := range []string{lit, quoteJoiner.Replace(lit)} {
-		if hcRunsAgent(text) && !helpFlag.MatchString(text) {
+		if hcRunsAgent(text) {
 			return true
 		}
 		for _, m := range paneCreate.FindAllStringIndex(text, -1) {

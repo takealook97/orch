@@ -374,11 +374,12 @@ func appWaitReady(address, cwd string) error {
 	deadline := time.Now().Add(timings.ReadyTimeout)
 	for {
 		t, err := hcGet(address)
-		if err == nil && t.State == "live" && t.Status != nil {
+		if err == nil && t.State == "live" {
 			if !paneShowsTrust(address) {
-				return nil
-			}
-			if appTrust(address, cwd) {
+				if t.Status != nil {
+					return nil
+				}
+			} else if appTrust(address, cwd) {
 				time.Sleep(timings.ReadyPoll)
 			}
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -21,6 +22,9 @@ func appDocGet() (appDocument, error) {
 	}
 	return d, err
 }
+
+var errAppTabNotFound = errors.New("app tab not found")
+
 func docTab(d map[string]any, space, tab string) (map[string]any, error) {
 	spaces, _ := d["spaces"].([]any)
 	for _, ss := range spaces {
@@ -35,8 +39,9 @@ func docTab(d map[string]any, space, tab string) (map[string]any, error) {
 				return t, nil
 			}
 		}
+		return nil, fmt.Errorf("%w: %s in space %s", errAppTabNotFound, tab, space)
 	}
-	return nil, fmt.Errorf("app tab %s in space %s not found", tab, space)
+	return nil, fmt.Errorf("app space %s not found", space)
 }
 func appLeaves(node any) ([]map[string]any, error) {
 	n, ok := node.(map[string]any)
@@ -150,6 +155,22 @@ func canonicalAppRoot(root any, tab, head string, order []string, known map[stri
 	}
 	return map[string]any{"type": "row", "id": tab, "children": children}, nil
 }
+func missingAppTab(err error, head string, order []string) error {
+	if head != "" || !errors.Is(err, errAppTabNotFound) {
+		return err
+	}
+	for _, address := range order {
+		t, getErr := hcGet(address)
+		if getErr != nil && !errors.Is(getErr, errHCNotFound) {
+			return err
+		}
+		if getErr == nil && t.State != "finished" {
+			return err
+		}
+	}
+	return nil
+}
+
 func normalizeAppTab(space, tab, head, name string, order []string, known map[string]appIdentity) error {
 	for attempt := 0; attempt < 3; attempt++ {
 		d, err := appDocGet()
@@ -158,7 +179,7 @@ func normalizeAppTab(space, tab, head, name string, order []string, known map[st
 		}
 		t, err := docTab(d.Value, space, tab)
 		if err != nil {
-			return err
+			return missingAppTab(err, head, order)
 		}
 		root, err := canonicalAppRoot(t["root"], tab, head, order, known)
 		if err != nil {
@@ -184,7 +205,7 @@ func normalizeAppTab(space, tab, head, name string, order []string, known map[st
 		}
 		vt, err := docTab(verify.Value, space, tab)
 		if err != nil {
-			return err
+			return missingAppTab(err, head, order)
 		}
 		if reflect.DeepEqual(vt["root"], root) && (name == "" || vt["name"] == name) {
 			return nil

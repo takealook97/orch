@@ -156,3 +156,5 @@ The former codex-medium-h key is a deprecated Luna alias, including saved runs. 
 - Always strip `HC_TERMINAL_ID` for hc run/send, use `--no-parent --no-notify`, and pass worker environment through an `env` argv prefix. This prevents child notifications into Head and hc sender tags in prompt text.
 - Codex on hc requires `--no-daemon`. Trust is reported through blocked permission status or terminal text and remains restricted by `trustable(cwd)`; Claude needs down then enter.
 - Kill, wait for finished/not_found, rm, then confirm disappearance with app inventory. Last-terminal exit automatically removes tabs and empty spaces; explicitly close only an owned empty overflow tab that remains.
+
+- Herdr.app layout normalization tolerates an auto-removed overflow tab only after `hc get` confirms its recorded workers are no longer live; a missing Head tab or an inconclusive lookup remains an error. Readiness checks the screen for folder trust even before agent status arrives, and the `hc run` guard parses value-taking options and launch wrappers.
