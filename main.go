@@ -524,7 +524,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			if res == "" {
 				res = "-"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", w.Name, w.Key, w.Role, w.Status, res, dash(w.Pane), w.Account, time.Since(w.Started).Round(time.Second))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", w.Name, w.Key, w.Role, workerCapacityStatus(w), res, dash(w.Pane), w.Account, time.Since(w.Started).Round(time.Second))
 		}
 		tw.Flush()
 		return 0

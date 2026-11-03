@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -73,15 +74,95 @@ var quotaMarkers = []string{
 	"resource_exhausted", "resource has been exhausted", "credit balance is too low",
 }
 
-func quotaText(s string) bool {
-	s = strings.ToLower(s)
-	for _, m := range quotaMarkers {
-		if strings.Contains(s, m) {
-			return true
+// crExhaustedMarkers are the cr wrapper's own lines: every account of that CLI is spent,
+// so a fallback has to leave the CLI kind instead of rotating accounts.
+var crExhaustedMarkers = []string{"cr: all codex accounts reached capacity", "cr: capacity exhausted"}
+
+// screenTailLines is how many non-empty lines at the bottom of a screen count as current.
+const screenTailLines = 12
+
+// tailLines returns the last screenTailLines non-empty lines that are not tool output.
+// Tool output is a line starting with │ or └, plus the indented lines that follow one or
+// follow a "• Ran" header, until a line starts at column zero again.
+func tailLines(s string) []string {
+	var kept []string
+	inTool := false
+	for _, raw := range strings.Split(s, "\n") {
+		line := strings.TrimRight(raw, " \t\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		indented := line[0] == ' ' || line[0] == '\t'
+		switch {
+		case strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "└"):
+			inTool = true
+			continue
+		case strings.HasPrefix(trimmed, "• Ran"):
+			inTool = true
+		case !indented:
+			inTool = false
+		case inTool:
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	if len(kept) > screenTailLines {
+		kept = kept[len(kept)-screenTailLines:]
+	}
+	return kept
+}
+
+func containsMarker(lines []string, markers []string) bool {
+	for _, line := range lines {
+		low := strings.ToLower(line)
+		for _, m := range markers {
+			if strings.Contains(low, m) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+func quotaText(s string) bool {
+	lines := tailLines(s)
+	return containsMarker(lines, quotaMarkers) || containsMarker(lines, crExhaustedMarkers)
+}
+
+// crExhausted reports the cr wrapper's all-accounts-spent lines in the current tail.
+func crExhausted(s string) bool { return containsMarker(tailLines(s), crExhaustedMarkers) }
+
 // promptMarker prefixes every worker prompt so delivery can be confirmed in the transcript.
 func promptMarker(name string) string { return "[orch worker " + name + "]" }
+
+// capacityText deliberately ignores old errors above the visible tail.
+var capacityMarkers = []string{
+	"selected model is at capacity", "model is at capacity", "please try a different model",
+	"overloaded_error", "server is overloaded", "model is currently overloaded",
+}
+
+func capacityText(s string) bool { return containsMarker(tailLines(s), capacityMarkers) }
+
+// capacityDelay is swappable by tests without shortening production backoffs.
+var capacityDelay = func(n int) time.Duration {
+	if n < 0 {
+		n = 0
+	}
+	if n >= 4 {
+		return 300 * time.Second
+	}
+	return (20 * time.Second) << n
+}
+
+func capacityBackoff(n int) time.Duration { return capacityDelay(n) }
+func capacityMaxRetries() int {
+	if n, err := strconv.Atoi(envOrch("CAPACITY_RETRIES")); err == nil && n >= 0 {
+		return n
+	}
+	return 8
+}
+
+const capacityContinue = "The last turn stopped because the model was at capacity. Continue the contract from where you stopped; do not redo finished steps."
+
+func capacityResumeText(name string) string { return promptMarker(name) + " " + capacityContinue }

@@ -87,7 +87,11 @@ func startInline(runID string, d Dag, st *dagState, n *DagNode, budget time.Dura
 				done <- res.inlineResult
 				return
 			}
-			next, ok := nextFallback(purpose, t.Key, n.Role, authors, critics, tried)
+			skip := tried
+			if res.sameKindSpent {
+				skip = withoutKind(purpose, m.Kind, tried)
+			}
+			next, ok := nextFallback(purpose, t.Key, n.Role, authors, critics, skip)
 			if !ok {
 				done <- res.inlineResult
 				return
@@ -184,6 +188,8 @@ func runGate(r *Run, n DagNode, result string, budget time.Duration) inlineResul
 type askResult struct {
 	inlineResult
 	quota bool
+	// sameKindSpent: the cr wrapper reported every account of this CLI exhausted.
+	sameKindSpent bool
 }
 
 // runInlineAsk runs a pane: false node's task and stores its answer as the result file.
@@ -201,8 +207,9 @@ func runInlineAsk(t *Task, node, result string) askResult {
 	}
 	if t.Status != "done" {
 		r := end("failed", fmt.Sprintf("%s (%s) ended %s (exit %d)", t.ID, t.Key, t.Status, t.ExitCode))
-		if out, err := os.ReadFile(filepath.Join(t.Dir, "output.log")); err == nil && quotaText(string(out)) {
+		if out, err := os.ReadFile(filepath.Join(t.Dir, "output.log")); err == nil && (quotaText(string(out)) || capacityText(string(out))) {
 			r.quota = true
+			r.sameKindSpent = crExhausted(string(out))
 		}
 		return r
 	}

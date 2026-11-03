@@ -160,7 +160,7 @@ func (f *overflowHerd) run(args ...string) ([]byte, error) {
 		f.agents[args[2]] = value("--pane")
 	case "agent get":
 		result["agent"] = map[string]string{"pane_id": f.agents[args[2]], "agent_status": "idle"}
-	case "pane read":
+	case "pane read", "agent read":
 		result["text"] = "ready"
 	default:
 		f.t.Fatalf("unexpected call: %v", args)

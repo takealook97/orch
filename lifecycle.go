@@ -49,6 +49,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 	}
 	pending := slices.Clone(names)
 	idleSince := map[string]time.Time{}
+	capacityWaiting := map[string]bool{}
 	var outcomes []waitOutcome
 	deadline := time.Now().Add(timeout)
 	lastRead := time.Time{}
@@ -142,10 +143,11 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				continue
 			}
 			if readNow {
-				if text, err := agentRead(workerAgent(w), 80); err == nil && quotaText(text) {
+				text, readErr := agentRead(workerAgent(w), 80)
+				if readErr == nil && quotaText(text) {
 					saveTail(r, w, text)
 					if fallback {
-						nw, ferr := doFallback(runID, name, "quota exhausted")
+						nw, ferr := doFallbackFrom(runID, name, "quota exhausted", crExhausted(text))
 						if ferr == nil {
 							outcomes = append(outcomes, waitOutcome{name, "fallback:" + nw, "quota exhausted → " + nw})
 							still = append(still, nw)
@@ -158,6 +160,44 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 					outcomes = append(outcomes, waitOutcome{name, "quota", "quota exhausted"})
 					continue
 				}
+
+				if readErr == nil && (info.Status == "idle" || info.Status == "done") {
+					capacityWaiting[name] = capacityText(text)
+					if capacityWaiting[name] {
+						acted, exhausted, resumeErr := resumeOnCapacity(runID, w, text)
+						if resumeErr != nil {
+							return outcomes, resumeErr
+						}
+						if acted {
+							delete(idleSince, name)
+						}
+						if exhausted {
+							saveTail(r, w, text)
+							if fallback {
+								nw, ferr := doFallback(runID, name, "model at capacity")
+								if ferr == nil {
+									outcomes = append(outcomes, waitOutcome{name, "fallback:" + nw, "model at capacity → " + nw})
+									still = append(still, nw)
+									continue
+								}
+								setStatus(runID, name, "capacity")
+								outcomes = append(outcomes, waitOutcome{name, "capacity", ferr.Error()})
+								continue
+							}
+							setStatus(runID, name, "capacity")
+							outcomes = append(outcomes, waitOutcome{name, "capacity", "model at capacity; retries exhausted"})
+							continue
+						}
+					}
+				}
+			}
+			if info.Status == "working" {
+				delete(capacityWaiting, name)
+			}
+			if capacityWaiting[name] {
+				delete(idleSince, name)
+				still = append(still, name)
+				continue
 			}
 			if info.Status == "idle" || info.Status == "done" {
 				if idleSince[name].IsZero() {
@@ -236,6 +276,12 @@ func saveTail(r *Run, w *Worker, text string) string {
 // doFallback replaces a failed worker: same key on another account when an account hook exists,
 // otherwise the next key of the purpose chain that still satisfies the lane constraints.
 func doFallback(runID, name, reason string) (string, error) {
+	return doFallbackFrom(runID, name, reason, false)
+}
+
+// doFallbackFrom with sameKindSpent skips account rotation and every key of the worker's
+// own CLI kind, because the cr wrapper reported all of that CLI's accounts exhausted.
+func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, error) {
 	r, err := loadRun(runID)
 	if err != nil {
 		return "", err
@@ -256,7 +302,7 @@ func doFallback(runID, name, reason string) (string, error) {
 	critics := criticsOf(r, w.Reviews)
 	key, account := "", fallbackAccount(w)
 	var exclude []string
-	if envOrch("ACCOUNT_CMD") != "" && w.Account != "" && w.Account != "cr" {
+	if !sameKindSpent && envOrch("ACCOUNT_CMD") != "" && w.Account != "" && w.Account != "cr" {
 		// Exclude every account this key has already used in the lineage.
 		exclude = append(slices.Clone(w.TriedAccounts), w.Account)
 		if _, err := hookAccount(w.Kind, exclude); err == nil {
@@ -271,7 +317,11 @@ func doFallback(runID, name, reason string) (string, error) {
 		if purpose == "" {
 			return "", fmt.Errorf("%s: purpose missing; cannot choose fallback chain", name)
 		}
-		m, ok := nextFallback(purpose, w.Key, w.Role, authors, critics, w.Tried)
+		tried := w.Tried
+		if sameKindSpent {
+			tried = withoutKind(purpose, w.Kind, tried)
+		}
+		m, ok := nextFallback(purpose, w.Key, w.Role, authors, critics, tried)
 		if !ok {
 			setStatus(runID, name, "blocked")
 			return "", fmt.Errorf("%s: all models in fallback chain (%s) are unavailable", name, purpose)
@@ -291,6 +341,8 @@ func doFallback(runID, name, reason string) (string, error) {
 	failStatus := "failed"
 	if strings.Contains(reason, "quota") {
 		failStatus = "quota"
+	} else if strings.Contains(reason, "capacity") {
+		failStatus = "capacity"
 	}
 	setStatus(runID, name, failStatus)
 	if err := closeWorker(runID, name); err != nil {
@@ -505,7 +557,7 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 			// Keep a final outcome (done/partial/blocked/failed/quota); otherwise mark closed.
 			if st := resultStatus(w.Result); st != "" {
 				w.Status = st
-			} else if w.Status != "failed" && w.Status != "quota" && w.Status != "blocked" {
+			} else if w.Status != "failed" && w.Status != "quota" && w.Status != "capacity" && w.Status != "blocked" {
 				w.Status = "closed"
 			}
 			w.Pane = ""

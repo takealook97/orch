@@ -169,6 +169,18 @@ func nextFallback(purpose, current, role string, authors, critics []string, trie
 	return Model{}, false
 }
 
+// withoutKind adds every chain key of the given CLI kind to tried, so a fallback must
+// change CLI when all accounts of one kind are spent.
+func withoutKind(purpose, kind string, tried []string) []string {
+	out := slices.Clone(tried)
+	for _, key := range chains[purpose] {
+		if m, err := modelByKey(key); err == nil && m.Kind == kind {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
 //go:embed models.yaml
 var embeddedModels []byte
 

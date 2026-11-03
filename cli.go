@@ -6,6 +6,7 @@ import "fmt"
 type cliAdapter interface {
 	interactive(Model, bool) ([]string, error)
 	task(Model, string, string, string, string) ([]string, error)
+	resume(Model, string, string, string, string, string) ([]string, error)
 }
 type codexAdapter struct{}
 type claudeAdapter struct{}
@@ -113,4 +114,30 @@ func (agyAdapter) task(m Model, kind, cwd, answer, prompt string) ([]string, err
 		a = append(a, agySkipPermissionsFlag)
 	}
 	return append(a, "--output-format", "json", "-p", prompt), nil
+}
+
+func (codexAdapter) resume(m Model, kind, cwd, answer, sessionID, prompt string) ([]string, error) {
+	ma, err := modelArgs(m)
+	if err != nil {
+		return nil, err
+	}
+	a := []string{"exec", "-C", cwd}
+	if kind == "ask" {
+		a = append(a, "--sandbox", "read-only")
+	} else {
+		a = append(a, codexBypassFlag)
+	}
+	a = append(a, "resume")
+	a = append(a, ma...)
+	return append(a, "--skip-git-repo-check", "--json", "-o", answer, sessionID, prompt), nil
+}
+func (claudeAdapter) resume(m Model, kind, cwd, answer, sessionID, prompt string) ([]string, error) {
+	a, err := (claudeAdapter{}).task(m, kind, cwd, answer, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return append(a[:len(a)-1], "--resume", sessionID, prompt), nil
+}
+func (agyAdapter) resume(m Model, kind, cwd, answer, sessionID, prompt string) ([]string, error) {
+	return nil, fmt.Errorf("agy session resume is unsupported")
 }
