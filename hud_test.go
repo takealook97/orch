@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -630,8 +631,12 @@ func TestHUDSysPartialAndBatchNodeArgs(t *testing.T) {
 		}
 	}
 	stats, err := hudSys(context.Background())
-	if err == nil || stats.CPU < 0 || stats.CPU > 100 || stats.MemUsed != 0 || stats.MemTotal != 0 {
-		t.Fatalf("partial system: %+v %v", stats, err)
+	if runtime.GOOS == "darwin" {
+		if err == nil || stats.CPU < 0 || stats.CPU > 100 || stats.MemUsed != 0 || stats.MemTotal != 0 {
+			t.Fatalf("partial system: %+v %v", stats, err)
+		}
+	} else if err != nil || stats.CPU < 0 || stats.CPU > 100 || stats.MemTotal == 0 || stats.MemUsed > stats.MemTotal {
+		t.Fatalf("system: %+v %v", stats, err)
 	}
 	args := hudNodeArgs(context.Background(), []hudProcess{{201, 1, "node"}, {202, 1, "/usr/bin/node"}, {203, 1, "claude"}})
 	if len(args) != 2 || hudNodeProvider(args[201]) != "codex" || hudNodeProvider(args[202]) != "claude" {
@@ -665,5 +670,14 @@ func TestHUDCPURealisticTickDelta(t *testing.T) {
 	}
 	if got := cpuPercent(cached, cur); math.Abs(got-60) > 0.001 {
 		t.Fatalf("one-second tick delta = %v, want 60", got)
+	}
+}
+
+func TestHUDCPULinuxCounters(t *testing.T) {
+	at := time.Now()
+	prev := hudCPUSampleFromTicks(at, []cpu.TimesStat{{User: 10, Nice: 2, System: 3, Irq: 1, Softirq: 2, Steal: 1, Idle: 20, Iowait: 4}})
+	cur := hudCPUSampleFromTicks(at.Add(time.Second), []cpu.TimesStat{{User: 11, Nice: 3, System: 4, Irq: 2, Softirq: 3, Steal: 2, Idle: 22, Iowait: 6}})
+	if got := cpuPercent(prev, cur); got != 60 {
+		t.Fatalf("Linux counters = %v, want 60", got)
 	}
 }

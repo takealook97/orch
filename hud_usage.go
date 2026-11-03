@@ -66,6 +66,7 @@ type hudRegistryAccount struct {
 	Weekly       hudRegistryWindow `json:"weekly"`
 }
 type hudRegistry struct {
+	present     bool                 // distinguishes a missing registry from an intentionally empty one
 	Accounts    []hudRegistryAccount `json:"accounts"`
 	Ignored     []string             `json:"ignored"`
 	Priority    string               `json:"priority"`
@@ -88,6 +89,7 @@ func hudReadRegistry() (hudRegistry, error) {
 		return r, err
 	}
 	err = json.Unmarshal(raw, &r)
+	r.present = true
 	return r, err
 }
 func hudCanonicalHome(provider, home string) string {
@@ -726,6 +728,9 @@ func hudDiscoverSelected(now time.Time) ([]HUDAccount, error) {
 	r, err := hudReadRegistry()
 	if err != nil {
 		return nil, fmt.Errorf("registry: %w", err)
+	}
+	if !r.present {
+		return hudDefaultAccounts(), nil
 	}
 	accounts := []HUDAccount{}
 	for _, provider := range []string{"codex", "claude"} {

@@ -1,6 +1,6 @@
 BIN := bin/orch
 
-.PHONY: build test check docs-check install link herdr
+.PHONY: build test check docs-check install link herdr herdr-remote
 
 build:
 	go build -o $(BIN) .
@@ -57,3 +57,7 @@ docs-check: build
 	for file in README.md docs/setup.md skill/SKILL.md skill/references/design.md constitution/orch-block.md; do \
 		diff -u "$$file" "$$tmp/$$file"; \
 	done
+
+# Cross-build and install the HUD helper on connected Herdr machines.
+herdr-remote:
+	./scripts/herdr-remote-install.sh $(ARGS)
