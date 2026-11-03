@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -240,9 +241,15 @@ func fetchClaudeUsage(ctx context.Context, home string) (HUDAccount, error) {
 }
 func hudRetryAt(value string, now time.Time) time.Time {
 	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		if seconds > 3600 {
+			seconds = 3600
+		}
 		return now.Add(time.Duration(seconds) * time.Second)
 	}
 	if at, err := http.ParseTime(value); err == nil && at.After(now) {
+		if at.After(now.Add(time.Hour)) {
+			return now.Add(time.Hour)
+		}
 		return at
 	}
 	return now.Add(5 * time.Minute)
@@ -302,6 +309,83 @@ func hudParseClaude(raw []byte) (HUDAccount, error) {
 	}
 	if a.FiveHour == nil && a.Weekly == nil {
 		return a, errors.New("usage response has no supported windows")
+	}
+	return a, nil
+}
+
+func hudGeminiBinary() (string, error) {
+	if path, err := exec.LookPath("agy"); err == nil {
+		return path, nil
+	}
+	home, _ := os.UserHomeDir()
+	for _, path := range []string{"/opt/homebrew/bin/agy", filepath.Join(home, ".local", "bin", "agy")} {
+		if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0111 != 0 {
+			return path, nil
+		}
+	}
+	return "", errors.New("agy binary not found")
+}
+func fetchGeminiUsage(ctx context.Context, _ string) (HUDAccount, error) {
+	path, err := hudGeminiBinary()
+	if err != nil {
+		return HUDAccount{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 22*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "-p", "/usage", "--output-format", "json", "--print-timeout", "20s")
+	cmd.Dir = os.TempDir()
+	raw, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return HUDAccount{}, errors.New("gemini usage timed out")
+		}
+		return HUDAccount{}, errors.New("gemini usage command failed")
+	}
+	return hudParseGemini(raw)
+}
+func hudParseGemini(raw []byte) (HUDAccount, error) {
+	var body struct {
+		Command struct {
+			Data struct {
+				Groups []struct {
+					Name    string `json:"name"`
+					Buckets []struct {
+						Window    string   `json:"window"`
+						Remaining *float64 `json:"remaining_fraction"`
+						Reset     string   `json:"reset_time"`
+					} `json:"buckets"`
+				} `json:"groups"`
+			} `json:"data"`
+		} `json:"command"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return HUDAccount{}, errors.New("invalid gemini usage JSON")
+	}
+	a := HUDAccount{}
+	for _, group := range body.Command.Data.Groups {
+		if !strings.HasPrefix(group.Name, "Gemini") {
+			continue
+		}
+		for _, b := range group.Buckets {
+			if b.Remaining == nil || *b.Remaining < 0 || *b.Remaining > 1 {
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, b.Reset)
+			if err != nil {
+				continue
+			}
+			w := &HUDWindow{Used: math.Round((1 - *b.Remaining) * 100), ResetsAt: at.UTC().Format(time.RFC3339)}
+			switch b.Window {
+			case "5h":
+				a.FiveHour = w
+			case "weekly":
+				a.Weekly = w
+			}
+		}
+		break
+	}
+	if a.FiveHour == nil && a.Weekly == nil {
+		return a, errors.New("gemini usage response has no supported windows")
 	}
 	return a, nil
 }
