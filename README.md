@@ -120,7 +120,7 @@ A finished worker's pane closes even if the Head never calls `orch wait`: `orch 
 
 ## Herdr HUD data
 
-`orch hud sys` prints recent macOS CPU percentage and used/total physical memory.
+`orch hud sys` prints recent macOS/Linux CPU percentage and used/total physical memory.
 `orch hud panes` prints active runs, all their workers (including closed workers),
 English role labels (Recon, Web, Design, Impl, Docs, Image, Integrate, Test,
 Review, QA, Adversarial, Head), catalog model/effort, and agent terminal models
@@ -142,7 +142,22 @@ Gemini when installed. Each returned account has `"selected": true`; providers
 without a usable account are omitted. It cannot be combined with `--terminals`.
 Selection uses the registry snapshot; CR may refresh stale probes before launching,
 so a subsequent launch can choose differently. Elapsed reset times alone do not
-restore exhausted registry quotas.
+restore exhausted registry quotas. When no CR registry exists, it discovers default
+Codex (~/.codex/auth.json plus an installed codex binary) and Claude (an installed
+claude binary, using its default keychain or ~/.claude/.credentials.json). Labels
+use local email hints from Codex JWT claims or ~/.claude.json when available;
+otherwise they are empty. An existing empty registry still means no CR accounts.
+
+`make herdr-remote` cross-builds a CGO-free HUD helper once per connected platform
+and installs it at `$HOME/.local/libexec/orch-hud` on each connected Herdr machine.
+Supported targets are macOS arm64 and Linux amd64/arm64. It requires local Go,
+`hc`, and Python 3; it leaves remote orch checkouts untouched. Each install is
+verified with `hud sys`; failures are summarized per machine and the command exits
+nonzero after attempting the remaining machines. Use
+`make herdr-remote ARGS="--dry-run"` to print install commands (only machine listing
+and `uname -sm` are executed), or `make herdr-remote ARGS="oorung petasos"` to limit
+the destination machines. Unknown or disconnected requested names fail explicitly;
+unsupported platforms are skipped.
 
 Usage is cached at `$ORCH_HOME/cache/hud-usage.json` (default `~/.orch/cache/`,
 mode 0600). Failed refreshes retain cached values with `stale` and `error` fields.

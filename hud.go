@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -125,8 +124,8 @@ func hudCPUSampleFromTicks(at time.Time, ticks []cpu.TimesStat) cpuSample {
 	sample := cpuSample{At: at}
 	for _, tick := range ticks {
 		sample.User += tick.User
-		sample.System += tick.System
-		sample.Idle += tick.Idle
+		sample.System += tick.System + tick.Irq + tick.Softirq + tick.Steal
+		sample.Idle += tick.Idle + tick.Iowait
 		sample.Nice += tick.Nice
 	}
 	return sample
@@ -224,21 +223,6 @@ func hudSys(ctx context.Context) (SysStats, error) {
 	s.CPU = cpuPercent(prev, cur)
 	// Cache failure must not discard a valid live measurement.
 	_ = hudWriteCPUSample(path, cur)
-	raw, err := exec.CommandContext(ctx, "sysctl", "-n", "hw.memsize").Output()
-	if err != nil {
-		return s, fmt.Errorf("sysctl: %w", err)
-	}
-	s.MemTotal, err = strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
-	if err != nil {
-		return s, fmt.Errorf("sysctl: %w", err)
-	}
-	raw, err = exec.CommandContext(ctx, "vm_stat").Output()
-	if err != nil {
-		return s, fmt.Errorf("vm_stat: %w", err)
-	}
-	s.MemUsed, err = parseVMStat(string(raw))
-	if s.MemUsed > s.MemTotal {
-		s.MemUsed = s.MemTotal
-	}
+	s.MemUsed, s.MemTotal, err = hudMemory(ctx)
 	return s, err
 }
