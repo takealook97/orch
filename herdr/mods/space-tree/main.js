@@ -187,7 +187,7 @@ export default class SpaceTree extends Plumbing {
         .child(div().flex_1().child("Spaces"))
         .when(this.orchStale, el => el.child(div().text_size(10).text_color(t.dim).tooltip("orch hud unavailable; retaining last data").child("⚠")))
         .child(button("expand-all", "chevron-down", "Expand all", (_e, cx) => this.foldAll(false, cx)))
-        .child(button("collapse-all", "chevron-right", "Collapse all", (_e, cx) => this.foldAll(true, cx)))
+        .child(button("collapse-all", "chevron-up", "Collapse all", (_e, cx) => this.foldAll(true, cx)))
         .child(button("new-space", "plus", "New space", () => run("space.new"))))
       .child(v_flex().id("tree-list").flex_1().min_h(0).px(4).pb(10).overflow_y_scroll()
         .children(this.visible.map(row => treeRow(this, row, t))));

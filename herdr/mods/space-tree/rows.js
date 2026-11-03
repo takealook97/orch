@@ -57,7 +57,7 @@ export function treeRow(view, row, t) {
     .text_color(row.kind === "machine" ? t.muted : row.orch && view.orchStale ? t.dim : t.foreground)
     .bg(row.active ? row.kind === "pane" ? t.raised : t.selected : row.key === view.highlight ? t.raised : t.chrome)
     .hover(s => s.bg(t.hover))
-    .on_click((_e, cx) => view.select(row, cx))
+    .on_click((_e, cx) => { if (Date.now() >= (view.suppressClickUntil ?? 0)) view.select(row, cx); })
     .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); view.contextMenu(row); })
     .when(row.kind === "pane" && row.active, e => e.child(div().absolute().left(0).top(0).bottom(0).w(2).bg(t.accent)))
     .when(row.guide === "├", e => e.child(div().absolute().top(0).bottom(0)
