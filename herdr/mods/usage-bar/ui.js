@@ -5,27 +5,32 @@ import { pctColorRole } from './format.js';
 export function roleColor(t, pct) {
   return t[{ ok: 'foreground', warn: 'working', crit: 'blocked' }[pctColorRole(pct)]];
 }
-
-export function cell(t, { label, value, detail, pct, color, detailColor, hideDetail, hideBar, dim }) {
-  const ink = dim ? t.dim : color ?? roleColor(t, pct ?? 0);
-  return v_flex().w(100).min_w(92).flex_none().px(6).gap(2)
-    .child(h_flex().items_center().text_size(12)
-      .child(div().text_color(t.dim).child(label))
-      .child(div().flex_1())
-      .child(div().font_semibold().text_color(ink).child(value)))
-    .when(pct !== undefined && !hideBar, el => el.child(div().h(2).w_full().rounded(1).bg(t.border)
-      .child(div().h(2).w(`${Math.max(0, Math.min(100, pct))}%`).rounded(1).bg(ink))))
-    .when(!hideDetail, el => el.child(div().text_size(10.8).text_color(dim ? t.dim : detailColor ?? t.dim).child(detail)));
+export function progress(t, pct, width) {
+  return div().w(width).h(2).flex_none().rounded(1).bg(t.border)
+    .child(div().h(2).w(`${Math.max(0, Math.min(100, pct))}%`).rounded(1).bg(roleColor(t, pct)));
 }
-
-export function divider(t) {
-  return div().w(1).h(24).mx(10).flex_none().bg(t.border);
+export function cell(t, { label, value, detail = '', pct, color, detailColor, hideDetail, hideBar }) {
+  const width = label === 'Week' ? (hideDetail ? 58 : 110) : label === '5h' ? 94 : 76;
+  return v_flex().w(width).flex_none().items_center().justify_center().gap(1)
+    .child(h_flex().items_center().gap(4).text_size(12)
+      .when(!!label, el => el.child(div().text_color(t.dim).child(label)))
+      .child(div().font_semibold().text_color(color ?? (pct === undefined ? t.dim : roleColor(t, pct))).child(value))
+      .when(pct !== undefined && !hideBar, el => el.child(progress(t, pct, 36))))
+    .child(div().h(13).text_size(10.8).text_color(detailColor ?? t.dim).child(hideDetail ? '' : detail));
 }
-
 export function groupLabel(t, account, compact) {
-  return v_flex().min_w(compact ? 48 : 80).max_w(140).flex_none().gap(2).pr(6)
-    .child(div().text_size(12).font_semibold().text_color(account.dimDefault || account.stale || account.error ? t.dim : t.foreground)
-      .child(`${account.provider === 'codex' ? 'Codex' : 'Claude'}${account.stale || account.error ? ' ·' : ''}`))
-    .when(!compact, el => el.child(div().text_size(10.8).text_color(t.dim).truncate()
-      .child(`${account.label} ${account.plan ?? ''}`.trim())));
+  return v_flex().flex_none().min_w(44).items_center().justify_center().gap(1)
+    .child(div().text_size(12).font_semibold().text_color(t.foreground)
+      .child({ codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }[account.provider]))
+    .when(!compact && account.provider !== 'gemini', el => el.child(div().h(13).text_size(10.8)
+      .text_color(t.dim).child(account.label)));
+}
+export function systemRow(t, label, pct, detail, hideBar) {
+  const known = Number.isFinite(pct);
+  return h_flex().w(hideBar ? 112 : 156).flex_none().items_center().gap(4).text_size(10.8)
+    .child(div().w(26).text_color(t.dim).child(label))
+    .child(div().w(30).font_semibold().text_color(known ? roleColor(t, pct) : t.dim)
+      .child(known ? `${Math.round(pct)}%` : '—'))
+    .when(known && !hideBar, el => el.child(progress(t, pct, 40)))
+    .child(div().text_color(t.dim).child(detail));
 }
