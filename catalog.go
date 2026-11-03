@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -433,4 +434,53 @@ func freezeModel(m Model) (Model, string, string, error) {
 		m.resolvedID, m.resolvedSource = id, source
 	}
 	return m, id, source, err
+}
+
+type modelJSON struct {
+	Key     string `json:"key"`
+	Kind    string `json:"kind"`
+	Family  string `json:"family"`
+	Tier    string `json:"tier"`
+	Model   string `json:"model"`
+	Effort  string `json:"effort"`
+	Display string `json:"display"`
+}
+
+var claudeDisplayRe = regexp.MustCompile(`^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$`)
+
+func modelDisplay(id string) string {
+	id = strings.ToLower(id)
+	if g := claudeDisplayRe.FindStringSubmatch(id); g != nil {
+		name := g[1] + "-" + g[2]
+		if g[3] != "" {
+			name += "." + g[3]
+		}
+		return name
+	}
+	return id
+}
+
+func modelsJSON() ([]modelJSON, error) {
+	out := make([]modelJSON, 0, len(catalog))
+	for _, m := range catalog {
+		args, err := modelArgs(m)
+		if err != nil {
+			return nil, err
+		}
+		entry := modelJSON{Key: m.Key, Kind: m.Kind, Family: m.Family, Tier: m.Tier, Model: args[1]}
+		for i := 2; i+1 < len(args); i += 2 {
+			switch args[i] {
+			case "--effort":
+				entry.Effort = args[i+1]
+			case "-c":
+				const prefix = "model_reasoning_effort="
+				if strings.HasPrefix(args[i+1], prefix) {
+					entry.Effort = strings.Trim(strings.TrimPrefix(args[i+1], prefix), `"`)
+				}
+			}
+		}
+		entry.Display = modelDisplay(entry.Model)
+		out = append(out, entry)
+	}
+	return out, nil
 }

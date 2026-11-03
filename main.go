@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -28,7 +29,7 @@ Delegation
   orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
-  orch models [--markdown]                seven canonical keys (codex-medium-h: deprecated Luna alias)
+	orch models [--markdown|--json]         seven canonical keys (codex-medium-h: deprecated Luna alias)
   orch contract new <name> --role R --model K [--run ID]    create contract template
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
            [--cwd D|--worktree D] [--no-worktree] [--account auto|cr|same|hook] [--run ID]
@@ -164,12 +165,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	case "models":
 		markdown := fs.Bool("markdown", false, "print the embedded catalog as Markdown")
+		jsonOutput := fs.Bool("json", false, "print the resolved catalog as JSON")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2
 		}
-		if len(pos) != 0 {
-			return fail(fmt.Errorf("usage: orch models [--markdown]"))
+		if len(pos) != 0 || (*markdown && *jsonOutput) {
+			return fail(fmt.Errorf("usage: orch models [--markdown|--json]"))
+		}
+		if *jsonOutput {
+			models, err := modelsJSON()
+			if err != nil {
+				return fail(err)
+			}
+			if err := json.NewEncoder(stdout).Encode(models); err != nil {
+				return fail(err)
+			}
+			return 0
 		}
 		if *markdown {
 			fmt.Fprint(stdout, modelMarkdown())

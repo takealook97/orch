@@ -81,7 +81,7 @@ CR launches keep unfocused owned panes, assign the worker name after detection, 
 
 ## Model catalog
 
-`orch models` shows the full list. The Head picks by key only; `orch` assembles the CLI arguments.
+`orch models` shows the full list. `orch models --json` emits the resolved catalog as objects with `key`, `kind`, `family`, `tier`, `model`, `effort`, and `display` fields. The Head picks by key only; `orch` assembles the CLI arguments.
 
 <!-- orch:models:begin -->
 | Key | CLI | Family | Tier | Default model | Effort | Model variable |
