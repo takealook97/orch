@@ -9,19 +9,14 @@ test('percentage color boundaries', () => {
     assert.equal(pctColorRole(pct), expected);
   }
 });
-test('English reset labels round before choosing the duration unit', () => {
+test('reset labels use local weekday and 24-hour time', () => {
   for (const [iso, expected] of [
     ['2026-11-03T12:59:00+09:00', 'soon'],
     ['2026-11-03T13:00:00+09:00', 'soon'],
-    ['2026-11-03T13:42:00+09:00', 'in 42m'],
-    ['2026-11-03T13:59:00+09:00', 'in 59m'],
-    ['2026-11-03T13:59:59+09:00', 'in 1h 0m'],
-    ['2026-11-03T15:13:00+09:00', 'in 2h 13m'],
-    ['2026-11-04T12:59:00+09:00', 'in 23h 59m'],
-    ['2026-11-04T12:59:59+09:00', 'Tomorrow 12:59'],
-    ['2026-11-04T13:00:00+09:00', 'Tomorrow 13:00'],
-    ['2026-11-04T15:37:06+09:00', 'Tomorrow 15:37'],
-    ['2026-11-10T10:59:59+09:00', 'Tue 11/10 10:59'],
+    ['2026-11-03T13:42:00+09:00', 'Tue 13:42'],
+    ['2026-11-04T15:37:06+09:00', 'Wed 15:37'],
+    ['2026-11-08T01:05:00+09:00', 'Sun 01:05'],
+    ['2026-11-10T10:59:59+09:00', 'Tue 10:59'],
   ]) assert.equal(formatReset(iso, now), expected);
   assert.equal(formatReset(null, now), '');
   assert.equal(formatReset('invalid', now), '');
@@ -30,7 +25,7 @@ test('calendar and coupon dates use local time in a non-KST timezone', () => {
   const original = process.env.TZ;
   try {
     process.env.TZ = 'America/Los_Angeles';
-    assert.equal(formatReset('2026-11-10T01:59:00Z', now), 'Mon 11/9 17:59');
+    assert.equal(formatReset('2026-11-10T01:59:00Z', now), 'Mon 17:59');
     assert.deepEqual(formatCouponExpiry('2026-12-01T00:00:00Z', now), { text: 'until 11/30', urgent: false });
     // Calendar days stay consecutive across the spring DST change.
     const beforeDST = new Date('2027-03-13T12:00:00-08:00');
@@ -75,10 +70,10 @@ test('missing providers yield placeholders', () => {
   assert.equal(picked[2].label, '');
 });
 
-test('layout adapts to the estimated card widths', () => {
-  const full = ['codex', 'claude', 'gemini'].map(provider => ({ provider, five_hour: { used_pct: 10 }, weekly: { used_pct: 20 } }));
-  assert.deepEqual(layoutMode(1600, full), { bars: true, accountLine: true, weekDetail: true });
-  assert.deepEqual(layoutMode(1160, full), { bars: false, accountLine: true, weekDetail: true });
-  assert.deepEqual(layoutMode(400, full), { bars: false, accountLine: false, weekDetail: false });
-  assert.deepEqual(layoutMode(1100, pickAccounts(null)), { bars: true, accountLine: true, weekDetail: true });
+test('layout hides bars before account lines at compact widths', () => {
+  const accounts = ['codex', 'claude', 'gemini'].map(provider => ({ provider }));
+  assert.deepEqual(layoutMode(904, accounts), { bars: true, accountLine: true });
+  assert.deepEqual(layoutMode(903, accounts), { bars: false, accountLine: true });
+  assert.deepEqual(layoutMode(859, accounts), { bars: false, accountLine: false });
+  assert.deepEqual(layoutMode(904, pickAccounts(null)), { bars: true, accountLine: true });
 });

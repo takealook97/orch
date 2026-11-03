@@ -10,11 +10,7 @@ export function formatReset(iso, now = new Date()) {
   const reset = new Date(iso);
   if (!iso || !Number.isFinite(reset.getTime())) return '';
   if (reset <= now) return 'soon';
-  const minutes = Math.ceil((reset - now) / 60000);
-  if (minutes < 60) return `in ${minutes}m`;
-  if (minutes < 1440) return `in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-  if (day(reset) - day(now) === 1) return `Tomorrow ${clock(reset)}`;
-  return `${weekdays[reset.getDay()]} ${reset.getMonth() + 1}/${reset.getDate()} ${clock(reset)}`;
+  return `${weekdays[reset.getDay()]} ${clock(reset)}`;
 }
 export function formatCouponExpiry(iso, now = new Date()) {
   const expires = new Date(iso);
@@ -33,22 +29,15 @@ export function pickAccounts(usage) {
   });
 }
 
-// These dimensions are shared with the rendered cells and card labels.
-export const cellWidth = (label, missing, hideDetail = false) =>
-  missing ? 44 : label === 'Week' ? (hideDetail ? 58 : 92) : label === '5h' ? 76 : 64;
-export const labelWidth = accountLine => accountLine ? 84 : 48;
+// Dimensions shared by the provider cards and their width estimates.
+export const cellWidth = label => label === 'coupon' ? 62 : 78;
+export const labelWidth = accountLine => accountLine ? 96 : 48;
 export function layoutMode(width, accounts) {
-  const mode = { bars: true, accountLine: true, weekDetail: true };
-  const needed = () => accounts.reduce((sum, account) => {
-    const fiveMissing = !Number.isFinite(account.five_hour?.used_pct);
-    const weekMissing = !Number.isFinite(account.weekly?.used_pct);
-    const cells = cellWidth('5h', fiveMissing) + cellWidth('Week', weekMissing, !mode.weekDetail);
-    // Padding, borders, inner gaps, and the gap following each provider.
-    return sum + labelWidth(mode.accountLine) + cells + 16 + 2 + 16 + 8 +
-      (account.provider === 'codex' ? cellWidth('', false) + 8 : 0);
-  }, 170 + 40 - (mode.bars ? 0 : 44));
+  const mode = { bars: true, accountLine: true };
+  const needed = () => accounts.reduce((sum, account) => sum + labelWidth(mode.accountLine) +
+    cellWidth('weekly') + (account.provider === 'codex' ? cellWidth('coupon') + 8 : 0) +
+    16 + 2 + 8 + 8, 170 + 40 - (mode.bars ? 0 : 44));
   if (width < needed()) mode.bars = false;
   if (width < needed()) mode.accountLine = false;
-  if (width < needed()) mode.weekDetail = false;
   return mode;
 }

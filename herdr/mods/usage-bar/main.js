@@ -87,14 +87,14 @@ export default class UsageBar extends View {
     this.refresh('usage', cx);
   }
 
-  percentCell(t, label, window, now, mode) {
+  percentCell(t, window, now, mode) {
     const past = window?.resets_at && new Date(window.resets_at) <= now;
     const pct = past ? 0 : window?.used_pct;
     const known = Number.isFinite(pct);
     const reset = window ? formatReset(window.resets_at, now) : '';
-    return cell(t, { label, value: known ? `${Math.round(pct)}%` : '—',
+    return cell(t, { label: 'weekly', value: known ? `${Math.round(pct)}%` : '—',
       pct: known ? pct : undefined, detail: reset ? `↻ ${reset}` : '',
-      hideDetail: label === 'Week' && !mode.weekDetail, hideBar: !mode.bars });
+      hideBar: !mode.bars });
   }
 
   render(cx) {
@@ -125,12 +125,11 @@ export default class UsageBar extends View {
       const stale = account.stale || !!account.error || this.stale.usage;
       const content = h_flex().items_center().gap(8).opacity(stale ? 0.6 : 1)
         .child(groupLabel(t, account, !mode.accountLine))
-        .child(this.percentCell(t, '5h', account.five_hour, now, mode))
-        .child(this.percentCell(t, 'Week', account.weekly, now, mode));
+        .child(this.percentCell(t, account.weekly, now, mode));
       if (account.provider === 'codex') {
         const count = account.coupons?.available;
         const expiry = count > 0 ? formatCouponExpiry(account.coupons.next_expires_at, now) : { text: '—', urgent: false };
-        content.child(cell(t, { value: count === undefined ? '— resets' : `${count} resets`, detail: expiry.text,
+        content.child(cell(t, { label: 'coupon', value: count === undefined ? '—' : `${count} resets`, detail: expiry.text,
           color: count ? t.accent : t.dim, detailColor: expiry.urgent ? t.blocked : t.dim }));
       }
       groups.push(group(`account-${account.provider}`).child(content));

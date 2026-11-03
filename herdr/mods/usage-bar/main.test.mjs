@@ -82,31 +82,28 @@ test('poll intervals and selected account arguments', async () => {
   assert.deepEqual(h.calls.filter(args => args[1] === 'usage'), [['hud', 'usage', '--selected', '--max-age', '45s']]);
 });
 
-test('provider cards retain placeholders, local labels, coupon text and stale opacity', async () => {
-  const h = harness(); await h.flush(); h.tick(1000); await h.flush();
+test('provider cards show compact weekly usage, coupon text and stale opacity', async () => {
+  const h = harness(); await h.flush();
   const tree = h.view.render(h.cx), labels = text(tree);
   assert.deepEqual(byID(tree, 'groups').nodes.map(node => node.style.id), ['account-codex', 'account-claude', 'account-gemini']);
-  assert.equal(labels.filter(label => label === 'CPU').length, 1);
   assert.deepEqual(tree.nodes.map(node => node.style.id), ['groups', undefined, 'system']);
-  assert.equal(tree.nodes[1].style.flex_1.length, 0);
-  assert.ok(labels.includes('2 resets'));
-  assert.ok(labels.includes('work'));
-  assert.ok(!labels.some(label => /max|prolite|default|⚠|🎟|@/.test(label)));
+  assert.ok(['codex', 'claude', 'gemini', '2 resets', 'work'].every(label => labels.includes(label)));
+  assert.ok(!labels.some(label => /5h|Week|max|prolite|default|⚠|🎟|@/.test(label)));
   const codex = byID(tree, 'account-codex');
-  const missing = codex.nodes[0].nodes[1];
-  assert.deepEqual(text(missing), ['5h', '—', '']);
-  assert.equal(missing.style.w, 44);
+  assert.equal(codex.nodes[0].nodes[1].style.w, 78);
+  assert.equal(codex.nodes[0].nodes[2].style.w, 62);
   assert.equal(byID(tree, 'account-claude').nodes[0].style.opacity, 0.6);
   assert.equal(byID(tree, 'account-gemini').nodes[0].nodes[0].nodes.length, 1);
-  assert.ok(walk(tree).some(node => node?.style?.w === 32 && node?.style?.h === 2));
-  h.view.width = 1000;
-  assert.ok(!walk(h.view.render(h.cx)).some(node => node?.style?.w === 32 && node?.style?.h === 2));
-  h.view.width = 900;
+  assert.ok(walk(tree).some(node => node?.style?.w === 28 && node?.style?.h === 2));
+  h.view.width = 903;
+  assert.ok(!walk(h.view.render(h.cx)).some(node => node?.style?.w === 28 && node?.style?.h === 2));
+  h.view.width = 859;
   assert.ok(!text(h.view.render(h.cx)).includes('work'));
-  h.view.width = 700;
-  const narrow = byID(h.view.render(h.cx), 'account-gemini');
-  assert.equal(text(narrow.nodes[0].nodes[2]).at(-1), '');
-  assert.equal(narrow.nodes[0].nodes[2].style.w, 58);
+  h.view.usage.accounts[0].weekly = null;
+  h.view.usage.accounts[0].coupons = undefined;
+  const missing = byID(h.view.render(h.cx), 'account-codex').nodes[0];
+  assert.deepEqual(text(missing.nodes[1]), ['—', '']);
+  assert.deepEqual(text(missing.nodes[2]), ['—', '']);
 });
 
 test('space switches do not trigger usage refresh', async () => {
