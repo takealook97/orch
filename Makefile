@@ -53,7 +53,7 @@ docs-check: build
 	for file in README.md docs/setup.md skill/SKILL.md skill/references/design.md constitution/orch-block.md; do \
 		mkdir -p "$$tmp/$$(dirname "$$file")"; cp "$$file" "$$tmp/$$file"; \
 	done; \
-	./$(BIN) docs gen --root "$$tmp"; \
+	env -u ORCH_ROLE ./$(BIN) docs gen --root "$$tmp"; \
 	for file in README.md docs/setup.md skill/SKILL.md skill/references/design.md constitution/orch-block.md; do \
 		diff -u "$$file" "$$tmp/$$file"; \
 	done
