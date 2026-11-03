@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -249,6 +250,7 @@ func hudPanes(ctx context.Context) HUDPanes {
 			worker := HUDWorker{Terminal: w.Terminal, Pane: w.Pane, Name: w.Name, Key: w.Key, Family: w.Family, Role: w.Role, Purpose: w.Purpose, Status: w.Status, Label: hudRoleLabel(w.Role, w.Purpose)}
 			if m, err := modelByKey(w.Key); err == nil {
 				worker.Model, _ = modelID(m)
+				worker.Model = hudModelDisplay(worker.Model)
 				worker.Effort = m.Effort
 			}
 			run.Workers = append(run.Workers, worker)
@@ -295,5 +297,90 @@ func hudPanes(ctx context.Context) HUDPanes {
 		}
 		wg.Wait()
 	}
+	hudResolveClaudeModels(ctx, &out)
 	return out
+}
+
+// Resolve live Claude sessions concurrently with a shared deadline and a fixed fanout.
+func hudResolveClaudeModels(ctx context.Context, out *HUDPanes) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	indices := []int{}
+	for i := range out.Terminals {
+		t := &out.Terminals[i]
+		t.Model = hudModelDisplay(t.Model)
+		if (filepath.Base(t.Program) == "claude" || filepath.Base(t.Program) == "claude-code") && len(indices) < 12 {
+			indices = append(indices, i)
+		}
+	}
+	if len(indices) == 0 {
+		return
+	}
+	raw, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,comm=").Output()
+	if err != nil {
+		return
+	}
+	procs := hudParseProcesses(string(raw))
+	nodeArgs := hudNodeArgs(ctx, procs)
+	type result struct {
+		index int
+		model string
+	}
+	results := make(chan result, len(indices))
+	for _, i := range indices {
+		go func(i int, address string) {
+			model := ""
+			defer func() { results <- result{i, model} }()
+			raw, err := exec.CommandContext(ctx, "hc", "get", address, "--json").Output()
+			if err != nil {
+				return
+			}
+			var detail struct {
+				PID int    `json:"pid"`
+				Cwd string `json:"cwd"`
+			}
+			if json.Unmarshal(raw, &detail) != nil || detail.PID == 0 {
+				return
+			}
+			pid, provider := hudFindAgent(detail.PID, procs, func(pid int) string { return nodeArgs[pid] })
+			if provider != "claude" {
+				return
+			}
+			raw, err = exec.CommandContext(ctx, "ps", "eww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+			if err != nil || ctx.Err() != nil {
+				return
+			}
+			model = hudClaudeTranscriptModel(hudEnvValue(string(raw), "CLAUDE_CONFIG_DIR"), detail.Cwd)
+		}(i, out.Terminals[i].Address)
+	}
+	for range indices {
+		select {
+		case r := <-results:
+			if r.model != "" {
+				hudApplyClaudeModel(out, out.Terminals[r.index].Address, r.model)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func hudApplyClaudeModel(out *HUDPanes, terminal, model string) {
+	if model == "" {
+		return
+	}
+	model = hudModelDisplay(model)
+	for i := range out.Terminals {
+		if out.Terminals[i].Address == terminal {
+			out.Terminals[i].Model = model
+		}
+	}
+	for i := range out.Runs {
+		for j := range out.Runs[i].Workers {
+			w := &out.Runs[i].Workers[j]
+			if w.Terminal == terminal {
+				w.Model = model
+			}
+		}
+	}
 }
