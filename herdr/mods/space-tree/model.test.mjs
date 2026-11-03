@@ -76,7 +76,7 @@ test("pane naming precedence: alias, worker, Head, main, sub and fallback", () =
   assert.equal(paneName(w, 0, index, { [aliasKey("pane", "worker")]: "" }), "impl · impl");
 });
 
-test("line two uses worker model, argv model, then position plus live status", () => {
+test("pane detail uses worker model, argv model, then position", () => {
   assert.equal(paneSub(pane("p", "tab", { terminal: "worker" }), index), "gpt-6-luna-high");
   assert.equal(paneSub(pane("p", "tab", { terminal: "argv", status: "blocked" }), index), "gpt-6.1-sol-low");
   assert.equal(paneSub(pane("p", "tab", { terminal: "head" }), index), "main");
