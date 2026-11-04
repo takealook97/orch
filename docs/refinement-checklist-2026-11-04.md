@@ -36,7 +36,7 @@ installation and run/pane cleanup; those remain Head gates.
    full Go tests/playbook validation), full go test -race, Python eval tests
    (7 tests) and eval selfcheck all exit 0.
    Initial reviews, repair re-review and final acceptance were accepted by Head.
-7. [ ] Head-owned commit/push to main, reinstall/smoke, and owned run/pane cleanup.
+7. [x] Head-owned commit/push to main, reinstall/smoke, and owned run/pane cleanup.
 
 ## Size and behavior evidence
 
@@ -105,3 +105,5 @@ evidence. The old collector session-scoped identity format lacks global message/
 ## Head acceptance
 
 Head accepted the independent review and recorded test evidence. Main skill: 272 to 75 lines; common scanner/policy increases guard code size. Real usage smoke uses operator-declared bindings with partial coverage; no savings claim is established.
+
+Release verification: refinement commit pushed and remote SHA matched; installation, installed links and policy, help/models, synthetic collector export and doctor passed; run 20261104-150607-d6d7e0 pane removal confirmed.
