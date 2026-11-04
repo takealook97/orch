@@ -173,9 +173,9 @@ func (h hookInput) commandText() string {
 func decide(in hookInput, role string, inHerdr bool) string {
 	tool := in.tool()
 	cmd := in.commandText()
-	// The shell joins quoted fragments (he''rdr, or''ch, \herdr); match the joined form too.
-	cmd += "\n" + quoteJoiner.Replace(cmd)
 	if role == "worker" {
+		// The worker no-delegation policy retains its legacy strict matcher.
+		cmd += "\n" + quoteJoiner.Replace(cmd)
 		// File edits start no process; their text (source, docs) may name orch or herdr commands.
 		if goalEditTool.MatchString(tool) || goalPatchTool.MatchString(tool) {
 			return ""
@@ -339,10 +339,11 @@ var goalPatchPath = regexp.MustCompile(`(?m)^\*\*\* (?:Add File|Update File|Dele
 var goalShellPatch = regexp.MustCompile(`\bapply_patch\b[^\n]*<<`)
 
 // An apply_patch heredoc's body is file content, not commands.
-var patchHeredoc = regexp.MustCompile(`\bapply_patch\b[^\n]*<<-?\s*['"]?(\w+)['"]?[^\n]*\n`)
+var patchHeredoc = regexp.MustCompile(`\bapply_patch[ \t]+<<-?[ \t]*(?:'(\w+)'|"(\w+)")([^\n]*)\n`)
 
 // stripPatchHeredocs drops the body of each apply_patch heredoc, up to its terminator line.
-// Text outside such a heredoc, marker lines included, is still checked.
+// Text outside such a heredoc, including header chains, is still checked.
+// Unclosed heredocs are left intact so the scanner rejects them.
 func stripPatchHeredocs(cmd string) string {
 	var b strings.Builder
 	for {
@@ -351,10 +352,13 @@ func stripPatchHeredocs(cmd string) string {
 			b.WriteString(cmd)
 			return b.String()
 		}
-		b.WriteString(cmd[:m[1]])
 		rest := cmd[m[1]:]
-		term := cmd[m[2]:m[3]]
-		end := len(rest)
+		termStart, termEnd := m[2], m[3]
+		if termStart < 0 {
+			termStart, termEnd = m[4], m[5]
+		}
+		term := cmd[termStart:termEnd]
+		end := -1
 		for off := 0; off < len(rest); {
 			line := rest[off:]
 			n := strings.IndexByte(line, '\n')
@@ -362,11 +366,22 @@ func stripPatchHeredocs(cmd string) string {
 				n = len(line)
 			}
 			if strings.TrimSpace(line[:n]) == term {
-				end = off
+				end = off + n
+				if end < len(rest) {
+					end++
+				}
 				break
 			}
 			off += n + 1
 		}
+		if end < 0 {
+			b.WriteString(cmd)
+			return b.String()
+		}
+		b.WriteString(cmd[:m[0]])
+		b.WriteString("apply_patch")
+		b.WriteString(cmd[m[6]:m[7]])
+		b.WriteByte('\n')
 		cmd = rest[end:]
 	}
 }

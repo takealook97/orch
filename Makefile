@@ -25,10 +25,12 @@ install: check link
 # Regenerate in a temporary tree so the check never modifies tracked documents.
 docs-check: build
 	@set -eu; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
-	for file in README.md docs/setup.md skill/SKILL.md skill/references/design.md constitution/orch-block.md; do \
+	for file in README.md docs/setup.md skill/references/design.md constitution/orch-block.md; do \
 		mkdir -p "$$tmp/$$(dirname "$$file")"; cp "$$file" "$$tmp/$$file"; \
 	done; \
 	env -u ORCH_ROLE ./$(BIN) docs gen --root "$$tmp"; \
-	for file in README.md docs/setup.md skill/SKILL.md skill/references/design.md constitution/orch-block.md; do \
+	for file in README.md docs/setup.md skill/references/design.md constitution/orch-block.md; do \
 		diff -u "$$file" "$$tmp/$$file"; \
 	done
+
+	@test $$(wc -l < skill/SKILL.md) -le 120

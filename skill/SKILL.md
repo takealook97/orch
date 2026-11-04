@@ -1,272 +1,75 @@
 ---
 name: orch
-description: Head's operating manual for multi-agent work with the `orch` executor — keep the top-tier Head on judgment and hand execution to cheaper catalog keys (`orch ask`/`orch do` for one-off tasks, Herdr panes for long, parallel, or verification work), choose a mode (direct/light/full/full+), write contracts, run independent verification lanes, and clean up. Use whenever work might be delegated or independently verified.
+description: Head's operating manual for delegation and independent verification through orch. Keep the Head on judgment; execute through catalog workers and orch test.
 ---
 
-# orch operating manual (for the Head)
+# orch entry point
 
-Enforcement lives in the `orch` executor and its hooks. This document is the judgment guide. Everything this skill needs ships in its own directory: the full design doc is `references/design.md`, and `references/decisions.md` records later decisions (it wins where the two differ).
-A worker (`ORCH_ROLE=worker`) does not use this document. It follows only its contract.
+## Role and standing gates
 
-Backend detection: `ORCH_MUX=herdr|app` overrides automatic selection; otherwise `HERDR_ENV=1` selects legacy Herdr, then a nonempty `HC_TERMINAL_ID` selects Herdr.app. Outside both, pane delegation is impossible; `orch ask`, `orch do`, and `orch test` still work. A run belongs to its original backend.
-Delegate only through `orch`, in Claude and Codex alike. Don't drive Herdr panes directly, even if a Herdr skill is installed.
+If `ORCH_ROLE=worker`, stop reading this guide: follow only the supplied contract, do not delegate, and write its result file with status added last.
 
-## Start here
+The Head only plans, evaluates, instructs, reviews, judges and communicates. All execution, including tiny edits, research execution, builds, tests, Git, installation and integration mechanics, goes through orch workers or orch test. Read-only inspection and writing run contracts/DAG/acceptance/decisions/findings and draft goal plans support judgment. There is no takeover exception. When judgment is unresolved, decide first and issue revised instructions.
 
-The Head only plans, evaluates, instructs, reviews, judges, and communicates. All execution, including tiny edits, builds, tests, Git and installation, goes through orch workers or orch test. Read-only inspection and run contract/DAG/acceptance/decision/findings and draft goal planning support judgment. There is no takeover exception.
+Spend Head tokens/context first, total tokens second, time third. Delegate execution to cheaper catalog keys regardless of length; length selects the channel. Use only the seven canonical keys from `orch models`; do not inherit CLI model/effort defaults or set models directly. The manifest is `models.yaml`; the generated full catalog lives in the repository README. Overrides and selection rules are in the advanced guide.
 
-- **direct**: no pane/run ceremony; use `orch ask --model codex-low-h "question"` or `orch do --model codex-medium-m --own 'src/**' "specified change"`.
-- **light**: one producer plus an independent review pane; tests use `orch test "go test ./..."`.
-- Long/unknown work, parallel work and independent reviews use panes. For full/full+, DAG, accounts and layout, see [advanced procedures](references/advanced.md).
-- Measurements, uninstall and the practical Head guard: [operations](../docs/operations.md) in the source repository.
+Inside Herdr, delegate only through orch; never use built-in subagent/Workflow tools or drive agent panes directly. `ORCH_MUX=herdr|app` overrides detection; otherwise `HERDR_ENV=1` chooses legacy, then `HC_TERMINAL_ID` chooses app. Outside both, ask/do/test still work but panes do not. Runs cannot cross backends.
 
-## 0. What the Head spends (priority order)
+External writes (deploy, payment, ordering, publishing) require separate authorization. Bypass flags waive local sandbox/approval prompts only; they do not waive this gate or repository gates.
 
-The Head usually runs on the top-tier model (fable, opus high, astra, sol high); workers run on cheaper keys. Spend in this order: **(1) Head tokens and Head context → (2) total tokens → (3) wall-clock time.** When token cost and time conflict, pick tokens; put time first only while the user is waiting on the result.
+With an active goal, work only for a criterion (`--serves`), log anything else with `orch goal note`, and stop/report at the budget. Compile and freeze a new `/goal` before execution.
 
-- The Head's job is **judgment and review**: decomposition, design decisions, trade-offs, accepting results, talking to the user.
-- **Execution goes to a lower key**, whatever its length, when it needs no top-tier judgment along the way (length picks the channel, not the owner: see "Which channel" in section 1): multi-file reading, log or long-document analysis, research, specified implementation (even 1-2 files), writing tests and fixing failures, build/lint/type errors, mechanical refactors, dependency bumps, clear-intent merge conflicts, git mechanics, scripts and bulk file processing, doc/commit/PR drafts, image iterations.
-- When execution exposes a judgment call, settle it and delegate revised instructions; task size and conversation context do not transfer execution to the Head.
-- Everything the Head reads or runs stays in its context for the rest of the session. A worker's context is thrown away when it finishes. So "how long would it take me" is the wrong question; ask **"does this need top-tier judgment?"**
+## Choose the lightest mode
 
-## 1. Modes and thresholds
+Estimate within 30 seconds. E is Head judgment effort; F is files/modules; P is independent subtasks; U is pinned acceptance; R is immediate reversibility.
 
-Estimate within 30 seconds of receiving the request.
-
-| Symbol | Item |
-|---|---|
-| E | Head judgment effort: decisions, decomposition, and review the Head itself must do (execution handed to `orch ask`/`orch do` does not count) |
-| F | Number of files changed, module boundaries |
-| P | Number of independent, non-blocking subtasks that clear the delegation break-even point |
-| U | Can the acceptance criteria be pinned down one sentence at a time right now |
-| R | Can it be reverted immediately with git |
-| H | High-risk marker |
-
-| Mode | Condition | Flow |
+| Mode | Threshold | Required flow |
 |---|---|---|
-| direct | All of: E <= 10 calls/5 min · F <= 2 files, one module · P <= 1 · U pinned · R immediate · no H | No run, no panes. The Head decides; all execution goes to `orch ask`/`orch do` (section 0). Tests run once through `orch test` |
-| light | Exceeds direct, but F <= 5, 1-2 modules · U pinned · R possible · no H | 1 producer (parallel if P >= 2) + 1 independent verification lane. A single producer can be `orch do`; the verification lane is still a pane worker of a different family |
-| full | Any of: F > 5 or 3+ modules · P >= 3 · U needs investigation to pin down · R is cumbersome | Investigate -> (Head design) -> produce -> verification lanes -> integrate |
-| full+ | Any H applies | full + design challenge + 2 critical lanes from different families + an adversarial lane |
+| direct | E <=10 calls/5min, F <=2 in one module, P <=1, U pinned, R immediate, no high risk | ask/do; test if needed; no run ceremony |
+| light | Exceeds direct, F <=5 in 1–2 modules, U pinned, R possible, no high risk | Producer plus independent review pane; mechanical checks |
+| full | F >5 or 3+ modules, P >=3, U needs research, or R cumbersome | Investigate, Head design, produce, verify, integrate |
+| full+ | Any high-risk marker | full plus design challenge, two critical lanes from different families, adversarial lane |
 
-H: auth/permissions/secrets/encryption / data deletion, migration, schema, backup / money, payment, billing, usage calculation / core concurrency structures / production config, deploy pipeline, externally published output / the user asks for "thorough, complete verification".
+High risk: auth/permissions/secrets/encryption; deletion/migration/schema/backup; money/billing/usage calculations; core concurrency; production config/deploy pipeline/published output; request for thorough complete verification.
 
-In full, the neutral lane is required only if user-facing output (docs, UI, CLI text, API surface) changed.
+Before selecting full/full+, read [advanced procedures — modes, contracts and verification](references/advanced.md). Upgrade when risk or scope grows; downgrade and close unneeded workers when scope shrinks. Record mode changes with a reason.
 
-light's single verification lane: if it's code and tests exist, the Head runs the tests with `orch test` plus **1 critical lane** (a different family). If it's docs or user-facing output, **1 neutral lane** (`gemini-medium-m`). If both apply, use critical.
+## Select the channel
 
-**Delegation rule (cost, not time).** Hand a subtask to a lower key when all of these hold:
+Before new research, use `orch recall "query"`; use `--all-repos` when needed. Ask caches successful identical questions; `--fresh` bypasses the cache.
 
-```
-work the Head would do itself (reading + editing + trial and error)
-    >>  instruction + returned report
-and  no top-tier judgment is needed mid-task
-and  the Head can review the result briefly (summary, diff stat, test result)
-```
-
-Length alone never keeps a task with the Head. If evidence is insufficient, request a focused worker report and inspect the primary evidence needed for judgment.
-
-**Which channel:**
-
-Before new research, run `orch recall "query"` to search prior answers and results (add `--all-repos` to search beyond the current repository). `orch ask` reuses successful answers for an identical question, model, output cap, and code state; use `--fresh` to force a new answer. Cache lifetime defaults to seven days; `ORCH_ASK_CACHE_TTL` sets hours, and `0` disables caching. Only asks are cached.
-
-| Situation | Channel |
+| Work | Channel |
 |---|---|
-| One bounded read-only question expected to finish in under 5 minutes (search, trace a call path, summarize a log or doc) | `orch ask --model <key> "..."` |
-| One bounded execution task with owned files expected to finish in under 5 minutes (implement a specified change, fix a failing test, draft a doc) | `orch do --model <key> --own '<globs>' [--test "<cmd>"] "..."`; add `--background` and keep judging, then `orch wait task-N` |
-| Only need to know whether tests/builds pass | `orch test "<cmd>"` (no model; exit code, failing names, capped excerpt) |
-| Work expected to take 5+ minutes or of unknown length (a whole phase, fix-and-retest loops, broad research), parallel pieces, work the user wants to watch, and **every independent review or verification, read-only included** | pane workers: `orch run new` -> contract -> `orch spawn` (section 2) |
+| Bounded read-only question, expected under 5 minutes | `orch ask --model <key> "question"` |
+| Bounded execution under 5 minutes, with exclusive owned globs | `orch do --model <key> --own 'paths/**' "instructions"` |
+| Only test/build pass/fail is needed | `orch test "command"` |
+| 5+ minutes, unknown duration, parallel work, user-visible progress, every independent review | Contract and `orch spawn --model <key>`, then prompt/wait |
 
-Inside Herdr the user watches panes, not `orch ask`/`orch do`; a long pane-less task looks like orch doing nothing. When unsure whether a task will finish in 5 minutes, use a pane. An independent review is a verification lane even when it only reads: don't run it as `orch ask`. Inside Herdr, `orch ask`/`orch do` add a `hint:` line to the report when a task ran 5+ minutes without a pane; treat it as a misrouting and send that kind of work to a pane next time.
+A `hint:` on ask/do means the channel was wrong; use panes for that kind of task next time. When unsure, use a pane. Long read-only reviews also require panes. Read [advanced procedures — channels and worker selection](references/advanced.md) before choosing workers, fallback, escalation or recovery.
 
-**Parallel split floor:** splitting one job into parallel pieces is still worth it only when each piece takes 5+ minutes, the owned files don't overlap, and the interface is locked. Historical small-fixture observations suggested overhead; 5 minutes remains an operational heuristic, not an established break-even point. That floor applies to splitting, not to handing a whole task to a single cheaper worker.
+## Production and verification
 
-Adjustment: if scope turns out small, downgrade immediately and close unneeded workers. Upgrade if H surfaces, criteria shift, or the same defect appears twice. Record it with `orch run mode <mode> --reason "..."`.
+Write finite acceptance criteria and Head decisions before production. Contracts specify scope, permissions, plan, tests and result format. Workers do not resolve missing Head design decisions. Read [advanced procedures — contracts and DAG](references/advanced.md) before creating a run, contract, DAG or goal.
 
-Work coming from `/goal` or another command follows the same rule. A command sets the goal and iteration style; this document decides who does it. If a command instructs a subagent, parallel agents, or a Workflow, run it through `orch` instead: a single read-only subagent maps to `orch ask`, a single writing one to `orch do`, and parallel or long-running ones to pane workers.
+One writer per checkout. Parallel writes require independent deliverables, disjoint globs, a locked interface, worker-cap compliance, and isolated worktrees; shared configuration belongs to one writer. If isolation is unavailable, keep writes serial. Read [advanced procedures — parallelism and integration](references/advanced.md) before parallel writes or merging worktrees. Integration must be verified again.
 
-## 1a. Goals (`/goal`)
+An author cannot independently verify their own work. Critical verification must use another model family. Gemini can never be the sole verifier or the adversarial reviewer. Tests/self-review support evidence; they are not independent review.
 
-Codex 0.162 skips UserPromptSubmit for the native `/goal <objective>` command. Its PreToolUse guard reads goal events from the rollout transcript and blocks the first tool call until an orch goal is frozen for the Head pane; a draft does not suffice. During compilation it permits orch goal/help/models/status commands and edits under ORCH_HOME. The `codex-prompt` hook still covers plain prompts that start with `/goal` text. Claude transcripts have no such goal events and are unaffected.
+Mechanical checks gate other reviews. Light uses critical review for code (different family), neutral for docs/UI; when both apply choose critical. Full requires critical and neutral when a user-facing surface changed. Full+ adds the second critical and adversarial lanes. Every independent lane uses a fresh pane. Read [advanced procedures — verification lanes and adjudication](references/advanced.md) before assigning or accepting reviews.
 
-Compile a `/goal` before starting work: run `orch goal new --text "<goal verbatim>"` (or `--request FILE|-`), fill the printed `goal.md`, then run `orch goal freeze`. Claude UserPromptSubmit and Codex plain-prompt hooks remind Heads to do this inside Herdr when no goal is active. Trust the new `codex-prompt` hook once in Codex `/hooks`; agy has no prompt hook.
+Accept findings only when reproduced or proven, not by model vote. Record confirmed defects, plausible risks, unfounded concerns and resolutions in findings.md. Fix confirmed defects and rerun affected checks/lanes. At most two fix iterations at one plan; then revise the design, resolve ambiguity/environment, or escalate once with revised instructions.
 
-The goal file has `## Request`, `## Criteria`, `## Non-goals`, `## Scope`, and `## Budget`. Use 1–8 numbered criteria, each immediately followed by an indented `- check: <shell command>` line. Every criterion must be finite and checkable; open-ended words such as `perfect`, `everything`, `all remaining`, `완벽`, and `끝까지` are rejected. Scope is one absolute or `~/` glob per bullet (`**` includes subdirectories). Budget bullets are `hours: 4`, `max-workers: 20`, and `fix-rounds: 2` by default. The template is deliberately incomplete until criteria and scope are filled. Edit the existing template sections in place; do not append a second document. Checks must be shell commands that exit 0 when met, not prose or inline `(check: ...)` annotations. Checkbox and bullet criteria are rejected. Budget must set numeric hours and max-workers; an open budget is not allowed. Freeze errors include the expected format so agents can correct the file directly.
+## Mandatory operational references
 
-```markdown
-## Criteria
-1. The requested behavior passes its regression test
-   - check: go test ./...
-## Scope
-- ~/Projects/example/**
-## Budget
-- hours: 4
-- max-workers: 20
-- fix-rounds: 2
-```
+- Before accounts, capacity retry, fallback or layout work: read [advanced procedures — accounts, recovery and layout](references/advanced.md).
+- Before goal compilation, budgeting, admission or resumption: read [advanced procedures — goals](references/advanced.md).
+- Before measuring usage, interpreting savings, or uninstall/reinstall: read [operations](references/operations.md). Missing coverage is never zero; provider identity is not proof of Head ownership.
+- For technical rationale read [design](references/design.md); [decisions](references/decisions.md) wins over superseded design.
 
-Freeze closes the criteria list and hashes its text and checks. Do not amend criteria during execution: end the goal and start another to change them. `orch goal status` shows elapsed time, admitted spawn/do reservations in goal.json, fixes per shard, and backlog size; it fails loudly if criteria changed. New runs and ad-hoc task runs automatically link to the active goal of the Head pane. The worker cap counts admitted spawn/do in `goal.json`, reserved at admission and refunded if spawn/do fails before starting. `run new --goal` must name an existing goal.
+## Cleanup and report
 
-Pass `--serves N[,M]` on every spawn and do. Work without an existing criterion is refused. Put discoveries outside the list in `orch goal note "..."`; report `backlog.md` at the end without working those items. DAG nodes may specify `serves: [1, 2]` and `fix_of: api`. Fix work uses `--fix-of SHARD`; spawn names such as `fix-api` or `fix2-api` also count against the shard's cap. Once the cap is used, mark the shard blocked, note it, and report it. Fallback respawns do not spend another fix round. Ask and test remain free and do not count toward the worker limit.
+Keep panes across active-goal turns. Close finished or stalled/unneeded owned workers promptly; wait/collect close finished panes automatically. Close only panes orch recorded for this run, never the user's or another Head's. Use unfocused placement; do not zoom or prompt panes directly.
 
-Run `orch goal check` in the project working directory. Each criterion command runs through `sh -c` with a ten-minute timeout. Exit codes: **0** goal met; **1** a check failed; **2** no active goal or bad file; **3** goal stopped because the hours or worker budget was reached; **4** criteria tampered. At exit 3 stop starting work, report results and backlog, and ask the user whether to extend. Only after the user agrees, run `orch goal extend --hours N --max-workers N --reason "user: <approval>"`; limits are increased and the reason is logged. `orch goal end` ends the goal and prints its backlog.
+At task/goal completion, failure, cancellation or early exit, call `orch run end` and report its removal confirmation. Report retained worktrees and their reason; do not remove unmerged/foreign worktrees. Read [advanced procedures — cleanup](references/advanced.md) before recovering orphaned runs or worktrees.
 
-Claude and Codex Head hooks restrict Claude Edit, Write, MultiEdit, and NotebookEdit and Codex `apply_patch` edits (including shell heredoc patches) to frozen Scope globs, always permitting `~/.orch`, `~/.claude`, `/tmp`, and `/private/tmp`. Other Bash writes are not checked. These guards are speed bumps, not a security boundary; the Head still owns scope and user approval.
-
-## 2. Flow
-
-```bash
-orch run new --text "<original request verbatim>" --mode full --playbook feature   # prints the run id, ~/.orch/runs/<id>/
-# Head fills in acceptance.md and writes decisions.md (interfaces, names, file-level plan) and each contract plan
-orch contract new impl-api --role produce --model codex-high-m      # contract template -> fill it in
-orch spawn --model codex-high-m --name impl-api --role produce --purpose impl --worktree ../wt-api
-orch prompt impl-api                                          # send only the contract path and result path
-orch wait impl-api                                            # judged by the status line in the result file; auto-falls back on capacity exhaustion
-orch collect impl-api                                         # checks results + owned-file scope (a violation is a failure)
-orch spawn --model claude-medium-m --name crit-api --role verify-critical --reviews impl-api
-...
-orch run end                                                  # close every pane and confirm removal
-```
-
-- full+: when a design stage ran, run a design challenge (different family from the Head; spawn with `--author-family head`) before any produce worker starts; default the lightest other-family key: Head Anthropic -> codex-high-l, Head OpenAI -> claude-medium-m; codex-high-m / claude-high-m only when the design is complex.
-- To spawn several workers at once, call spawn repeatedly, then wait on all of them together with `orch wait a b c`.
-- If there are multiple pieces with dependencies, **delegate as a DAG.** Write `dag.yaml` in the run directory, then `orch dag check` -> `orch dag run`. It spawns nodes whose inputs are ready, in order of longest critical path, closes finished panes, and skips downstream nodes whose dependencies aren't done (the mechanical lane is the gate). If interrupted, calling `orch dag run` again resumes it. Check status with `orch dag status`.
-
-  ```yaml
-  nodes:
-    - {name: recon-api, model: codex-low-h, role: recon, purpose: explore}
-    - {name: impl-api, model: codex-high-m, role: produce, purpose: impl, needs: [recon-api], worktree: ../wt-api}
-    - {name: mech-api, run: "go vet ./... && go test ./...", role: verify-mech, worktree: ../wt-api, needs: [impl-api]}
-    - {name: crit-api, model: claude-medium-m, role: verify-critical, reviews: [impl-api], needs: [mech-api]}
-    - {name: neu-api, model: gemini-medium-m, role: verify-neutral, reviews: [impl-api], needs: [mech-api]}
-  ```
-  Contracts default to `contracts/<name>.md`. `reviews` also implies `needs`. Output the Head wrote is `author_family: [head]`. A `run` node has no model or contract: orch runs the command in its `cwd`/`worktree`, writes the summary as its result file, and fails the node (skipping everything behind it) on a nonzero exit. A `pane: false` node (recon or verify-* only) runs its contract through `orch ask` and saves the final message as its result file. Neither takes a row, and neither can be reviewed.
-- The Head tab keeps at most terminal height / `ORCH_MIN_ROW_HEIGHT` (default 2) visible worker rows (minimum 1, maximum `ORCH_MAX_ROWS`, default 20). Further pane workers use unfocused overflow tabs, stacked in equal rows with the same per-tab row cap. `ORCH_MAX_WORKERS` sets the live pane-worker cap per run (positive integer, default 12); only that cap queues ready DAG workers, in critical-path order. Closed/lost workers and nodes without panes do not count. Goal admission budgets still apply separately.
-- **A finished worker pane must be closed immediately.** orch guarantees this without the Head: `orch spawn` starts a per-run reaper that closes a pane as soon as its result file has a status line (and the agent is no longer working), and exits when the run has no live workers. `orch wait` also closes the pane the moment it sees the status line and confirms removal. Same for `orch collect`, fallback, and `orch run end`. Panes are never reused; the next contract gets a new worker. A worker that stalled with no result (`idle-no-result`) is also closed right away with `orch close <name>` once you've made a judgment call.
-- Don't read a worker's conversation transcript. Use `orch read` only when the result file is missing or something is stuck.
-- Run `orch wait` in the foreground by default. While the user is waiting for progress, keep it in the foreground; do not send it to a background task. Never detach it with `&`, `nohup`, or `setsid`: a detached process fails the Head identity check and exits at once.
-- **Head token hygiene.** Read only the result's `summary:` line and the report `orch collect`/`orch do` prints; open the full result or diff only when the summary can't settle acceptance. While waiting, block on `orch wait` once; don't loop `orch status` or `orch read`. Run tests with `orch test`, not raw, so full logs stay out of your context. For short work, prefer `orch do` over a hand-written contract (orch fills the scope, report format, and done condition).
-- `agent-blocked`, `idle-no-result`, and `timeout` are unresolved. Check with `orch read`, then choose among extending, `orch fallback`, or reassigning. Don't answer an approval question that falls outside already-granted scope; escalate it to the user.
-
-## 3. Contracts
-
-Pane workers need a contract; `orch ask`/`orch do` do not (their flags and requirement text are the contract). Fill in the template `orch contract new` produces. If a required section (Goal, Inputs, Scope, Permissions, Deliverables, Result report) is missing, `orch prompt` refuses.
-
-Each run has `knowledge.md` for verified reusable facts with sources. Workers may put at most eight facts in the optional `## Reusable facts` result section; orch merges them on done/partial completion, deduplicates them and records their worker source. The Head curates this file. Pane and inline DAG prompts automatically reference existing results for the node's explicit `needs` (including `reviews`). Non-verifier prompts also reference run knowledge; `verify-*` lanes receive no automatic knowledge reference or undeclared author results, preserving independent verification.
-
-- **Write it to be self-contained.** Even if a fallback starts fresh on a different model or account, the contract alone must be enough to do the work.
-- Hand over **paths** (files, line ranges, commit hashes), not inline content.
-- **Every handoff carries a plan written like a `/plan` handover document**: pane contracts in `## Plan`, `orch ask`/`orch do` in the requirement text. Ordered steps; for implementation each step names the file, the function and its signature, the exact change, the edge cases, and the test that proves it; for recon, verification, and docs each step names where to look, what to check or claim, and how the finding is proven. A plan this tight is what lets cheaper keys such as `codex-high-l` (sol, effort low) do the work; if you can't write it, the judgment isn't done yet: settle it first, or hand the open question to a stronger key explicitly.
-- Give `Owned files (glob)` exclusively. If read-only, write "none". `orch collect` diffs changes since the base commit and fails anything outside scope.
-- In a vat workspace, a child repository's worktree outside the workspace cannot run workspace-dependent `vat` or `make check` commands ("not inside a vat workspace"). Specify the original checkout as the check location, or require the worker to record the unavailable check in its result.
-- Join checks and commits with `&&`, never `;`: a failed check must stop the commit.
-- Keep repository rules and scripts the same for every worker. Do not add orch-specific branches: orch is one person's local tool.
-- After a contract has been prompted, a changed contract requires closing the worker and spawning a new name. Prompting identical content is an idempotent no-op; a changed or unknown original contract hash is refused.
-- Write down `Allowed evidence sources`. Unrelated Slack or external-connector searches are forbidden.
-- Forbidden under Permissions: deploy, external writes, git push, out-of-scope edits, re-delegation.
-- If a worker needs a new decision, it goes under "Blockers". The Head folds it into decisions.md and updates any affected contracts.
-- Keep the result's `summary:` line within three lines, and for verification lanes ask for findings sorted by severity with only the top items (for example 10) and their repro evidence in the summary; the rest goes below.
-
-## 4. Model placement (by purpose, chosen per contract)
-
-`orch models` shows the catalog. Families: OpenAI (`codex-*`), Anthropic (`claude-high-m` `claude-medium-m`), Google (`gemini-medium-m`).
-The same table applies to `orch ask`/`orch do` (`--model`). Pick the **cheapest key** that satisfies the contract, but reach for `claude-high-m` right away if the difficulty is visible upfront. Don't stall by retrying with a weaker model.
-
-| Purpose | Primary | Conditional alternative | `--purpose` |
-|---|---|---|---|
-| Broad file/symbol search, bulk classification, translation | `codex-low-h` | ambiguous classification criteria -> `claude-medium-m` | explore |
-| Evidence extraction, log/test-failure analysis, data extraction | `codex-low-h` | tangled root-cause candidates or schema interpretation -> `codex-high-m` | extract |
-| Web, long documents, PDFs, reading images/screenshots | `gemini-medium-m` | deep technical interpretation -> `claude-high-m`; visual detail -> `claude-medium-m` | web |
-| Condensing large or conflicting evidence for the Head, root-cause hypotheses | `claude-high-m` | -- | synthesis |
-| Drafting interfaces/schemas | `codex-high-m` | wide blast radius -> `claude-high-m` | impl |
-| Scoped known fixes (including tiny one-file edits), constrained writing and mechanical extraction | `codex-medium-m` | larger file-level plan -> `codex-high-l`; ambiguous cause -> `codex-high-m` | mech-impl |
-| Planned implementation: the contract fixes files, functions, and the acceptance test (features, bug fixes with a known cause, test code, mechanical edits) | `codex-high-l` | very narrow known fix -> `codex-medium-m` | mech-impl |
-| Implementation where the worker still has to choose the approach or find the cause | `codex-high-m` | -- | impl |
-| Hard implementation/debugging (concurrency, performance, security, complex state, flaky repro) | `claude-high-m` | reliable repro, localized cause -> `codex-high-m` | hard-impl |
-| Alternative implementation/design (for comparison) | `claude-medium-m` | primary is Anthropic -> `codex-high-m` | alt |
-| Docs, reports, research synthesis | `claude-medium-m` | deep technical content or conflicting sources -> `claude-high-m` | docs |
-| Short summaries, changelogs | `codex-medium-m` | -- | extract |
-| Data analysis | `codex-high-m` | ambiguous interpretation or causal judgment -> `claude-high-m` | analysis |
-| Merge/integration mechanics | `codex-medium-m` for clean Git mechanics; `codex-high-l` for textual conflicts | semantic conflicts -> `claude-high-m` | integrate |
-| Image generation | `codex-high-m` (Codex image_generation) | -- | image |
-
-Design is the Head's job: the Head writes decisions.md and the plans in each contract. A worker may condense evidence for it, never decide it.
-
-<!-- orch:models:begin -->
-| Key | CLI | Family | Tier | Default model | Effort | Model variable |
-|---|---|---|---|---|---|---|
-| `codex-low-h` | codex | openai | Luna | `gpt-6-luna` | high | `CODEX_LOW_H` |
-| `codex-medium-m` | codex | openai | Terra | `gpt-6.1-terra` | medium | `CODEX_MEDIUM_M` |
-| `codex-high-l` | codex | openai | Sol | `gpt-6.1-sol` | low | `CODEX_HIGH_L` |
-| `codex-high-m` | codex | openai | Sol | `gpt-6.1-sol` | medium | `CODEX_HIGH_M` |
-| `claude-high-m` | claude | anthropic | Opus | `opus-5.5-medium` | — | `CLAUDE_HIGH_M` |
-| `claude-medium-m` | claude | anthropic | Sonnet | `sonnet-5.5-medium` | — | `CLAUDE_MEDIUM_M` |
-| `gemini-medium-m` | agy | google | Gemini | `gemini-3.8-flash-medium` | — | `GEMINI_MEDIUM_M` |
-
-OpenAI tiers: Luna < Terra < Sol (independent of effort). Deprecated alias: codex-medium-h -> codex-low-h. CODEX_LOW_H takes precedence over CODEX_MEDIUM_H.
-
-Defaults are generated from `models.yaml`. Override shared model ids in `~/.orch/models.yaml` (or `ORCH_MODELS_FILE`), for example `models: {sol: new-model-id}` updates both Sol keys. An overlay may also set per-key effort with `keys: [{key: codex-high-l, effort: low}]`; other fields are rejected. Per-key environment variables override overlay model ids. `orch models` shows resolved ids and their source.
-<!-- orch:models:end -->
-
-Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default. For implementation, put the plan into the contract: `mech-impl` defaults to Terra for scoped fixes, then escalates through Sol low, Sol medium, and Sonnet. Larger complete plans explicitly start at `codex-high-l`. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
-
-**Fallback chains**: explore: `codex-low-h` -> `codex-medium-m` -> `gemini-medium-m`; extract: `codex-low-h` -> `codex-medium-m` -> `codex-high-m` -> `claude-medium-m`; mech-impl: `codex-medium-m` -> `codex-high-l` -> `codex-high-m` -> `claude-medium-m`. Terra never falls back to Luna; legacy aliases count as the same attempted key.
-
-**Transient model capacity**: a stopped Codex or Claude worker retries in the same session after 20, 40, 80, 160, then 300 seconds (8 retries by default; `ORCH_CAPACITY_RETRIES` overrides the cap). Both `orch wait` and the detached reaper resume pane workers, with a shared reservation preventing duplicate sends. `orch ask` / `orch do` resume the reported session within the original task timeout and keep the same output log and answer file. Usage quota handling takes priority; capacity falls back only after retries run out, or immediately when session resume is unavailable (agy or a one-off task without a session id). The reaper never starts fallback workers.
-
-**Fallback**: if `orch wait` detects capacity exhaustion in the output, CR workers leave account rotation to CR and advance to the next key on the same CR route for supported providers. Native workers first try a different account with the same key (when `ORCH_ACCOUNT_CMD` exists), then the next key in the `--purpose` chain, opening a new pane and appending prior partial results to the same contract. Verification lanes only use keys that still pass the family constraint. If the whole chain is blocked, leave that piece as blocked and continue with the rest. A quality failure is not a fallback but an **escalation** (`codex-high-m` -> `claude-high-m`, `codex-low-h` -> `codex-medium-m` -> `codex-high-m`). For `orch do`: if a task fails its test or scope check twice at one key, rerun it one key higher; if it fails at `claude-high-m`, settle the missing judgment and delegate revised instructions.
-
-## 5. Verification lanes
-
-Plan verification at the same time you assign the production work. An author's own tests or self-review are only supporting evidence.
-
-| Lane | `--role` | Who | Input | Output |
-|---|---|---|---|---|
-| Mechanical | verify-mech | No model: a DAG `run` node (or `orch test`) runs the commands. `codex-low-h` only reads a failure the excerpt doesn't explain | Deliverables, commands to run | Commands, exit codes, output excerpts, failure list |
-| Critical | verify-critical | A **different family** from the author (enforced via `--reviews`) | Original request, acceptance criteria, diff, mechanical results | Defect list (location, repro, severity) |
-| Neutral | verify-neutral | `gemini-medium-m` (never given the author's self-assessment) | Original request, acceptance criteria, deliverables, evidence of actual behavior | Requirements checklist |
-| Adversarial | verify-adversarial | A different family from the author, `gemini-medium-m` forbidden. Default `claude-high-m`; `codex-high-m` if the author is Anthropic | One concrete attack target | A counterexample or grounds for refuting it |
-
-Default critical-lane placement: author OpenAI -> `claude-medium-m` (or `claude-high-m` if complex) · Anthropic -> `codex-high-l` (or `codex-high-m` if complex or full+) · Google -> `claude-medium-m` (or `claude-high-m` if complex). QA defaults to the lightest key of the other family; escalate only on complexity, full+, or a missed defect.
-
-| Mode | Mechanical | Critical | Neutral | Adversarial |
-|---|---|---|---|---|
-| direct | `orch test`, if needed | -- | -- | -- |
-| light | yes (if there's something to run) | yes, for code | yes, for docs/UI | -- |
-| full | yes | yes | if user-facing output (docs, UI, CLI text, API surface) changed | optional |
-| full+ | yes | yes, x2, different families | yes | yes |
-
-In full, skip the neutral lane when the change has no user-facing surface; record the skip in the final report.
-
-- **The mechanical lane is the gate.** If it fails, don't spawn LLM lanes; send it back for a fix. If it passes, spawn the rest concurrently.
-- Every independent critical, neutral and adversarial review uses a fresh pane. Save the diff to `evidence/` and reference it and the mechanical result in the contract. Inline DAG support is a legacy API capability, not the default for independent reviews.
-- Require evidence (file:line, repro command) for every finding.
-- Build the neutral checklist template with `orch checklist` (generated from acceptance.md). For full+'s second judgment, shuffle the order with `orch checklist --shuffle`.
-- The neutral checklist format is fixed: `| # | Acceptance criterion | Verdict (met/not met/cannot confirm from evidence) | Evidence location | Notes |` plus "added but not requested" and "confusing from the user's perspective". One verdict per item. For items confirmable by script, carry over the mechanical-lane result. In full+, shuffle the order and judge once more; the Head confirms the remaining items directly.
-
-**Judgment**: the Head verifies every finding against primary evidence and sorts it into `findings.md` (confirmed defect / plausible risk / unfounded concern / resolved). Only a reproduced or proven finding counts as a defect. Reviewers have no veto. Passing the neutral checklist or a technical review alone is **not** sufficient for acceptance. Send defects to a fix worker and re-run **only the affected lanes**. Up to 2 fix iterations. A third attempt at the same plan is forbidden: two failures usually mean the plan is wrong, not the implementation. The Head classifies the cause and acts: design error -> back to design (revise decisions.md and the contracts); ambiguous requirement -> ask the user; environment problem -> report a blocker; worker capability -> escalate the key (section 4) and rerun once. Note plausible risks in the final report.
-
-## 6. Parallelism
-
-- Reads (investigation, review, verification) are always parallel.
-- Writes are parallel only when **all parallel-write gates** pass: 2+ independent deliverables · owned-file globs don't overlap · the interface is already locked in decisions.md · concurrent writers <= the worker cap (`ORCH_MAX_WORKERS`, default 12). Otherwise, use a single sequential writer.
-- Stages are not barriers. As soon as one piece's investigation finishes, start that piece's production; as soon as production finishes, start that piece's verification.
-- One writer per checkout. `produce`/`integrate` workers and `orch do` automatically use a new Git worktree when that checkout already has a live writer, including writers of other Heads and backends. Worktrees start at HEAD; dirty source changes are not copied. `--worktree DIR` selects a worktree explicitly; `--no-worktree` (DAG: `worktree: none`) opts out of automatic isolation. Shared files (config, lockfiles, schema) belong to a single worker.
-- Collect commits in-scope worktree changes for done/partial workers; `orch do` commits successful in-scope changes when it finishes. Use `orch merge [name...] --test "CMD"` to merge finished branches (refused while another writer is live in the source checkout unless `--force`) into their source checkout, run integration checks through `orch test`, then remove the worktree directories and branches. `--keep` retains them. Only worktrees orch created are committed, merged or removed; an existing `--worktree` path stays a plain cwd. Dirty overlapping files refuse the merge; conflicts are aborted; a failed integration test leaves every worktree for inspection. Even if per-piece verification passed, run full verification after integration. A clean merge needs no model.
-- `orch run end` cleans up merged worktrees and reports unmerged ones with their branch and merge command. `orch gc` removes only clean automatic worktrees whose branches are already merged into their source checkout; dirty or unmerged worktrees remain.
-
-## 7. Cleanup and reporting
-
-- The run's lifetime is the standard. Keep panes alive across turns while a `/goal` is in progress. Resume with `orch resume --run <id>`.
-- On completion (success, failure, cancellation, or early exit), call `orch run end`. Tell the user the removal confirmation. Report any leftover worktree along with the reason.
-- **Close only panes you spawned.** `orch` closes only pane IDs recorded in its run, and refuses another Head's run. Never close a user's pane or another session's pane.
-- If a previous session crashed and its Head is gone, pick up that run with `orch resume --run <id>` to clean it up, or use `orch gc --orphans`.
-- The final report states the mode, the keys used (including fallbacks and escalations, marked as e.g. "gemini-medium-m substitution"), confirmed defects and their resolution, remaining plausible risks, and unknowns.
-
-## 8. Accounts
-
-Pane workers default to `--account auto`: Codex/Claude use the resolved `cr codex` / `cr claude` executable when available, with fixed catalog model/effort and Codex inline-screen flags. CR selects and rotates accounts; inherited `CR_LAUNCH_EMAIL` is cleared and `CR_HOME` is preserved. Other providers or missing CR use native startup. Explicit `--account cr` requires CR and a supported provider. Explicit `same` (Head login) and `hook` retain native CLI startup. One-off `orch ask` / `orch do` still default to `same`. CR startup keeps unfocused owned placement, detects the agent by pane, assigns its worker name, and checks registration, readiness and trust; failures close the owned pane. CR model fallback stays on CR for supported providers and skips legacy hook retries. For optional direct account selection, use `--account hook` with `ORCH_ACCOUNT_CMD`. An adapter for the cr registry ships with this skill at `scripts/orch-account-cr`; point `ORCH_ACCOUNT_CMD` at its absolute path (e.g. `~/.claude/skills/orch/scripts/orch-account-cr`) (it only reads the registry and aligns that account's home with global instructions, skill and hook links, and Codex hook trust state). With registry priority `custom`, the hook selects usable accounts by ascending nonzero rank (zero or missing ranks last), then email local part and full email, regardless of capacity mode. Other priorities retain the legacy headroom order: minimum of 5h and weekly remaining descending, then weekly remaining descending. For explicit hook workers, capacity fallback tries a different account with the same key first.
-
-## 9. Layout (enforced by orch)
-
-The Head takes the full-height left third; workers stack top to bottom at equal height in the right two-thirds column. Legacy spawns use `--no-focus`; Herdr.app spawns use space/tab labels without moving focus. Herdr.app rewrites the split document with version checks: Head weight 1, worker column weight 2, equal worker rows. Overflow tabs use full-width equal rows. Foreign terminal or mod blocks stop layout changes (I6). **Don't steal the user's focus:** Herdr's `pane zoom` and `agent prompt` move the UI to the target tab, so don't call them directly (orch doesn't either). If a tab has a user pane, spawn stops (it never moves or closes it). If the layout breaks, use `orch layout`. If you need a pane for a plain command rather than delegation, prefix the command with `ORCH_RAW_HERDR=1` to get past the hook. Help lookups (`herdr pane split --help`, `herdr-app do pane.split --help`) pass the hook without it. Raw app pane creation and `hc run -- <agent>` are guarded too.
+Report mode, keys/fallbacks/escalations, confirmed defects and fixes, plausible risks, unknowns and mechanical evidence. A successful technical review alone is insufficient for acceptance.

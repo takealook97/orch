@@ -11,7 +11,7 @@ import (
 const modelsBegin = "<!-- orch:models:begin -->"
 const modelsEnd = "<!-- orch:models:end -->"
 
-var generatedModelDocs = []string{"README.md", "docs/setup.md", "skill/SKILL.md", "skill/references/design.md", "constitution/orch-block.md"}
+var generatedModelDocs = []string{"README.md", "docs/setup.md", "skill/references/design.md", "constitution/orch-block.md"}
 
 func tierSummary() string {
 	var tiers []string
@@ -81,7 +81,13 @@ func generateModelDocs(root string) error {
 		if to < from {
 			return fmt.Errorf("%s: reversed model markers", file)
 		}
-		block := modelMarkdown()
+		block := "Catalog: [README](../README.md#model-catalog); defaults come from `models.yaml`; inspect resolved values with `orch models`.\n"
+		if file == "skill/references/design.md" {
+			block = "Catalog: [README](../../README.md#model-catalog); defaults come from `models.yaml`; inspect resolved values with `orch models`.\n"
+		}
+		if file == "README.md" {
+			block = modelMarkdown()
+		}
 		if file == "constitution/orch-block.md" {
 			block = "- " + tierSummary() + "\n"
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -57,5 +58,51 @@ func TestManifestDocsGeneration(t *testing.T) {
 	}
 	if err := generateModelDocs(root); err == nil {
 		t.Fatal("accepted unmarked document")
+	}
+}
+
+func TestSkillEntryReferences(t *testing.T) {
+	b, err := os.ReadFile("skill/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(b, []byte("\n")) > 120 {
+		t.Fatal("entry exceeds 120 lines")
+	}
+	for _, file := range []string{"skill/SKILL.md", "skill/references/advanced.md"} {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		re := regexp.MustCompile(`\]\(([^)]+\.md)(?:#[^)]*)?\)`)
+		for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(file), m[1])); err != nil {
+				t.Errorf("%s broken link %s", file, m[1])
+			}
+		}
+	}
+	for _, file := range []string{"docs/setup.md", "skill/SKILL.md", "skill/references/design.md", "skill/references/advanced.md", "constitution/orch-block.md"} {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte("| Key | CLI | Family | Tier |")) {
+			t.Errorf("duplicate full catalog in %s", file)
+		}
+	}
+}
+
+func TestOperationsMirror(t *testing.T) {
+	canonical, e := os.ReadFile("docs/operations.md")
+	if e != nil {
+		t.Fatal(e)
+	}
+	mirror, e := os.ReadFile("skill/references/operations.md")
+	if e != nil {
+		t.Fatal(e)
+	}
+	expected := append([]byte("<!-- Generated mirror of docs/operations.md; update the canonical repository document first. -->\n"), canonical...)
+	if !bytes.Equal(mirror, expected) {
+		t.Fatal("skill operations mirror is stale")
 	}
 }

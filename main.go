@@ -52,7 +52,7 @@ Maintenance
                                         --orphans: also clean runs whose Head disappeared (abnormal exit)
   orch doctor [--probe-models] [--keys k1,k2]
   orch docs gen [--root DIR]             regenerate marked model catalog blocks
-  orch measure import|report             explicit local usage and quality evidence (JSON import on stdin)
+  orch measure import|collect|report             explicit local usage and quality evidence (JSON import on stdin)
   orch uninstall [--repo DIR] [--apply]   preview owned removal; --apply backs up before removal
   orch install [--repo DIR] [--dry-run]   install constitution, hooks, skill, and playbooks (after backup)
   orch playbook check [DIR]

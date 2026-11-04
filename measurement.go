@@ -14,29 +14,46 @@ import (
 
 // Measurement deliberately has no prompt, transcript body or arbitrary note fields.
 type Measurement struct {
-	Version    int       `json:"version"`
-	ID         string    `json:"id"`
-	Session    string    `json:"session"`
-	Period     string    `json:"period"`
-	Subject    string    `json:"subject"`
-	Entity     string    `json:"entity"`
-	Phase      string    `json:"phase"`
-	Source     string    `json:"source"`
-	Model      string    `json:"model,omitempty"`
-	Kind       string    `json:"kind"`
-	Coverage   string    `json:"coverage"`
-	Input      *int64    `json:"input_tokens"`
-	Output     *int64    `json:"output_tokens"`
-	DurationMS *int64    `json:"duration_ms"`
-	Event      string    `json:"event,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	Related    string    `json:"related,omitempty"`
-	At         time.Time `json:"at"`
+	Provenance *usageProvenance `json:"provenance,omitempty"`
+	Version    int              `json:"version"`
+	ID         string           `json:"id"`
+	Session    string           `json:"session"`
+	Period     string           `json:"period"`
+	Subject    string           `json:"subject"`
+	Entity     string           `json:"entity"`
+	Phase      string           `json:"phase"`
+	Source     string           `json:"source"`
+	Model      string           `json:"model,omitempty"`
+	Kind       string           `json:"kind"`
+	Coverage   string           `json:"coverage"`
+	Input      *int64           `json:"input_tokens"`
+	Output     *int64           `json:"output_tokens"`
+	DurationMS *int64           `json:"duration_ms"`
+	Event      string           `json:"event,omitempty"`
+	Reason     string           `json:"reason,omitempty"`
+	Related    string           `json:"related,omitempty"`
+	At         time.Time        `json:"at"`
 }
 
 var evidenceID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$`)
 
 func (m Measurement) validate() error {
+	if m.Provenance != nil {
+		p := m.Provenance
+		for _, id := range []string{p.Message, p.Request} {
+			if id != "" && !evidenceID.MatchString(id) {
+				return fmt.Errorf("invalid provider observation identity")
+			}
+		}
+		if !contains1([]string{"claude", "codex"}, p.Provider) || p.Binding != "operator-declared" || p.Session != m.Session || len(p.File) != 64 {
+			return fmt.Errorf("invalid usage provenance")
+		}
+		for _, c := range p.File {
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+				return fmt.Errorf("invalid file fingerprint")
+			}
+		}
+	}
 	if m.Model != "" && !evidenceID.MatchString(m.Model) {
 		return fmt.Errorf("invalid model identity")
 	}
@@ -154,7 +171,7 @@ func recordMeasurement(m Measurement) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0600)
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
 	if err != nil {
 		return err
 	}
@@ -217,6 +234,9 @@ func readMeasurements(r io.Reader) ([]Measurement, error) {
 	}
 }
 func measurementCommand(args []string, in io.Reader, out io.Writer) error {
+	if len(args) > 0 && args[0] == "collect" {
+		return collectUsageCommand(args[1:], out)
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("usage: orch measure import < record.json; orch measure report")
 	}
@@ -241,13 +261,17 @@ func measurementCommand(args []string, in io.Reader, out io.Writer) error {
 		return err
 	}
 	type group struct {
-		Total        int   `json:"n_total"`
-		With         int   `json:"n_with_value"`
-		Missing      int   `json:"n_missing"`
-		Input        int64 `json:"observed_input_subtotal"`
-		Output       int64 `json:"observed_output_subtotal"`
-		DurationWith int   `json:"n_with_duration"`
-		DurationMS   int64 `json:"observed_duration_ms_subtotal"`
+		Total         int   `json:"n_total"`
+		With          int   `json:"n_with_value"`
+		WithInput     int   `json:"n_with_input"`
+		MissingInput  int   `json:"n_missing_input"`
+		WithOutput    int   `json:"n_with_output"`
+		MissingOutput int   `json:"n_missing_output"`
+		Missing       int   `json:"n_missing"`
+		Input         int64 `json:"observed_input_subtotal"`
+		Output        int64 `json:"observed_output_subtotal"`
+		DurationWith  int   `json:"n_with_duration"`
+		DurationMS    int64 `json:"observed_duration_ms_subtotal"`
 	}
 	groups := map[string]*group{}
 	events := map[string]int{}
@@ -268,10 +292,20 @@ func measurementCommand(args []string, in io.Reader, out io.Writer) error {
 		}
 		if m.Input != nil && m.Output != nil {
 			g.With++
-			g.Input += *m.Input
-			g.Output += *m.Output
 		} else {
 			g.Missing++
+		}
+		if m.Input != nil {
+			g.WithInput++
+			g.Input += *m.Input
+		} else {
+			g.MissingInput++
+		}
+		if m.Output != nil {
+			g.WithOutput++
+			g.Output += *m.Output
+		} else {
+			g.MissingOutput++
 		}
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"groups": groups, "n_total": len(rows), "events": events})

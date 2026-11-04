@@ -6,13 +6,6 @@ import (
 	"strings"
 )
 
-// A practical redirect for known tool names and commands, not a shell sandbox.
-var headExecution = regexp.MustCompile(cmdPos + `(\S*/)?(go\s+(-C\s+\S+\s+)?(test|build|run|install|generate|fmt|vet)|gofmt|make|gmake|npm|npx|pnpm|yarn|bun|uv|gh|pytest|python[0-9.]*|ruby|perl|node|pip[0-9.]*|cargo|rustc|gcc|clang|cmake|git\s+((-[Cc]\s+\S+|--(git-dir|work-tree)(=\S+|\s+\S+))\s+)*(add|commit|push|pull|merge|rebase|checkout|switch|reset|restore|clean|apply|cherry-pick|worktree|fetch|stash|tag|rm|mv|revert|am|branch\s+-[dD]|config)|sed\s+-[^\s]*i|tee|touch|mkdir|rm|mv|cp|ln|chmod|dd|rsync|install|curl|wget)\b`)
-var headRedirect = regexp.MustCompile(`(^|[^<])>{1,2}`)
-var headSafeRedirect = regexp.MustCompile(`\s+[0-9]*>{1,2}\s*/dev/null(?:\s|$)|\s+[0-9]*>&[0-9-]+(?:\s|$)`)
-var inspectionStart = regexp.MustCompile(`^\s*(rg|grep|awk|sed|cat|head|tail|sort|uniq|wc|find|git\s+(log|show|diff|status))\b`)
-var headExtraExecution = regexp.MustCompile(cmdPos + `(?:\S*/)?(?:go\s+(?:-C\s+\S+\s+)?(?:get\b|mod\s+(?:tidy|download|edit|init|vendor)\b)|find\b[^;|&\n]*\s+-(?:delete|exec|execdir|ok|okdir)\b|(?:ba|z|da|k|fi)?sh\s+(?:-\S+\s+)*[^\s-])`)
-
 func headExecutionReason(in hookInput) string {
 	// Herdr alone does not imply an orch-managed session. A run or explicit
 	// opt-in identifies management; ordinary user terminals remain unaffected.
@@ -62,86 +55,28 @@ func headExecutionReason(in hookInput) string {
 		}
 	}
 	if goalShellTool.MatchString(in.tool()) {
-		cmd, programExecution := delegationCommandText(stripPatchHeredocs(in.commandText()))
-		joined := quoteJoiner.Replace(cmd)
-		// No blanket orch/raw prefix bypass: chained recognized execution still matches.
-		if programExecution || headExecution.MatchString(cmd) || headExecution.MatchString(joined) || headExtraExecution.MatchString(cmd) || headExtraExecution.MatchString(joined) || headRedirect.MatchString(headSafeRedirect.ReplaceAllString(cmd, " ")) {
-			return reason
+		commands, err := scanHeadCommands(stripPatchHeredocs(in.commandText()))
+		if err != nil {
+			return reason + " Unsupported shell syntax: " + err.Error() + "; delegate the complete command."
+		}
+		for _, command := range commands {
+			if headCommandExecutes(command) {
+				return reason
+			}
 		}
 	}
 	return ""
 }
 
-var delegationStart = regexp.MustCompile(`^\s*(?:(?:\w+=\S+|env|command|exec)\s+)*(?:\S*/)?orch\s+(?:ask|do|test|spawn|goal|help|models|status|contract|run|read|wait|collect|close)\b`)
-
-// Quoted orch arguments are requirements/data, not shell programs. Keep actual
-// shell separators, redirects and substitutions visible, including those after
-// the delegated invocation. This is deliberately narrower than a shell parser.
-func delegationCommandText(cmd string) (string, bool) {
-	var out strings.Builder
-	programExecution := false
-	segment := 0
-	for i := 0; i < len(cmd); {
-		c := cmd[i]
-		if c == '\\' && i+1 < len(cmd) {
-			out.WriteString(cmd[i : i+2])
-			i += 2
-			continue
-		}
-		if c == '\'' || c == '"' {
-			end := i + 1
-			for end < len(cmd) {
-				if c == '"' && cmd[end] == '\\' && end+1 < len(cmd) {
-					end += 2
-					continue
-				}
-				if cmd[end] == c {
-					break
-				}
-				end++
-			}
-			if end == len(cmd) {
-				out.WriteString(cmd[i:])
-				break
-			}
-			body := cmd[i+1 : end]
-			prefix := cmd[segment:i]
-			delegated := delegationStart.MatchString(prefix)
-			if delegated || inspectionStart.MatchString(prefix) {
-				if !delegated && inspectionProgramExecution(prefix, body) {
-					programExecution = true
-				}
-				if c == '"' && (strings.Contains(body, "$(") || strings.Contains(body, "`")) {
-					out.WriteString(strings.ReplaceAll(body, "`", "("))
-				} else {
-					out.WriteString("quoted_argument")
-				}
-			} else {
-				out.WriteString(cmd[i : end+1])
-			}
-			i = end + 1
-			continue
-		}
-		out.WriteByte(c)
-		if strings.ContainsRune(";&|\n", rune(c)) {
-			segment = i + 1
-		}
-		i++
-	}
-	return out.String(), programExecution
-}
-
-var awkStart = regexp.MustCompile(`^\s*awk\b`)
-var sedStart = regexp.MustCompile(`^\s*sed\b`)
 var awkString = regexp.MustCompile(`"(?:\\.|[^"\\])*"`)
 var awkExecution = regexp.MustCompile(`\bsystem\s*\(|\|\s*getline\b`)
 var awkPrint = regexp.MustCompile(`\b(?:print|printf)\b`)
-var sedCommand = regexp.MustCompile(`(?:^|[;\n{}])\s*(?:(?:[0-9]+|\$|/(?:\\.|[^/])*/)(?:\s*,\s*(?:[0-9]+|\$|/(?:\\.|[^/])*/))?\s*)?!?\s*([wes])`)
+var sedCommand = regexp.MustCompile(`(?:^|[;\n{}])\s*(?:(?:[0-9]+|\$|/(?:\\.|[^/])*/)(?:\s*,\s*(?:[0-9]+|\$|/(?:\\.|[^/])*/))?\s*)?!?\s*([wWes])`)
 
-// Inspect the small executable subset before masking quoted inspection data.
+// Inspect the small executable subset of already-tokenized program arguments.
 // This intentionally recognizes common awk/sed programs, not arbitrary shell code.
 func inspectionProgramExecution(prefix, body string) bool {
-	if awkStart.MatchString(prefix) {
+	if prefix == "awk" {
 		program := awkString.ReplaceAllString(body, "quoted_string")
 		if awkExecution.MatchString(program) {
 			return true
@@ -169,7 +104,7 @@ func inspectionProgramExecution(prefix, body string) bool {
 		}
 		return false
 	}
-	if !sedStart.MatchString(prefix) {
+	if prefix != "sed" {
 		return false
 	}
 	consumed := 0
@@ -178,7 +113,7 @@ func inspectionProgramExecution(prefix, body string) bool {
 			continue
 		}
 		command := body[m[2]]
-		if command == 'w' || command == 'e' {
+		if command == 'w' || command == 'W' || command == 'e' {
 			return true
 		}
 		// A substitution has two delimiter-terminated fields; only its flags
