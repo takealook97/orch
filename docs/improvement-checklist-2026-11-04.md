@@ -31,9 +31,9 @@
 ## 최종 확인
 - [x] 독립 critical/neutral/adversarial 리뷰 결과 반영 (아래 재현·판정 참조)
 - [x] make check 및 full race/Python 회귀 검증 (Finish repairs 최종 결과 참조)
-- [ ] 변경 커밋 및 원격 push 확인
-- [ ] 재설치, 설치본 smoke/doctor 검증
-- [ ] orch run 정리 확인
+- [x] 변경 커밋 및 원격 push 확인
+- [x] 재설치, 설치본 smoke/doctor 검증
+- [x] orch run 정리 확인
 
 ## Stage 1 구현·회귀 근거
 
@@ -159,3 +159,7 @@
 ### Head 최종 검증
 
 - Head가 최종 리뷰를 수락했으며 기존 make check, race, Python 검증 기록을 확인했다.
+
+- 설치 및 정리 결과: 변경 커밋 push 및 원격 HEAD 일치, make install, 설치본 help/models/uninstall dry-run, doctor 통과, 지정된 두 run의 pane 제거 확인.
+
+- Orchestration note: task-10 scope report included concurrent final-hardening writes during ignored script preparation; Head corrected to serial execution; source audit suite passed.
