@@ -2,6 +2,10 @@
 
 The original design doc is `design.md` in this directory. Decisions made or changed during implementation are collected here. Where the two conflict, this document wins.
 
+## Current policy (2026-11-04)
+
+Head only plans/evaluates/instructs/reviews/judges/communicates. All execution goes through orch workers or orch test, with no tiny-task or takeover exception. Independent reviews use fresh panes. Historical six-key catalogs and pane:false review defaults below are obsolete; generated catalog blocks and the current skill govern.
+
 ## Decisions (design doc S14)
 
 2026-11-03: Concurrent writers automatically get Git worktrees, including across Heads and backends. Scope checks and collect commits run in each worker's checkout. `orch merge` explicitly integrates committed branches, aborts conflicts, and removes worktree directories and branches only after integration checks pass; run end and gc preserve unmerged or dirty work. Explicit `--worktree`, `--no-worktree`, and DAG `worktree: none` retain caller control.
@@ -9,7 +13,7 @@ The original design doc is `design.md` in this directory. Decisions made or chan
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Opus uses `--effort medium` (or low); Sonnet uses `--effort medium` | Design-doc recommendation; Opus effort: medium or low only, never high |
-| D2 | Head rules apply globally, but are enforced only inside Herdr (`HERDR_ENV=1`) | `orch` does not work without Herdr |
+| D2 (obsolete; ask/do/test work outside Herdr) | Head rules apply globally, but are enforced only inside Herdr (`HERDR_ENV=1`) | `orch` does not work without Herdr |
 | D3 | Inside Herdr, all built-in Agent/Workflow/subagents are blocked (no exceptions) | User's choice |
 | D4 | Image generation uses Codex `image_generation` (`codex-high-m`, purpose `image`) | It is a stable feature, and `~/.codex/generated_images` shows real usage traces |
 | D5 | Each tab holds terminal height / `ORCH_MIN_ROW_HEIGHT` rows (default 2; minimum 1, maximum `ORCH_MAX_ROWS`, default 20). Further workers use unfocused overflow tabs; queue at the per-run worker cap (`ORCH_MAX_WORKERS`, default 12) | Updated by D18 (2026-10-18) |
@@ -123,9 +127,9 @@ Changes made:
 - **The deepeet workspace:** the deepeet repo's `.claude/skills/orch/SKILL.md` and `.codex/skills/orch/SKILL.md` defer to this skill and add only deepeet rules (Brain via CTBF, evidence sources, approval gates). Its "orch is mandatory for every task" rule covers direct mode and `orch ask`/`orch do`.
 - **Eval interpretation:** the P7 eval set (`eval/`) has a small sample (12 review pairs, 8 implementation pairs). It shows direction only; drawing conclusions needs repeated measurement.
 
-2026-09-30: removed codex-medium-m; Luna runs only at effort high (codex-medium-h). Catalog is 6 keys.
+OBSOLETE catalog (superseded by generated catalog): 2026-09-30 removed codex-medium-m; Luna runs only at effort high (codex-medium-h). Catalog is 6 keys.
 
-2026-09-30: neutral lane optional in full when no user-facing surface; clean merges need no model; no third attempt after 2 fix iterations, Head classifies the cause; full+ adds a design challenge after design.
+2026-09-30: neutral lane optional in full when no user-facing surface; clean merges use a worker for Git mechanics; no third attempt after 2 fix iterations, Head classifies the cause; full+ adds a design challenge after design.
 
 2026-09-30: the Head owns design (claude-high-m only condenses evidence); design_check reviews the Head's design with a different family; QA defaults to the lightest other-family key: author OpenAI -> claude-medium-m, otherwise codex-high-l; textual merge conflicts and Head-Claude design checks use codex-high-l.
 
@@ -135,7 +139,7 @@ Changes made:
 
 Codex 0.162 does not fire UserPromptSubmit for native `/goal <objective>`. PreToolUse now reads complete `thread_goal_updated` rollout events, caching the last state and byte offset atomically under ORCH_HOME/codex-goal-cache. Active native goals block Head tools inside Herdr until the pane has a frozen orch goal (drafts do not count). Compilation permits command-position orch goal/help/models/status shell commands and edits wholly under ORCH_HOME. Paused, cleared, and other non-active goal states release this guard. Workers and sessions outside Herdr are unaffected, as are Claude transcripts without these events. The codex-prompt hook still covers plain prompts starting with `/goal` text. Existing raw-Herdr bypass ordering is preserved.
 2026-09-30: claude-medium-m (sonnet) is rated low+: about Luna level, below Sol. Critical lane for a Google author defaults to claude-medium-m; the docs fallback chain tries codex-high-m before claude-high-m.
-2026-09-30: removed pipeline bottlenecks without changing model preferences. Mechanical gates run as model-less DAG run nodes; critical and neutral lanes default to pane: false (orch ask, read-only, no row); clean worktrees merge in one pass with one full verification.
+OBSOLETE review routing (superseded 2026-11-04): 2026-09-30 removed pipeline bottlenecks without changing model preferences. Mechanical gates run as model-less DAG run nodes; critical and neutral lanes default to pane: false (orch ask, read-only, no row); clean worktrees merge in one pass with one full verification.
 
 ## D18. Overflow worker tabs and per-run cap (2026-10-18)
 

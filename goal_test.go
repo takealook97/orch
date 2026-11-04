@@ -262,8 +262,8 @@ func TestGoalScopeHook(t *testing.T) {
 		tool, path string
 		deny       bool
 	}{
-		{"Edit", "/workspace/src/a.go", false}, {"namespace__Write", "/workspace/src/deep/a.go", false},
-		{"MultiEdit", "/workspace/other/a.go", true}, {"ns.NotebookEdit", "/workspace/other/a.ipynb", true},
+		{"Edit", "/workspace/src/a.go", false}, {"Write", "/workspace/src/deep/a.go", false},
+		{"MultiEdit", "/workspace/other/a.go", true}, {"NotebookEdit", "/workspace/other/a.ipynb", true},
 		{"Edit", filepath.Join(home, ".orch", "anything"), false}, {"Edit", "~/.claude/config", false},
 		{"Edit", "/tmp/test", false}, {"Edit", "/private/tmp/test", false}, {"Bash", "/elsewhere", false},
 	} {
@@ -652,7 +652,11 @@ func TestCodexPromptInstall(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(bin), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(bin, nil, 0700); err != nil {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(executable, bin); err != nil {
 		t.Fatal(err)
 	}
 	foreign := map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": "offon-gate", "timeout": float64(30)}}}

@@ -199,7 +199,10 @@ func TestUpstreamRefsFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := loadDagState(r, d)
+	st, stateErr := loadDagState(r, d)
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
 	st.Nodes["up"].Worker = "up-f1"
 	if err := saveDagState(r, st); err != nil {
 		t.Fatal(err)
@@ -226,7 +229,10 @@ func TestUpstreamRefsInlineResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := loadDagState(r, d)
+	st, stateErr := loadDagState(r, d)
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
 	st.Nodes["up"].Worker = "run"
 	if err := saveDagState(r, st); err != nil {
 		t.Fatal(err)

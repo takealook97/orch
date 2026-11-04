@@ -186,13 +186,13 @@ func TestStalePaneWritersAreNotLive(t *testing.T) {
 	if got := names(); got != "alive,lookup-fails,alive-2" {
 		t.Fatalf("live writers=%s", got)
 	}
-	if calls["p-alive"] != 1 || calls["other-head"] != 1 {
+	if calls["p-alive"] != 1 || calls["other-head"] != 0 {
 		t.Fatalf("lookups are not cached per call: %v", calls)
 	}
-	// Once the run's Head is gone, none of its pane writers count.
+	// Head death does not stop surviving workers.
 	stubPaneAlive(t, func(id string) (bool, error) { return id != "other-head", nil })
-	if got := names(); got != "" {
-		t.Fatalf("writers of a vanished Head still live: %s", got)
+	if got := names(); got != "alive,dead-pane,lookup-fails,alive-2" {
+		t.Fatalf("surviving workers lost protection: %s", got)
 	}
 }
 

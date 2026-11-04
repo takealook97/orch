@@ -72,7 +72,10 @@ func TestDagValidateRejects(t *testing.T) {
 func TestDagReadyOrderAndSkip(t *testing.T) {
 	r := dagRunFixture(t, goodDag, "recon", "impl-a", "impl-b", "mech-a", "crit-a", "crit-b", "docs")
 	d, _ := loadDag(r)
-	st := loadDagState(r, d)
+	st, stateErr := loadDagState(r, d)
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
 	ready := dagReady(d, st)
 	// recon heads the longest chain (recon→impl-a→mech-a→crit-a), docs is a single node.
 	if !slices.Equal(ready, []string{"recon", "docs"}) {
@@ -207,7 +210,10 @@ J`)
 `
 	r := dagRunFixture(t, y, "impl", "crit")
 	d, _ := loadDag(r)
-	st := loadDagState(r, d)
+	st, stateErr := loadDagState(r, d)
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
 	// The author was spawned after the DAG run loaded the run: only the saved run knows it.
 	withRun(r.ID, func(x *Run) error {
 		x.Workers = append(x.Workers, &Worker{Name: "impl", Key: "codex-high-m", Family: familyOpenAI, Role: roleProduce, Status: "closed"})

@@ -133,13 +133,13 @@ func taskRun(text string) (string, error) {
 // pidAlive reports whether a process exists (a permission error still means it exists).
 func pidAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return !errors.Is(err, syscall.ESRCH)
 }
 
 // groupAlive reports whether a process group still has a member.
 func groupAlive(pgid int) bool {
 	err := syscall.Kill(-pgid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return !errors.Is(err, syscall.ESRCH)
 }
 
 // taskDead explains why a task recorded as running has no live runner, or returns "".
@@ -163,13 +163,18 @@ func taskDead(t *Task) string {
 var taskEdit sync.Mutex
 
 // editTask applies fn to the task on disk while it is still running.
-func editTask(t *Task, fn func(x *Task)) {
+func editTask(t *Task, fn func(x *Task)) error {
 	taskEdit.Lock()
 	defer taskEdit.Unlock()
-	if x, err := readTask(t.Run, t.ID); err == nil && x.Status == "running" {
-		fn(x)
-		_ = writeTask(x)
+	x, err := readTask(t.Run, t.ID)
+	if err != nil {
+		return err
 	}
+	if x.Status != "running" {
+		return fmt.Errorf("task %s is no longer running", t.ID)
+	}
+	fn(x)
+	return writeTask(x)
 }
 
 // heartbeat refreshes the task's heartbeat on disk until the returned stop function runs.
@@ -185,7 +190,10 @@ func heartbeat(t *Task) func() {
 			case <-stop:
 				return
 			case <-tick.C:
-				editTask(t, func(x *Task) { x.Heartbeat = time.Now() })
+				if err := editTask(t, func(x *Task) { x.Heartbeat = time.Now() }); err != nil {
+					fmt.Fprintln(os.Stderr, "orch: heartbeat persistence failed:", err)
+					return
+				}
 			}
 		}
 	}()
@@ -340,6 +348,8 @@ func execLoggedMode(cwd, bin string, args []string, env []string, timeout time.D
 		// Anything the child left in its group goes too.
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
+	// A successful launcher may leave descendants editing the checkout.
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	res.MS = time.Since(start).Milliseconds()
 	switch {
 	case res.Timed:
@@ -385,7 +395,9 @@ func usageFrom(v map[string]any) *Usage {
 func parseAnswer(kind string, raw []byte) (string, *Usage) {
 	answer := ""
 	var usage *Usage
+	structured := false
 	read := func(v map[string]any) {
+		structured = true
 		if s, ok := v["result"].(string); ok && s != "" {
 			answer = s
 		}
@@ -431,10 +443,52 @@ func parseAnswer(kind string, raw []byte) (string, *Usage) {
 			}
 		}
 	}
-	if answer == "" {
+	if answer == "" && !structured {
 		answer = strings.TrimSpace(string(raw))
 	}
 	return answer, usage
+}
+
+// A zero process exit is not proof of provider success. In particular, agy can
+// emit SUCCESS with an empty response and denied_actions after permission denial.
+func providerFailure(raw []byte, answer string) string {
+	denied := false
+	var visit func(any)
+	visit = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if value, ok := x["denied_actions"]; ok {
+				b, _ := json.Marshal(value)
+				if string(b) != "null" && string(b) != "[]" && string(b) != "{}" && string(b) != `""` && string(b) != "false" && string(b) != "0" {
+					denied = true
+				}
+			}
+			for _, value := range x {
+				visit(value)
+			}
+		case []any:
+			for _, value := range x {
+				visit(value)
+			}
+		}
+	}
+	var v any
+	if json.Unmarshal(raw, &v) == nil {
+		visit(v)
+	} else {
+		for _, line := range bytes.Split(raw, []byte("\n")) {
+			if json.Unmarshal(line, &v) == nil {
+				visit(v)
+			}
+		}
+	}
+	if denied {
+		return "provider denied required actions; inspect output.log and resolve the specific permission before retrying"
+	}
+	if strings.TrimSpace(answer) == "" {
+		return "provider returned an empty response; inspect output.log before retrying"
+	}
+	return ""
 }
 func capText(s string, n int, path string) (string, bool) {
 	r := []rune(s)
@@ -492,15 +546,21 @@ func diffForTask(t *Task) {
 	}
 	t.Diffstat = fmt.Sprintf("%d files, +%d -%d", files, adds, dels)
 }
-func runTask(t *Task) error {
+func runTask(t *Task) (retErr error) {
 	start := time.Now()
 	cacheKey, _ := os.ReadFile(filepath.Join(t.Dir, "ask-cache-key"))
 	stopBeat := heartbeat(t)
 	defer func() {
 		stopBeat()
 		t.DurationMS = time.Since(start).Milliseconds()
-		_ = saveTask(t)
-		if t.Kind == "ask" {
+		if err := saveTask(t); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("persist final task: %w", err))
+			return
+		}
+		if err := recordTaskMeasurement(t); err != nil {
+			fmt.Fprintln(os.Stderr, "orch: warning: persist task measurement:", err)
+		}
+		if t.Kind == "ask" && retErr == nil {
 			storeAskCache(string(cacheKey), t)
 		}
 	}()
@@ -564,17 +624,26 @@ func runTask(t *Task) error {
 		limit = 1500
 	}
 	t.Answer, t.Truncated = capText(answer, limit, answerPath)
+	providerErr := providerFailure(raw, answer)
+	if providerErr != "" {
+		t.Note = providerErr
+	}
 	testTimed := false
 	if t.Kind == "do" {
 		if e := captureTaskChanges(t); e != nil {
 			t.Status = "failed"
 			return e
 		}
-		if t.TestCmd != "" && !res.Timed {
+		if t.TestCmd != "" && !res.Timed && providerErr == "" {
 			// The final test gets what is left of the task budget, at least a minute.
 			left := max(budget-time.Since(start), time.Minute)
 			tr, te := executeTest(t.TestCmd, t.Cwd, 40, int(left/time.Millisecond), filepath.Join(t.Dir, "test.log"))
 			t.Test = tr
+			// Tests may edit files even when they fail or are interrupted.
+			if e := captureTaskChanges(t); e != nil {
+				t.Status = "failed"
+				return errors.Join(te, e)
+			}
 			if te != nil {
 				t.Status = "failed"
 				return te
@@ -589,24 +658,13 @@ func runTask(t *Task) error {
 	switch {
 	case res.Timed || testTimed:
 		t.Status = "timeout"
-	case res.Code != 0 || len(t.ScopeViolations) > 0 || t.Test != nil && t.Test.ExitCode != 0:
+	case res.Code != 0 || providerErr != "" || len(t.ScopeViolations) > 0 || t.Test != nil && t.Test.ExitCode != 0:
 		t.Status = "failed"
 	default:
 		t.Status = "done"
 	}
 	if t.Kind == "do" && t.Branch != "" && t.Status == "done" && len(t.ScopeViolations) == 0 {
-		// A final test can generate files too. Check them before staging everything.
-		if t.TestCmd != "" {
-			if e := captureTaskChanges(t); e != nil {
-				t.Status = "failed"
-				return e
-			}
-			if len(t.ScopeViolations) > 0 {
-				t.Status = "failed"
-				return nil
-			}
-		}
-		hash, e := commitWorktree(t.Worktree, t.Run, t.ID, t.Answer)
+		hash, e := commitCompletion(t.Worktree, t.Run, t.ID, t.Answer, t.Changed)
 		if e != nil {
 			t.Status = "failed"
 			return e
@@ -617,13 +675,13 @@ func runTask(t *Task) error {
 }
 
 func captureTaskChanges(t *Task) error {
-	changed, err := changedFiles(t.Cwd, t.WorktreeStart)
+	changed, bad, err := completionChanges(t.Cwd, repoRoot(t.Cwd), t.WorktreeStart, t.Baseline, t.Own)
 	if err != nil {
 		return err
 	}
-	t.Changed = freshChanges(t.Cwd, changed, t.Baseline)
+	t.Changed = changed
 	sort.Strings(t.Changed)
-	t.ScopeViolations = scopeViolations(t.Changed, rootGlobs(t.Cwd, t.Own))
+	t.ScopeViolations = bad
 	diffForTask(t)
 	return nil
 }
@@ -789,7 +847,7 @@ func taskChild(runID, id string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch:", err)
 	}
 	fmt.Fprintln(stdout, taskReport(t, false))
-	if t.Status != "done" {
+	if err != nil || t.Status != "done" {
 		return 1
 	}
 	return 0
@@ -960,6 +1018,10 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch: --own is required")
 		return 2
 	}
+	if kind == "do" && !isGitDir(*cwd) {
+		fmt.Fprintln(stderr, "orch: do requires a Git repository for owned-path baseline and scope validation; use --cwd /path/to/repository, or edit run planning artifacts directly with the Head planning tools")
+		return 1
+	}
 	cacheKey := ""
 	if kind == "ask" {
 		m, id, _, e := freezeModel(m)
@@ -1042,7 +1104,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		t.Status = "failed"
-		_ = saveTask(t)
+		err = errors.Join(err, saveTask(t))
 		fmt.Fprintln(stderr, "orch:", err)
 		return 1
 	}
@@ -1054,7 +1116,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		// A runner that never starts must not leave the task "running".
 		notStarted := func(e error) int {
 			t.Status, t.Note = "failed", "runner did not start: "+e.Error()
-			_ = saveTask(t)
+			e = errors.Join(e, saveTask(t))
 			fmt.Fprintln(stderr, "orch:", e)
 			return 1
 		}
@@ -1097,7 +1159,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch:", err)
 	}
 	fmt.Fprintln(stdout, taskReport(t, *asJSON))
-	if t.Status != "done" {
+	if err != nil || t.Status != "done" {
 		return 1
 	}
 	return 0
@@ -1132,8 +1194,14 @@ func testCommandForRun(runID, line, cwd string, maxLines, timeout int, asJSON bo
 		if tr.Interrupted {
 			t.Note = "interrupted"
 		}
-		_ = saveTask(t)
+		if err := saveTask(t); err != nil {
+			fmt.Fprintln(stderr, "orch:", err)
+			return 1
+		}
 		fmt.Fprintln(stdout, taskReport(t, asJSON))
+		if err := recordTaskMeasurement(t); err != nil {
+			fmt.Fprintln(stderr, "orch: warning: persist test measurement:", err)
+		}
 		if t.Status != "done" {
 			return 1
 		}

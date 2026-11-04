@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,19 +10,10 @@ import (
 )
 
 // herdrRun is swappable in tests.
-var herdrRun = func(args ...string) ([]byte, error) {
-	cmd := exec.Command("herdr", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(string(out))
-		}
-		return out, fmt.Errorf("herdr %s: %v: %s", strings.Join(args, " "), err, msg)
-	}
-	return out, nil
+var herdrRun = runHerdrControl
+
+func runHerdrControl(args ...string) ([]byte, error) {
+	return boundedControl("herdr", args, os.Environ(), controlDeadline("herdr", args))
 }
 
 func herdrJSON(v any, args ...string) error {

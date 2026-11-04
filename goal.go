@@ -54,6 +54,9 @@ func loadGoal(id string) (*Goal, error) {
 	}
 	var g Goal
 	e = json.Unmarshal(b, &g)
+	if e == nil && (g.ID != id || g.HeadPane == "" || (g.Status != "draft" && g.Status != "active" && g.Status != "ended") || (g.Status == "active" && (g.Hours <= 0 || g.MaxWorkers <= 0))) {
+		e = errors.New("invalid goal identity, status or budget")
+	}
 	return &g, e
 }
 func saveGoal(g *Goal) error {
@@ -61,19 +64,11 @@ func saveGoal(g *Goal) error {
 	if e != nil {
 		return e
 	}
-	f, e := os.CreateTemp(g.dir(), ".goal-*")
-	if e != nil {
+	// Ownership survives corruption of goal.json, so other Heads are not blocked.
+	if e := atomicStateWrite(filepath.Join(g.dir(), "head"), []byte(g.HeadPane)); e != nil {
 		return e
 	}
-	defer os.Remove(f.Name())
-	if _, e = f.Write(append(b, '\n')); e != nil {
-		f.Close()
-		return e
-	}
-	if e = f.Close(); e != nil {
-		return e
-	}
-	return os.Rename(f.Name(), filepath.Join(g.dir(), "goal.json"))
+	return atomicStateWrite(filepath.Join(g.dir(), "goal.json"), append(b, '\n'))
 }
 func withGoal(id string, fn func(*Goal) error) error {
 	if filepath.Base(id) != id || id == "." {
@@ -115,7 +110,25 @@ func newestGoal(head, status string) (*Goal, error) {
 		}
 		g, e := loadGoal(entry.Name())
 		if e != nil {
-			continue
+			if errors.Is(e, os.ErrNotExist) {
+				continue
+			}
+			owner, oe := os.ReadFile(filepath.Join(goalsDir(), entry.Name(), "head"))
+			if oe == nil && string(owner) != head {
+				continue
+			}
+			// Old goals have no sidecar. A valid owner field can still establish non-applicability.
+			if oe != nil {
+				raw, _ := os.ReadFile(filepath.Join(goalsDir(), entry.Name(), "goal.json"))
+				var meta struct {
+					Head string `json:"head_pane"`
+				}
+				_ = json.Unmarshal(raw, &meta)
+				if meta.Head != "" && meta.Head != head {
+					continue
+				}
+			}
+			return nil, fmt.Errorf("goal %s is unreadable or corrupt: %w; restore %s/goal.json from backup or move this goal directory aside after reviewing its budget", entry.Name(), e, filepath.Join(goalsDir(), entry.Name()))
 		}
 		if g.HeadPane == head && g.Status == status && (best == nil || g.Created.After(best.Created)) {
 			best = g
@@ -440,7 +453,7 @@ func admit(head string, o admission) (release func(), err error) {
 		return release, err
 	}
 	release = func() {
-		_ = withGoal(g.ID, func(g *Goal) error {
+		if err := withGoal(g.ID, func(g *Goal) error {
 			if g.Admitted > 0 {
 				g.Admitted--
 			}
@@ -453,7 +466,9 @@ func admit(head string, o admission) (release func(), err error) {
 			}
 			g.Events = append(g.Events, Event{time.Now(), fmt.Sprintf("release %s %s", o.Kind, o.Name)})
 			return nil
-		})
+		}); err != nil {
+			fmt.Fprintln(os.Stderr, "orch: release goal admission:", err)
+		}
 	}
 	return release, nil
 }
@@ -464,8 +479,8 @@ func parseServes(s string) ([]int, error) {
 	var out []int
 	for _, v := range strings.Split(s, ",") {
 		n, e := strconv.Atoi(strings.TrimSpace(v))
-		if e != nil {
-			return nil, fmt.Errorf("invalid --serves %q", s)
+		if e != nil || n < 1 {
+			return nil, fmt.Errorf("invalid --serves %q: use positive criterion numbers, e.g. --serves 1 or --serves 1,2 (orch goal status lists criteria)", s)
 		}
 		out = append(out, n)
 	}

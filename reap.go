@@ -77,9 +77,13 @@ func reaperRunning(runID string) bool {
 func agentStopped(w *Worker) bool {
 	info, err := agentGet(workerAgent(w))
 	if err == nil {
-		return info.Status != "working"
+		return info.Status == "idle" || info.Status == "done" || info.Status == "stopped" || info.Status == "finished"
 	}
-	exists, perr := paneExists(w.Pane)
+	id := w.Pane
+	if backend() == "app" && w.Terminal != "" {
+		id = w.Terminal
+	}
+	exists, perr := paneExists(id)
 	return perr == nil && !exists
 }
 
@@ -104,6 +108,13 @@ func (rp *reaper) once(log io.Writer) (bool, error) {
 	}
 	if err := ownRun(r); err != nil {
 		return true, err
+	}
+	if r.EndRequested {
+		_, err := closeRun(r.ID, true)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	closed := false
 	for _, w := range r.liveWorkers() {
@@ -134,11 +145,22 @@ func (rp *reaper) once(log io.Writer) (bool, error) {
 		if rp.notWorking[w.Name] < 2 {
 			continue
 		}
-		if err := mergeKnowledge(rp.runID, w.Name, w.Result); err != nil {
-			fmt.Fprintf(log, "knowledge merge %s: %v\n", w.Name, err)
-		}
-		if err := closeWorkerAs(rp.runID, w.Name, w.Pane, true); err != nil {
+		if _, _, err := collectWorker(rp.runID, w.Name); err != nil {
 			fmt.Fprintf(log, "%s reap %s: %v\n", time.Now().Format(time.RFC3339), w.Name, err)
+			continue
+		}
+		removed := false
+		if err := withRun(rp.runID, func(r *Run) error {
+			if x := r.worker(w.Name); x != nil && x.Pane == "" {
+				removed = true
+				x.Reaped = true
+				r.event("reap %s", w.Name)
+			}
+			return nil
+		}); err != nil {
+			return false, err
+		}
+		if !removed {
 			continue
 		}
 		delete(rp.notWorking, w.Name)

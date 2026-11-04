@@ -286,25 +286,42 @@ func criticalLength(d Dag) map[string]int {
 
 func dagStatePath(r *Run) string { return filepath.Join(r.dir(), "dag-state.json") }
 
-func loadDagState(r *Run, d Dag) *dagState {
+func loadDagState(r *Run, d Dag) (*dagState, error) {
 	st := &dagState{Nodes: map[string]*dagNodeState{}}
-	if data, err := os.ReadFile(dagStatePath(r)); err == nil {
-		_ = json.Unmarshal(data, st)
+	data, err := os.ReadFile(dagStatePath(r))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if err == nil {
+		st = &dagState{}
+		if err = json.Unmarshal(data, st); err != nil {
+			return nil, fmt.Errorf("DAG state corrupt; restore %s before resuming: %w", dagStatePath(r), err)
+		}
+		if st.Nodes == nil {
+			return nil, errors.New("DAG state nodes must be an object; restore dag-state.json before resuming")
+		}
+		for name, ns := range st.Nodes {
+			if ns == nil || (!finalStatus(ns.Status) && ns.Status != "pending" && ns.Status != "running" && ns.Status != "starting") {
+				return nil, fmt.Errorf("invalid DAG state for %s", name)
+			}
+			if d.node(name) == nil {
+				return nil, fmt.Errorf("DAG definition changed: state contains unknown node %s", name)
+			}
+		}
 	}
 	for _, n := range d.Nodes {
 		if st.Nodes[n.Name] == nil {
 			st.Nodes[n.Name] = &dagNodeState{Status: "pending"}
 		}
 	}
-	return st
+	return st, nil
 }
-
 func saveDagState(r *Run, st *dagState) error {
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dagStatePath(r), append(data, '\n'), 0600)
+	return atomicStateWrite(dagStatePath(r), append(data, '\n'))
 }
 
 func finalStatus(s string) bool {
@@ -366,6 +383,11 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := exclusiveFile(filepath.Join(r.dir(), ".dag-scheduler.lock"), false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	d, err := loadDag(r)
 	if err != nil {
 		return nil, err
@@ -373,12 +395,17 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 	if errs := validateDag(r, d); len(errs) > 0 {
 		return nil, fmt.Errorf("DAG check failed:\n  %s", strings.Join(errs, "\n  "))
 	}
-	st := loadDagState(r, d)
-	// Nodes left "running" by an interrupted runner are re-attached if their worker is known.
-	// Inline nodes died with that runner, so they start over.
+	st, err := loadDagState(r, d)
+	if err != nil {
+		return nil, err
+	}
+	// Pane workers can be reattached. An interrupted inline invocation may have
+	// surviving children or completed side effects; never launch it again blindly.
 	for _, n := range d.Nodes {
-		if ns := st.Nodes[n.Name]; ns.Status == "running" && n.inline() {
-			ns.Status, ns.Worker, ns.Detail = "pending", "", ""
+		if ns := st.Nodes[n.Name]; ns.Status == "starting" {
+			return st, fmt.Errorf("DAG node %s launch uncertain; inspect run workers and reconcile dag-state.json before resuming", n.Name)
+		} else if ns.Status == "running" && n.inline() {
+			return st, fmt.Errorf("DAG inline node %s execution is uncertain; inspect its task/result and reconcile dag-state.json before resuming", n.Name)
 		}
 	}
 	deadline := time.Now().Add(timeout)
@@ -398,9 +425,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 			fmt.Fprintf(out, "%s\tinterrupted\n", res.node)
 			return
 		}
-		if err := mergeKnowledge(r.ID, res.node, r.resultPath(res.node)); err != nil {
-			fmt.Fprintf(out, "knowledge merge %s: %v\n", res.node, err)
-		}
+
 		ns.Status, ns.Detail, ns.Ended = res.status, res.detail, time.Now()
 		fmt.Fprintf(out, "%s\t%s\t%s\n", res.node, res.status, res.detail)
 	}
@@ -413,6 +438,20 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 				return
 			}
 		}
+	}
+	persist := func() error {
+		if err := saveDagState(r, st); err != nil {
+			return err
+		}
+		for _, n := range d.Nodes {
+			ns := st.Nodes[n.Name]
+			if n.inline() && (ns.Status == "done" || ns.Status == "partial") {
+				if err := mergeKnowledge(r.ID, n.Name, r.resultPath(n.Name)); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
 	// collect polls running nodes once (or up to wait) and records finished ones, so a
 	// finished worker's pane is closed promptly even while other nodes are being started.
@@ -434,7 +473,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 				}
 			}
 			drain()
-			return saveDagState(r, st)
+			return persist()
 		}
 		if inflight > 0 {
 			// An inline gate that finishes must not wait out a long pane poll.
@@ -457,7 +496,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 				ns.Worker = strings.TrimPrefix(o.Status, "fallback:")
 				byWorker[ns.Worker] = node
 				fmt.Fprintf(out, "%s\tfallback\t%s\n", node, o.Detail)
-			case o.Status == "done" || o.Status == "partial" || o.Status == "blocked":
+			case o.Status == "done" || o.Status == "partial" || o.Status == "blocked" || o.Status == "failed":
 				ns.Status, ns.Detail, ns.Ended = o.Status, o.Detail, time.Now()
 				fmt.Fprintf(out, "%s\t%s\t%s\n", node, o.Status, o.Detail)
 			default: // agent-blocked, idle-no-result, close-failed, quota: the Head decides
@@ -465,19 +504,28 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 				fmt.Fprintf(out, "%s\tattention\t%s %s\n", node, o.Status, o.Detail)
 			}
 		}
-		return saveDagState(r, st)
+		return persist()
 	}
 	for {
 		if interrupted {
 			for inflight > 0 {
 				record(<-inlineDone)
 			}
-			_ = saveDagState(r, st)
+			if err := saveDagState(r, st); err != nil {
+				return st, err
+			}
 			return st, errors.New("DAG run interrupted; run orch dag run again to resume")
 		}
 		full := false
 		for _, name := range dagReady(d, st) {
 			n := d.node(name)
+			if full && !n.inline() {
+				continue
+			}
+			st.Nodes[name].Status = "starting"
+			if err := saveDagState(r, st); err != nil {
+				return st, err
+			}
 			if n.inline() {
 				if err := startInline(runID, d, st, n, time.Until(deadline), inlineDone); err != nil {
 					st.Nodes[name].Status, st.Nodes[name].Detail = "failed", err.Error()
@@ -493,9 +541,6 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 				fmt.Fprintf(out, "%s\tstarted\t%s (%s)\n", name, st.Nodes[name].Worker, what)
 				continue
 			}
-			if full {
-				continue // no row; inline nodes behind it still start
-			}
 			w, err := spawn(spawnOpts{
 				Serves: n.Serves, FixOf: n.FixOf, Run: runID, Key: n.Model, Name: n.Name, Role: n.Role, Purpose: n.Purpose,
 				Reviews: currentWorkers(st, n.Reviews), AuthorFamilies: n.AuthorFamily,
@@ -503,6 +548,7 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 			})
 			if err != nil {
 				if strings.Contains(err.Error(), "is full") {
+					st.Nodes[name].Status = "pending"
 					full = true // wait for a free row; critical path first on the next round
 					continue
 				}
@@ -522,7 +568,9 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 				return st, err
 			}
 		}
-		_ = saveDagState(r, st)
+		if err := saveDagState(r, st); err != nil {
+			return st, err
+		}
 
 		var running []string
 		for _, n := range d.Nodes {
@@ -536,26 +584,32 @@ func dagRun(runFlag string, timeout time.Duration, out io.Writer) (*dagState, er
 			}
 			// Ready nodes exist but no row is free (panes of other runs of this Head).
 			if time.Now().After(deadline) {
-				_ = saveDagState(r, st)
+				if err := saveDagState(r, st); err != nil {
+					return st, err
+				}
 				return st, fmt.Errorf("DAG timed out: no row became free")
 			}
 			time.Sleep(timings.DagPoll)
 			continue
 		}
 		if time.Now().After(deadline) {
-			_ = saveDagState(r, st)
+			if err := saveDagState(r, st); err != nil {
+				return st, err
+			}
 			return st, fmt.Errorf("DAG timed out with nodes running %s", strings.Join(running, ", "))
 		}
 		if err := collect(timings.DagWait); err != nil {
 			return st, err
 		}
-		_ = saveDagState(r, st)
+		if err := saveDagState(r, st); err != nil {
+			return st, err
+		}
 	}
-	_ = withRun(runID, func(r *Run) error {
+	err = withRun(runID, func(r *Run) error {
 		r.event("DAG run finished: %s", dagSummary(d, st))
 		return nil
 	})
-	return st, nil
+	return st, err
 }
 
 func currentWorkers(st *dagState, nodes []string) []string {
@@ -602,7 +656,10 @@ func promptReferences(r *Run, name, role string) string {
 		lines = append(lines, "Run knowledge (read first, reuse instead of re-deriving): "+filepath.Join(r.dir(), "knowledge.md"))
 	}
 	if d, err := loadDag(r); err == nil {
-		st := loadDagState(r, d)
+		st, err := loadDagState(r, d)
+		if err != nil {
+			return "DAG references unavailable: " + err.Error()
+		}
 		n := d.node(name)
 		if n == nil {
 			for node, state := range st.Nodes {

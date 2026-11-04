@@ -13,16 +13,14 @@ Experiments
             parallel = three codex-high-l workers, one function each. Judged by hidden unit tests.
 Review and parallel experiments run as one orch DAG, so row caps, fallback and pane cleanup are orch's own.
 
-  delegate: A proxies the top-tier Head with claude-high-m via orch ask/do and charges
-            all reported usage to Head. B sends read-only/research tasks to
-            codex-low-h, scoped writing/fixes to codex-medium-m, and larger planned
-            implementation/test fixes to codex-high-l or codex-high-m via ask/do.
-            B charges worker usage separately; Head tokens are estimated from
-            instruction and printed orch JSON report characters / 4 plus a short
-            review turn. A's usage and B's Head estimate are context-growth proxies.
-            Weighted total uses one relative per-key cost table in delegate.py;
-            these are planning assumptions, not provider prices. Hidden judges
-            score both arms, with failed B judgments marked for Head rework.
+  delegate: A is a top-tier worker proxy; B uses cheaper worker keys.
+            Actual Head observations stay missing. Character-based Head estimates
+            are separate fields. Seeded repeated counterbalanced schedules, fresh
+            asks and durable attempts live in experiment.py.
+  duration: 1/5/15-minute target workloads compare single versus parallel panes;
+            labels are hypotheses and observed timings/quality are reported.
+  Use schedule or run --dry-run to inspect without model calls.
+  No empirical Head savings are claimed.
 """
 import datetime
 import json
@@ -63,7 +61,8 @@ def git_workspace(path, files):
 
 
 def fill_contract(path, goal, inputs, owned, perms, outputs, base, check):
-    s = open(path).read()
+    with open(path) as source:
+        s = source.read()
     s = s.replace("<one or two sentences>", goal)
     s = s.replace("- References: <paths, URLs, earlier result files>", inputs)
     s = s.replace("- <what not to do>", "- Add unspecified features or edit files outside the owned scope")
@@ -82,8 +81,8 @@ def fill_contract(path, goal, inputs, owned, perms, outputs, base, check):
         f.write(s)
 
 
-def new_contract(run_id, name, model):
-    out = sh(ORCH, "contract", "new", name, "--role", "recon", "--model", model, "--run", run_id).stdout.strip()
+def new_contract(run_id, name, model, role="recon", orch=None):
+    out = sh(orch or ORCH, "contract", "new", name, "--role", role, "--model", model, "--run", run_id).stdout.strip()
     return out
 
 
@@ -318,26 +317,14 @@ def report(root):
     return path, text
 
 
-def run_delegate(root, limit):
-    """Run independent A/B fixtures through pane-free orch calls; persist each result."""
-    selected = tasks.DELEGATE[:limit]
-    meta = {"experiment": "delegate", "delegate": [], "tasks": [t["id"] for t in selected]}
-    meta_path = os.path.join(root, "meta.json")
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
-    for task in selected:
-        for arm in ("A", "B"):
-            ws = os.path.join(root, "delegate", task["id"], arm)
-            git_workspace(ws, task["files"])
-            row = delegate.invoke(task, ws, arm, ORCH)
-            meta["delegate"].append(row)
-            with open(meta_path, "w") as f:
-                json.dump(meta, f, indent=2)
-            print(f"delegate {task['id']} {arm}: {row['quality_passed']}/{row['quality_total']} ({row['status']})", flush=True)
-    return delegate.render(root, meta)
-
-
 def main(argv):
+    if len(argv) > 2 and argv[1] == "report" and os.path.exists(os.path.join(argv[2], "schedule.json")):
+        import experiment
+        print(experiment.render(argv[2]))
+        return 0
+    if len(argv) > 1 and (argv[1] == "schedule" or "--dry-run" in argv or "--only" in argv and argv[argv.index("--only")+1] in ("delegate", "duration")):
+        import experiment
+        return experiment.main(argv[1:])
     if len(argv) < 2 or argv[1] not in ("selfcheck", "run", "report"):
         print(__doc__)
         return 2
@@ -360,11 +347,6 @@ def main(argv):
     # Head's cwd, which is the only place orch answers them automatically.
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out", f"{datetime.datetime.now():%Y%m%d-%H%M%S}")
     os.makedirs(root)
-    if only == "delegate":
-        path, text = run_delegate(root, limit)
-        print(text)
-        print(f"report: {path}")
-        return 0
     # Whatever happens (build failure, Ctrl-C, SIGTERM), a created run is ended on the way out.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     created = []

@@ -74,7 +74,7 @@ func askCacheKey(question, model string, maxOutput int, cwd string) string {
 	if err != nil {
 		return ""
 	}
-	data, _ := json.Marshal([]any{strings.Join(strings.Fields(question), " "), model, maxOutput, root, relCwd, head, fmt.Sprintf("%x", h.Sum(nil))})
+	data, _ := json.Marshal([]any{"raw-question-v2", question, model, maxOutput, root, relCwd, head, fmt.Sprintf("%x", h.Sum(nil))})
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 func askCachePath(key string) string { return filepath.Join(orchHome(), "cache", "ask", key+".json") }
@@ -105,7 +105,11 @@ func storeAskCache(key string, t *Task) {
 		return
 	}
 	p := filepath.Join(t.Dir, "answer.md")
-	if !fileExists(p) {
+	answer, err := os.ReadFile(p)
+	if err != nil || providerFailure(nil, string(answer)) != "" {
+		return
+	}
+	if raw, err := os.ReadFile(filepath.Join(t.Dir, "output.log")); err == nil && providerFailure(raw, string(answer)) != "" {
 		return
 	}
 	writeAskCacheEntry(key, askCacheEntry{t.Dir, p, time.Now()})
@@ -123,7 +127,10 @@ func lookupAskCache(key string) *Task {
 		return nil
 	}
 	answer, err := os.ReadFile(e.AnswerPath)
-	if err != nil {
+	if err != nil || providerFailure(nil, string(answer)) != "" {
+		return nil
+	}
+	if raw, err := os.ReadFile(filepath.Join(e.Dir, "output.log")); err == nil && providerFailure(raw, string(answer)) != "" {
 		return nil
 	}
 	var t Task

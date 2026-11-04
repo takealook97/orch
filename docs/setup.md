@@ -135,20 +135,15 @@ The skill and playbooks are symlinks, so pulling updates them immediately. The c
 
 ## 7. Rollback and uninstall
 
-Every `orch install` leaves a timestamped backup:
+`orch install` backs up existing files immediately before changes:
 
 ```bash
 ls ~/.orch/backups/
 ```
 
-To restore, copy the files from the backup directory you want back over the originals.
+Review backups before manually restoring individual owned entries; restoring an entire old config can overwrite later user changes.
 
-To uninstall:
-
-1. Remove the block between `<!-- orch:begin` and `<!-- orch:end -->` from `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`.
-2. Remove the Claude PreToolUse guard and UserPromptSubmit goal-prompt entry from `~/.claude/settings.json`, the `orch hook codex` and `orch hook codex-prompt` entries from `~/.codex/hooks.json` (PreToolUse and UserPromptSubmit goal setup), and the `orch-guard` key from `~/.gemini/config/hooks.json`.
-3. Delete the links: `~/.claude/skills/orch`, `~/.codex/skills/orch`, `~/.orch/playbooks`, `~/.local/bin/orch`.
-4. Optionally delete `~/.orch` (run history and backups).
+Preview with `orch uninstall --repo /path/to/orch --dry-run` (also the default). Apply with `orch uninstall --repo /path/to/orch --apply`. The command plans and backs up removal of exact owned blocks/hooks/links while preserving user content, foreign links, real directories and history. Remove Codex `/hooks` trust manually. See [ownership and fail-safe boundaries](operations.md).
 
 Close any open runs first with `orch run end` or `orch gc --orphans`.
 

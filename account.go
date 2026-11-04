@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -45,12 +44,10 @@ func hookAccount(kind string, exclude []string) (Account, error) {
 	if cmdline == "" {
 		return Account{}, fmt.Errorf("ORCH_ACCOUNT_CMD is not set")
 	}
-	cmd := exec.Command("sh", "-c", cmdline+` "$@"`, "orch-account", kind, strings.Join(exclude, ","))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	args := []string{"-c", cmdline + ` "$@"`, "orch-account", kind, strings.Join(exclude, ",")}
+	out, err := boundedControl("sh", args, os.Environ(), controlTimeout)
 	if err != nil {
-		return Account{}, fmt.Errorf("ORCH_ACCOUNT_CMD failed: %v %s", err, strings.TrimSpace(stderr.String()))
+		return Account{}, fmt.Errorf("ORCH_ACCOUNT_CMD failed: %w", err)
 	}
 	acc := Account{}
 	sc := bufio.NewScanner(bytes.NewReader(out))

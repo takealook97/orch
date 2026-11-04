@@ -649,7 +649,7 @@ func contractHash(body []byte) string {
 }
 
 func checkPromptContract(w *Worker, body []byte) error {
-	if w.Prompted.IsZero() {
+	if w.Prompted.IsZero() && w.PromptState == "" && w.ContractHash == "" {
 		return nil
 	}
 	if w.ContractHash == "" || w.ContractHash != contractHash(body) {
@@ -664,6 +664,14 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	if err != nil {
 		return err
 	}
+	if !nameRE.MatchString(name) {
+		return fmt.Errorf("invalid worker name")
+	}
+	unlock, err := exclusiveFile(filepath.Join(runDir(runID), ".prompt-"+name+".lock"), true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	var w *Worker
 	var msg string
 	var hash string
@@ -685,6 +693,9 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		if err := checkPromptContract(w, body); err != nil {
 			return err
 		}
+		if w.PromptState != "" && w.Prompted.IsZero() {
+			return fmt.Errorf("worker %s prompt delivery is uncertain; inspect with orch read %s, then close and spawn a new worker if recovery is needed; baseline retained", name, name)
+		}
 		if !w.Prompted.IsZero() {
 			alreadyPrompted = true
 			return nil
@@ -700,7 +711,7 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		}
 		w.Contract = dest
 		hash = contractHash(body)
-		if w.Cwd != "" {
+		if w.Cwd != "" && w.BaselineRoot == "" {
 			if root, err := workerScopeRepository(w, string(body)); err == nil && isGitDir(root) {
 				base := workerScopeBase(w, string(body))
 				if files, err := changedFiles(root, base); err == nil {
@@ -724,24 +735,38 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	// Herdr's agent.prompt moves the UI to the agent's workspace and tab, which drags the
 	// user back to the Head. Type the one-line prompt into the pane and press Enter instead;
 	// neither pane.send_text nor agent.send_keys changes focus.
+	if err := withRun(runID, func(r *Run) error {
+		x := r.worker(name)
+		if x == nil {
+			return fmt.Errorf("worker disappeared")
+		}
+		x.PromptState = "sending"
+		x.ContractHash = hash
+		return nil
+	}); err != nil {
+		return err
+	}
 	send := func() error { return sendWorkerText(w, msg) }
 	if err := send(); err != nil {
-		return fmt.Errorf("prompt send failed: %w", err)
+		var notSent *promptNotSentError
+		if errors.As(err, &notSent) {
+			saveErr := withRun(runID, func(r *Run) error {
+				x := r.worker(name)
+				if x == nil {
+					return fmt.Errorf("worker disappeared")
+				}
+				x.PromptState = ""
+				x.ContractHash = ""
+				return nil
+			})
+			return errors.Join(err, saveErr)
+		}
+		return fmt.Errorf("prompt delivery uncertain; inspect orch read %s before recovery (baseline retained): %w", name, err)
 	}
 	if !deliveredTo(name, workerAgent(w), w.Cwd, w.Result, timings.Delivery) {
-		// An agent that is still booting can swallow input. Resend once, only when the
-		// marker is not in its transcript and it is not working on anything.
-		text, _ := agentRead(workerAgent(w), 400)
-		if !strings.Contains(text, promptMarker(name)) && !busy(workerAgent(w)) && resultStatus(w.Result) == "" {
-			debugf("prompt %s: delivery check failed; resend once", name)
-			if err := send(); err != nil {
-				return fmt.Errorf("prompt resend failed: %w", err)
-			}
-			if !deliveredTo(name, workerAgent(w), w.Cwd, w.Result, timings.Delivery) {
-				return fmt.Errorf("prompt was not delivered (%s). orch read %s to inspect", name, name)
-			}
-		}
+		return fmt.Errorf("prompt delivery uncertain (%s); inspect orch read %s, then close and spawn with a new name if needed; no automatic resend", name, name)
 	}
+
 	if wait {
 		// agent wait only observes state; it does not move focus.
 		if backend() == "app" {
@@ -752,6 +777,10 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 	}
 	return withRun(runID, func(r *Run) error {
 		w := r.worker(name)
+		if w == nil {
+			return fmt.Errorf("worker disappeared during delivery")
+		}
+		w.PromptState = "confirmed"
 		w.Status = "prompted"
 		w.Prompted = time.Now()
 		w.ContractHash = hash
@@ -832,9 +861,14 @@ func retireName(r *Run, name string) error {
 }
 
 // sendWorkerText shares the unfocused delivery transport for prompts and resumes.
+type promptNotSentError struct{ err error }
+
+func (e *promptNotSentError) Error() string { return e.err.Error() }
+func (e *promptNotSentError) Unwrap() error { return e.err }
+
 func sendWorkerText(w *Worker, msg string) error {
 	if info, err := agentGet(workerAgent(w)); err == nil && info.Status == "blocked" {
-		return fmt.Errorf("agent %s is stopped at an approval or question dialog; inspect with orch read %s", w.Name, w.Name)
+		return &promptNotSentError{fmt.Errorf("agent %s is stopped at an approval or question dialog; inspect with orch read %s", w.Name, w.Name)}
 	}
 	if backend() == "app" {
 		_, err := hcRun("send", w.Terminal, msg)

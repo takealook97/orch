@@ -116,6 +116,9 @@ func readJSONFile(path string) (map[string]any, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	if err := validHookConfig(m); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	return m, nil
 }
 
@@ -127,7 +130,7 @@ func writeJSONFile(path string, m map[string]any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0600)
+	return atomicStateWrite(path, append(data, '\n'))
 }
 
 var ownHook = regexp.MustCompile(`/orch' hook (claude|claude-prompt|codex|codex-prompt|agy)$`)
@@ -135,14 +138,14 @@ var ownHook = regexp.MustCompile(`/orch' hook (claude|claude-prompt|codex|codex-
 func hookCommand(bin, cli string) string { return fmt.Sprintf("'%s' hook %s", bin, cli) }
 
 // ensureGroupedHook adds a PreToolUse group (Claude/Codex shape) unless one already runs `orch hook`.
-func ensureGroupedHook(hooks map[string]any, matcher, command string) bool {
+func ensureGroupedHook(hooks map[string]any, matcher, command string, owners ...string) bool {
 	list, _ := hooks["PreToolUse"].([]any)
 	for i, g := range list {
 		gm, _ := g.(map[string]any)
 		inner, _ := gm["hooks"].([]any)
 		for _, h := range inner {
 			hm, _ := h.(map[string]any)
-			if c, _ := hm["command"].(string); ownHook.MatchString(c) {
+			if c, _ := hm["command"].(string); hookOwned(c, owners) {
 				changed := matcher != "" && gm["matcher"] != matcher
 				hm["command"] = command
 				if matcher != "" {
@@ -179,12 +182,78 @@ func install(repo string, dry bool) (*installReport, error) {
 		return nil, err
 	}
 	bin, _ = filepath.EvalSymlinks(bin)
-	if linked := filepath.Join(home(), ".local", "bin", "orch"); fileExists(linked) {
+	ownership, err := loadOwnership()
+	if err != nil {
+		return rep, err
+	}
+	if ownership != nil && ownership.Repo != repo {
+		return rep, fmt.Errorf("another repository owns this installation: %s", ownership.Repo)
+	}
+	linked := filepath.Join(home(), ".local", "bin", "orch")
+	if info, e := os.Lstat(linked); e == nil {
+		resolved, re := filepath.EvalSymlinks(linked)
+		if info.IsDir() || re != nil || (resolved != bin && resolved != filepath.Join(repo, "bin/orch")) {
+			return rep, fmt.Errorf("foreign binary/link preserved: %s", linked)
+		}
 		bin = linked
+	} else if !os.IsNotExist(e) {
+		return rep, e
+	}
+	owners := func(cli string) []string {
+		out := []string{hookCommand(bin, cli), hookCommand(filepath.Join(home(), ".local/bin/orch"), cli), hookCommand(filepath.Join(repo, "bin/orch"), cli)}
+		if ownership != nil {
+			out = append(out, hookCommand(ownership.Bin, cli))
+		}
+		return out
+	}
+	for _, link := range skillLinks() {
+		if err := safeInstallLink(link, filepath.Join(repo, "skill")); err != nil {
+			return rep, err
+		}
+	}
+	if err := safeInstallLink(filepath.Join(orchHome(), "playbooks"), filepath.Join(repo, "playbooks")); err != nil {
+		return rep, err
+	}
+	// Validate all inputs before writing any constitution or hook config.
+	for _, p := range append(constitutionFiles(), claudeSettings(), codexHooks(), agyHooks()) {
+		if info, e := os.Lstat(p); e == nil && !info.Mode().IsRegular() {
+			return rep, fmt.Errorf("non-regular config preserved: %s", p)
+		}
+	}
+	for _, p := range []string{claudeSettings(), codexHooks(), agyHooks()} {
+		if s, e := readJSONFile(p); e != nil {
+			return rep, e
+		} else if p == agyHooks() {
+			if old, ok := s["orch-guard"]; ok {
+				valid := false
+				for _, cmd := range owners("agy") {
+					want := map[string]any{"PreToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": float64(10)}}}}}
+					if reflect.DeepEqual(old, want) {
+						valid = true
+					}
+				}
+				if !valid {
+					return rep, fmt.Errorf("foreign or modified orch-guard preserved: %s", p)
+				}
+			}
+		}
+	}
+	for _, p := range constitutionFiles() {
+		b, e := os.ReadFile(p)
+		if e != nil && !os.IsNotExist(e) {
+			return rep, e
+		}
+		s := string(b)
+		beg, end := strings.Count(s, "<!-- orch:begin"), strings.Count(s, markEnd)
+		if beg != 0 || end != 0 {
+			if _, ok := extractBlock(s); beg != 1 || end != 1 || !ok {
+				return rep, fmt.Errorf("ambiguous markers preserved: %s", p)
+			}
+		}
 	}
 	// Back up a target only right before it changes, so a rerun with nothing to do
 	// leaves no empty backup directory behind.
-	bdir := filepath.Join(orchHome(), "backups", time.Now().Format("20060102-150405"))
+	bdir := filepath.Join(orchHome(), "backups", time.Now().Format("20060102-150405.000000000"))
 	backedUp := false
 	save := func(t string) error {
 		if dry {
@@ -248,8 +317,8 @@ func install(repo string, dry bool) (*installReport, error) {
 		if hooks == nil {
 			hooks = map[string]any{}
 		}
-		added := ensureGroupedHook(hooks, "Agent|Task|Workflow|Bash|Edit|Write|MultiEdit|NotebookEdit", hookCommand(bin, "claude"))
-		ensurePromptHook(hooks, hookCommand(bin, "claude-prompt"))
+		added := ensureGroupedHook(hooks, "Agent|Task|Workflow|Bash|Edit|Write|MultiEdit|NotebookEdit", hookCommand(bin, "claude"), owners("claude")...)
+		ensurePromptHook(hooks, hookCommand(bin, "claude-prompt"), owners("claude-prompt")...)
 		s["hooks"] = hooks
 		before, _ := os.ReadFile(claudeSettings())
 		changed, err := writeHooks(claudeSettings(), before, s)
@@ -265,8 +334,8 @@ func install(repo string, dry bool) (*installReport, error) {
 		if hooks == nil {
 			hooks = map[string]any{}
 		}
-		added := ensureGroupedHook(hooks, "", hookCommand(bin, "codex"))
-		ensurePromptHook(hooks, hookCommand(bin, "codex-prompt"))
+		added := ensureGroupedHook(hooks, "", hookCommand(bin, "codex"), owners("codex")...)
+		ensurePromptHook(hooks, hookCommand(bin, "codex-prompt"), owners("codex-prompt")...)
 		s["hooks"] = hooks
 		before, _ := os.ReadFile(codexHooks())
 		changed, err := writeHooks(codexHooks(), before, s)
@@ -306,7 +375,7 @@ func install(repo string, dry bool) (*installReport, error) {
 			return nil, err
 		}
 		if !dry {
-			if err := os.RemoveAll(link); err != nil {
+			if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
 				return nil, err
 			}
 			if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
@@ -325,13 +394,23 @@ func install(repo string, dry bool) (*installReport, error) {
 			return nil, err
 		}
 		if !dry {
-			if err := os.RemoveAll(pbLink); err != nil {
+			if err := os.Remove(pbLink); err != nil && !os.IsNotExist(err) {
 				return nil, err
 			}
 			_ = os.MkdirAll(orchHome(), 0700)
 			if err := os.Symlink(pbSrc, pbLink); err != nil {
 				return nil, err
 			}
+		}
+	}
+	if !dry {
+		if ownership != nil && (ownership.Bin != bin || ownership.Block != constitutionBlock) {
+			if err := save(ownershipPath()); err != nil {
+				return rep, err
+			}
+		}
+		if err := saveOwnership(repo, bin); err != nil {
+			return rep, err
 		}
 	}
 	return rep, nil
@@ -530,14 +609,14 @@ func probeExcerpt(s string) string {
 }
 
 // UserPromptSubmit uses the same grouped hook shape without a tool matcher.
-func ensurePromptHook(hooks map[string]any, command string) bool {
+func ensurePromptHook(hooks map[string]any, command string, owners ...string) bool {
 	list, _ := hooks["UserPromptSubmit"].([]any)
 	for _, g := range list {
 		gm, _ := g.(map[string]any)
 		inner, _ := gm["hooks"].([]any)
 		for _, h := range inner {
 			hm, _ := h.(map[string]any)
-			if c, _ := hm["command"].(string); ownHook.MatchString(c) {
+			if c, _ := hm["command"].(string); hookOwned(c, owners) {
 				changed := c != command
 				hm["command"] = command
 				return changed

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,7 +22,10 @@ var paneAliveFn = paneExists
 
 // paneLiveness answers "does this pane still exist" once per id for one scan.
 // A failed lookup counts as live: a missed live writer is worse than a needless split.
-type paneLiveness struct{ seen map[string]bool }
+type paneLiveness struct {
+	seen    map[string]bool
+	unknown map[string]bool
+}
 
 func (p *paneLiveness) alive(backend, id string) bool {
 	key := backend + "\x00" + id
@@ -31,11 +35,15 @@ func (p *paneLiveness) alive(backend, id string) bool {
 	exists, err := paneAliveFn(id)
 	v := err != nil || exists
 	p.seen[key] = v
+	if p.unknown == nil {
+		p.unknown = map[string]bool{}
+	}
+	p.unknown[key] = err != nil
 	return v
 }
 
-// paneWriterLive decides whether a produce/integrate pane writer still works. Its pane and
-// its run's Head must exist. A run on another backend cannot be checked: it stays live, unverified.
+// paneWriterLive protects surviving workers regardless of Head liveness.
+// A run on another backend or a failed lookup stays live, unverified.
 func (p *paneLiveness) paneWriterLive(r *Run, w *Worker) (live, unverified bool) {
 	if runBackend(r) != currentBackend() {
 		return true, true
@@ -47,10 +55,8 @@ func (p *paneLiveness) paneWriterLive(r *Run, w *Worker) (live, unverified bool)
 	if !p.alive(runBackend(r), id) {
 		return false, false
 	}
-	if r.HeadPane != "" && r.HeadPane != headID() && !p.alive(runBackend(r), r.HeadPane) {
-		return false, false
-	}
-	return true, false
+	// Head death does not stop a worker or release its checkout.
+	return true, p.unknown[runBackend(r)+"\x00"+id]
 }
 
 func recordTaskRunner(runID, id string, pid int) error {
@@ -139,6 +145,18 @@ func canonicalRoot(cwd string) string {
 	return root
 }
 
+// Heartbeat and child group updates live in task.json, which may be newer than run.json.
+func taskWriterLive(runID string, t *Task) (live, unknown bool) {
+	if t.Status != "running" && t.Status != "pending" {
+		return false, false
+	}
+	current, err := readTask(runID, t.ID)
+	if err != nil {
+		return true, true
+	}
+	return (current.Status == "running" || current.Status == "pending") && taskDead(current) == "", false
+}
+
 // Deliberately scan every Head/backend: checkout ownership crosses UI boundaries.
 func liveWritersIn(root string, except func(writerRef) bool) []writerRef {
 	runs, _ := allRuns()
@@ -163,8 +181,10 @@ func liveWritersIn(root string, except func(writerRef) bool) []writerRef {
 			}
 		}
 		for _, t := range r.Tasks {
-			if t.Kind == "do" && (t.Status == "running" || t.Status == "pending") && t.Pid > 0 && pidAlive(t.Pid) {
-				add(writerRef{r.ID, r.HeadPane, t.ID, "do", t.Cwd, false})
+			if t.Kind == "do" {
+				if live, unknown := taskWriterLive(r.ID, t); live {
+					add(writerRef{r.ID, r.HeadPane, t.ID, "do", t.Cwd, unknown})
+				}
 			}
 		}
 	}
@@ -207,7 +227,7 @@ func warnOtherHeads(r *Run, cwd string, out io.Writer) {
 	for _, key := range keys {
 		note := ""
 		if unverified[key] {
-			note = " [unverified: run uses another backend, liveness not checked]"
+			note = " [unverified: writer liveness could not be confirmed]"
 		}
 		fmt.Fprintf(out, "orch: warning: Head %s is also writing in %s (%s)%s; writers here will use worktrees\n", key, root, strings.Join(groups[key], ","), note)
 	}
@@ -412,7 +432,7 @@ func worktreeEntries(r *Run) []worktreeEntry {
 	}
 	for _, t := range r.Tasks {
 		if t.Branch != "" {
-			out = append(out, worktreeEntry{t.ID, &t.Worktree, &t.Branch, &t.WorktreeBase, &t.Commit, &t.WorktreeAuto, &t.Committed, &t.Merged, t, t.Status == "running" || t.Status == "pending"})
+			out = append(out, worktreeEntry{t.ID, &t.Worktree, &t.Branch, &t.WorktreeBase, &t.Commit, &t.WorktreeAuto, &t.Committed, &t.Merged, t, func() bool { live, _ := taskWriterLive(r.ID, t); return live }()})
 		}
 	}
 	return out
@@ -628,9 +648,14 @@ func updateWorktreeEntry(runID string, source worktreeEntry) error {
 }
 
 func cleanupRunWorktrees(r *Run, gcMode bool) []string {
+	notes, _ := cleanupRunWorktreesChecked(r, gcMode)
+	return notes
+}
+func cleanupRunWorktreesChecked(r *Run, gcMode bool) ([]string, error) {
+	var cleanupErr error
 	unlock, err := lockHead("writers")
 	if err != nil {
-		return []string{err.Error()}
+		return []string{err.Error()}, err
 	}
 	defer unlock()
 	var report []string
@@ -644,6 +669,7 @@ func cleanupRunWorktrees(r *Run, gcMode bool) []string {
 			}
 		}
 		if e.Busy {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("worktree cleanup deferred: %s writer live or unverified; inspect runs/%s task.json and process/pane liveness, restore missing/corrupt task state from backup, then retry run end; do not remove the worktree until liveness is confirmed", *e.Dir, r.ID))
 			report = append(report, fmt.Sprintf("worktree remains: %s (branch %s, writer still live)", *e.Dir, *e.Branch))
 			continue
 		}
@@ -658,15 +684,18 @@ func cleanupRunWorktrees(r *Run, gcMode bool) []string {
 		if cleanup {
 			_, statErr := os.Stat(*e.Dir)
 			if statErr != nil && !os.IsNotExist(statErr) {
+				cleanupErr = errors.Join(cleanupErr, statErr)
 				report = append(report, statErr.Error())
 				continue
 			}
 			if dirty, err := gitOutput(*e.Dir, "status", "--porcelain"); statErr == nil && (err != nil || dirty != "") {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("worktree cleanup deferred: %s is dirty or unavailable", *e.Dir))
 				report = append(report, fmt.Sprintf("worktree remains: %s (branch %s, dirty or unavailable)", *e.Dir, *e.Branch))
 				continue
 			}
 			var b strings.Builder
 			if err := removeWorktree(e, &b); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
 				report = append(report, err.Error())
 			} else {
 				*e.Merged = true
@@ -675,11 +704,12 @@ func cleanupRunWorktrees(r *Run, gcMode bool) []string {
 				}
 			}
 			if err := updateWorktreeEntry(r.ID, e); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
 				report = append(report, err.Error())
 			}
 		} else {
 			report = append(report, fmt.Sprintf("worktree remains: %s (branch %s, not merged). orch merge %s or git worktree remove", *e.Dir, *e.Branch, e.Name))
 		}
 	}
-	return report
+	return report, cleanupErr
 }

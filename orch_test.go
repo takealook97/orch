@@ -350,6 +350,9 @@ func hookJSON(tool string, input any) hookInput {
 }
 
 func TestHookDecisions(t *testing.T) {
+	t.Setenv("ORCH_HOME", t.TempDir())
+	t.Setenv("ORCH_RUN", "")
+	t.Setenv("ORCH_HEAD_GUARD", "")
 	cases := []struct {
 		name    string
 		in      hookInput
@@ -879,6 +882,13 @@ func TestWaitReportsCloseFailure(t *testing.T) {
 		return nil
 	})
 	fakeHerdr(t, func() ([]byte, error) { return nil, errors.New("socket down") })
+	baseRun := herdrRun
+	herdrRun = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[0] == "agent" && args[1] == "get" {
+			return []byte(`{"result":{"agent_status":"idle"}}`), nil
+		}
+		return baseRun(args...)
+	}
 	outs, err := waitWorkers(r.ID, []string{"a"}, time.Second, false)
 	if err != nil || len(outs) != 1 || outs[0].Status != "close-failed" {
 		t.Fatalf("outs=%+v err=%v", outs, err)

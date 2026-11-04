@@ -118,7 +118,8 @@ def selfcheck():
 
 def _parse_json(output):
     try:
-        return json.loads(output)
+        value = json.loads(output)
+        return value if isinstance(value, dict) else {}
     except ValueError:
         for line in reversed(output.splitlines()):
             try:
@@ -132,7 +133,10 @@ def _parse_json(output):
 
 def _tokens(value):
     try:
-        return int(value) if value is not None else None
+        if isinstance(value, bool) or isinstance(value, float):
+            return None
+        n = int(value) if value is not None else None
+        return n if n is not None and n >= 0 else None
     except (TypeError, ValueError):
         return None
 
@@ -144,18 +148,27 @@ def _weighted(key, input_tokens, output_tokens):
     return round(a * input_tokens + b * output_tokens, 2)
 
 
-def invoke(task, workspace, arm, orch):
+def invoke(task, workspace, arm, orch, timeout_seconds=1800):
     key = HEAD_KEY if arm == "A" else worker_key(task)
     cmd = [orch, task["mode"], "--model", key, "--cwd", workspace, "--json"]
     if task["mode"] == "do":
         owned = [name for name in task["solution"] if name not in task["files"] or task["solution"][name] != task["files"][name]]
         cmd += ["--own", ",".join(owned)]
+    if task["mode"] == "ask":
+        cmd.append("--fresh")
     cmd.append(task["prompt"])
     start = time.monotonic()
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as err:
+        res = subprocess.CompletedProcess(cmd, 124, err.stdout or "", err.stderr or "timeout")
+        if isinstance(res.stdout, bytes): res.stdout = res.stdout.decode(errors="replace")
+        if isinstance(res.stderr, bytes): res.stderr = res.stderr.decode(errors="replace")
+    Path(workspace, "attempt.json").write_text(json.dumps({"exit_code": res.returncode, "stdout": res.stdout, "stderr": res.stderr}, indent=2))
     wall_ms = round((time.monotonic() - start) * 1000)
     data = _parse_json(res.stdout)
     usage = data.get("usage") or {}
+    if not isinstance(usage, dict): usage = {}
     worker_in, worker_out = _tokens(usage.get("input_tokens")), _tokens(usage.get("output_tokens"))
     answer = data.get("answer") or ""
     passed, total = judge(task, workspace, answer)
@@ -178,10 +191,18 @@ def invoke(task, workspace, arm, orch):
         separate_worker = {"input": worker_in, "output": worker_out}
     return {
         "task": task["id"], "type": task["type"], "arm": arm, "key": key,
+        "model_id": data.get("model_id"),
         "status": status, "exit_code": res.returncode,
-        "head_input_tokens": head_in, "head_output_tokens": head_out,
-        "head_context_growth_proxy": context,
+        "baseline": "top-tier-worker-proxy" if arm == "A" else "lower-key-worker",
+        "head_input_tokens": None, "head_output_tokens": None,
+        "head_usage_source": "unavailable",
+        "estimated_head_input_tokens": head_in if arm == "B" else None,
+        "estimated_head_output_tokens": head_out if arm == "B" else None,
+        "proxy_input_tokens": worker_in if arm == "A" else None,
+        "proxy_output_tokens": worker_out if arm == "A" else None,
+        "head_context_growth_proxy": None,
         "worker_tokens": separate_worker, "weighted_total_cost": weighted,
+        "weighted_cost_source": "planning-weights-and-estimated-head" if arm == "B" else "planning-weights-proxy",
         "quality_passed": passed, "quality_total": total,
         "rework": arm == "B" and (passed < total or status != "done"),
         "wall_ms": wall_ms, "worker_duration_ms": data.get("duration_ms"),
@@ -192,66 +213,13 @@ def invoke(task, workspace, arm, orch):
 
 
 def render(root, meta):
+    # Legacy entry point uses the same honest coverage report as repeated runs.
+    import experiment
     rows = meta.get("delegate", [])
-    out = ["# Head direct versus lower-key delegation", "",
-           "A uses claude-high-m; B uses codex-low-h for read-only work and Terra for scoped writing/fixes and Sol for larger planned implementation or test fixes.",
-           "Head input/output for A come from CLI usage. B estimates Head prompt and printed report at 4 characters/token, plus 128 input and 64 output review tokens.",
-           "A's context-growth proxy is its measured input plus output; B's is the estimated Head instruction, report and review tokens. These proxies are not actual context-window deltas.",
-           "Weighted costs use relative input/output factors: " + ", ".join(f"{k}={v[0]}/{v[1]}" for k, v in COST.items()) + ". They are assumptions, not prices.", "",
-           "| Type | Arm | Tasks | Quality | Rework | Head in/out | Head context proxy | Weighted cost | Wall (s) |",
-           "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
-    by = {}
-    for row in rows:
-        by.setdefault((row["type"], row["arm"]), []).append(row)
-    types = list(dict.fromkeys(task["type"] for task in tasks.DELEGATE))
-    sums = {}
-    for kind in types:
-        for arm in ("A", "B"):
-            rs = by.get((kind, arm), [])
-            if not rs:
-                continue
-            passed, total = sum(r["quality_passed"] for r in rs), sum(r["quality_total"] for r in rs)
-            h_in = sum(r["head_input_tokens"] for r in rs if r["head_input_tokens"] is not None)
-            h_out = sum(r["head_output_tokens"] for r in rs if r["head_output_tokens"] is not None)
-            complete = all(r["head_input_tokens"] is not None and r["head_output_tokens"] is not None and r["weighted_total_cost"] is not None for r in rs)
-            head = h_in + h_out if complete else None
-            context = sum(r["head_context_growth_proxy"] for r in rs) if complete else None
-            cost = sum(r["weighted_total_cost"] for r in rs) if complete else None
-            walls = [r["wall_ms"] for r in rs if isinstance(r["wall_ms"], (int, float))]
-            wall = round(sum(walls) / 1000, 1) if len(walls) == len(rs) else None
-            sums[kind, arm] = (passed, total, head, cost)
-            fmt = lambda v: "—" if v is None else str(round(v, 1) if isinstance(v, float) else v)
-            out.append(f"| {kind} | {arm} | {len(rs)} | {passed}/{total} | {sum(r['rework'] for r in rs)} | "
-                       f"{f'{h_in}/{h_out}' if complete else '—'} | {fmt(context)} | {fmt(cost)} | {fmt(wall)} |")
-    out += ["", "## Decision by type", "",
-            "Delegate when B quality is at least A quality, no B task needs rework, and B reduces Head tokens by at least 50%. Otherwise raise the worker key for quality failures; choose direct when Head savings are smaller.", "",
-            "| Type | Decision | Head-token reduction |", "|---|---|---:|"]
-    for kind in types:
-        a, b = sums.get((kind, "A")), sums.get((kind, "B"))
-        if not a or not b or len(by.get((kind, "A"), [])) != 3 or len(by.get((kind, "B"), [])) != 3:
-            decision, saving = "insufficient data", None
-        elif a[2] is None or b[2] is None or not a[2]:
-            decision, saving = "insufficient token usage", None
-        else:
-            saving = 1 - b[2] / a[2]
-            quality_ok = b[0] / b[1] >= a[0] / a[1]
-            rework = any(r["rework"] for r in by[(kind, "B")])
-            decision = "raise worker key" if not quality_ok or rework else ("delegate" if saving >= HEAD_SAVING_THRESHOLD else "direct")
-        out.append(f"| {kind} | {decision} | {'—' if saving is None else f'{saving:.0%}'} |")
-    out += ["", "## Per-task measurements", "",
-            "| Task | Type | Arm/key | Status | Quality | Rework | Head in/out | Worker in/out | Context proxy | Weighted cost | Wall (s) |",
-            "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|"]
-    for row in rows:
-        fmt = lambda v: "—" if v is None else str(v)
-        worker = row["worker_tokens"]
-        out.append(f"| {row['task']} | {row['type']} | {row['arm']}/{row['key']} | {row['status']} | "
-                   f"{row['quality_passed']}/{row['quality_total']} | {'yes' if row['rework'] else 'no'} | "
-                   f"{fmt(row['head_input_tokens'])}/{fmt(row['head_output_tokens'])} | "
-                   f"{fmt(worker['input'])}/{fmt(worker['output'])} | {fmt(row['head_context_growth_proxy'])} | "
-                   f"{fmt(row['weighted_total_cost'])} | {row['wall_ms'] / 1000:.1f} |")
-    out += ["", "Full machine-readable measurements are in `rows.json`.",
-            "Missing CLI usage remains missing; weighted totals and decisions requiring it are withheld.", ""]
-    text = "\n".join(out)
+    for i, row in enumerate(rows):
+        row.setdefault("repetition", i // 2)
+    summary = experiment.summarize(rows, len(rows))
+    text = "# Top-tier worker proxy versus lower-key delegation\n\nActual Head usage is unavailable. Estimates are separate; no savings demonstrated.\n\n```json\n" + json.dumps(summary, indent=2) + "\n```\n"
     Path(root, "report.md").write_text(text)
     Path(root, "rows.json").write_text(json.dumps({"delegate": rows}, indent=2))
     return str(Path(root, "report.md")), text

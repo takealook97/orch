@@ -52,6 +52,8 @@ Maintenance
                                         --orphans: also clean runs whose Head disappeared (abnormal exit)
   orch doctor [--probe-models] [--keys k1,k2]
   orch docs gen [--root DIR]             regenerate marked model catalog blocks
+  orch measure import|report             explicit local usage and quality evidence (JSON import on stdin)
+  orch uninstall [--repo DIR] [--apply]   preview owned removal; --apply backs up before removal
   orch install [--repo DIR] [--dry-run]   install constitution, hooks, skill, and playbooks (after backup)
   orch playbook check [DIR]
   orch goal new|freeze|status|check|note|extend|end  Frozen goals and budgets
@@ -139,6 +141,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	runFlag := fs.String("run", "", "run id")
 
 	switch cmd {
+	case "measure":
+		return failIf(fail, measurementCommand(rest, stdin, stdout))
+	case "uninstall":
+		wd, _ := os.Getwd()
+		repo := fs.String("repo", wd, "orch repository")
+		apply := fs.Bool("apply", false, "apply removals after backup")
+		dry := fs.Bool("dry-run", false, "show only (default)")
+		if _, err := parse(fs, rest); err != nil {
+			return 2
+		}
+		rep, err := uninstall(*repo, *apply && !*dry)
+		if rep != nil {
+			for _, l := range rep.lines {
+				fmt.Fprintln(stdout, l)
+			}
+		}
+		return failIf(fail, err)
 	case "recall":
 		return recallCommand(rest, stdout, stderr)
 	case "ask", "do", "test":
@@ -692,7 +711,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 			return 0
 		case "status":
-			st := loadDagState(r, d)
+			st, err := loadDagState(r, d)
+			if err != nil {
+				return fail(err)
+			}
 			tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "node	status	worker	dependency	notes")
 			for _, n := range d.Nodes {

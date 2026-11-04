@@ -307,9 +307,22 @@ func taskEnv(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "")
 }
 
-// fakeCLI puts an executable script named name first on PATH.
+// fakeCLI puts an explicit mock first on PATH, with fail-closed provider
+// sentinels before the real PATH. Repeated calls retain earlier explicit mocks
+// (fallback tests use several providers), while ordinary system tools stay usable.
 func fakeCLI(t *testing.T, name, script string) {
 	t.Helper()
+	if os.Getenv("ORCH_TEST_PROVIDER_SENTINELS") == "" {
+		guard := t.TempDir()
+		for _, provider := range []string{"codex", "claude", "agy", "gemini", "cr"} {
+			body := "#!/bin/sh\necho 'unmocked provider blocked by fakeCLI: " + provider + "' >&2\nexit 97\n"
+			if err := os.WriteFile(filepath.Join(guard, provider), []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("ORCH_TEST_PROVIDER_SENTINELS", guard)
+		t.Setenv("PATH", guard+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+script), 0700); err != nil {
 		t.Fatal(err)

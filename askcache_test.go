@@ -14,8 +14,8 @@ func TestAskCacheKeyInvalidation(t *testing.T) {
 	t.Setenv("ORCH_HOME", t.TempDir())
 	dir := taskRepo(t)
 	key := askCacheKey(" a  question ", "model", 20, dir)
-	if key == "" || key != askCacheKey("a question", "model", 20, dir) {
-		t.Fatal("normalization")
+	if key == "" || key == askCacheKey("a question", "model", 20, dir) {
+		t.Fatal("raw question collision")
 	}
 	for _, k := range []string{askCacheKey("other", "model", 20, dir), askCacheKey("a question", "other", 20, dir), askCacheKey("a question", "model", 21, dir)} {
 		if k == key {

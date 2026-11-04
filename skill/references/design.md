@@ -15,10 +15,10 @@ App layout reads the `herdr-app` core document, rejects foreign terminal/mod lea
 
 ## 0. Summary
 
-- **The main session is always a separate, standing Head (commander).** It owns judgment, decomposition, assignment, integration, confidence, and the final answer. The scope of work Head does directly is set by the direct-mode threshold in §8 and the delegation break-even point.
+- **The main session is always a separate, standing Head (commander).** It owns judgment, decomposition, assignment, integration, confidence, and the final answer. The Head plans, evaluates, instructs, reviews, judges and communicates. All execution goes to orch workers or orch test, without a size or takeover exception.
 - **Subtasks split into stages (recon/triage -> design -> produce -> verify -> integrate), and work inside each stage must be able to run fully in parallel.**
 - **Models are fixed at 6, and model x effort keys are fixed at 7.** Codex low tier (Luna, high effort), Codex medium tier (Terra, medium effort), Codex high tier (Sol, low/medium), Claude high tier, Claude medium tier, Gemini medium tier (agy). Model ids come from per-key environment variables (`CODEX_LOW_H` ... `GEMINI_MEDIUM_M`). No model owns a fixed role; each contract picks a key from the **purpose-based assignment table (§9)**.
-- **The default is the lightest mode.** The pipeline only kicks in once a threshold (§8) is crossed. Delegation is reserved for subtasks that clear the break-even point.
+- **The default is the lightest mode.** The pipeline only kicks in once a threshold (§8) is crossed. All execution is delegated; length only selects the channel.
 - **Work that gets delegated defaults to parallel.** Read-heavy work — recon, review, verification — always runs in parallel. Write work only runs in parallel when the owned files don't overlap and the interface is already fixed (the parallel-write gate). Stage boundaries overlap at the shard level too (§11, evidence in §17).
 - **On failure, follow the fallback chain tied to the purpose.** First, a different account on the same model; then, once accounts are exhausted, the next key in the purpose's fallback order (§9.4).
 - **Verification splits into a critical lane and a neutral lane.** The neutral lane is `gemini-medium-m` filling out a requirements checklist; the critical lane is a different model family from the author hunting for defects.
@@ -270,7 +270,7 @@ Use Luna for broad cheap lookup and extraction, Terra for constrained writing an
 - `close --run` closes every recorded ID and confirms removal with `herdr pane list`. On failure, retry and report.
 - Reconcile not only panes but also the **worktrees and branches** this run created against the list. Report anything left behind, with a reason.
 - If the Head session dies abnormally, `orch gc` cleans up orphaned panes on the next run. The criterion is that the run is no longer active, or Head's pane is gone.
-- **The lifecycle boundary is the run, not the turn.** While `/goal` is in progress, panes stay alive and can be reused for another shard.
+- **The lifecycle boundary is the run, not the turn.** Every finished worker closes immediately. The next shard gets a new pane.
 
 ---
 
@@ -374,7 +374,7 @@ Write it to ~/.orch/runs/<id>/results/<name>.md in the format below.
 
 | Symbol | Item | How to measure |
 |---|---|---|
-| **E** | Expected effort if Head does it directly | expected tool-call count or time |
+| **E** | Expected effort if An orch worker executes | expected tool-call count or time |
 | **F** | Change footprint | number of files touched, whether it crosses module boundaries |
 | **P** | Number of independent subtasks | count of chunks that can run at the same time without waiting on each other's results, among those that clear the delegation break-even point (§8.4) |
 | **U** | Uncertainty | can the acceptance criteria be pinned down sentence by sentence right now |
@@ -385,8 +385,8 @@ Write it to ~/.orch/runs/<id>/results/<name>.md in the format below.
 
 | Mode | Entry condition | Flow | Worker count |
 |---|---|---|---|
-| **direct** | **All** of: E <= 10 tool calls or about 5 minutes · F <= 2 files, one module · P <= 1 · U = acceptance criteria can be pinned down immediately · R = git reverts it instantly · no H | Head does it directly. No run directory. If there's a test or build, Head runs it once directly | 0 |
-| **light** | Crosses one or more of the direct conditions, but: F <= 5 files, one or two modules · U = can be pinned down · R = git can revert it · no H | One deliverable (parallel if P >= 2) + **one independent verification lane**. Mechanical checks are Head running the command directly | 1-3 |
+| **direct** | **All** of: E <= 10 tool calls or about 5 minutes · F <= 2 files, one module · P <= 1 · U = acceptance criteria can be pinned down immediately · R = git reverts it instantly · no H | No run directory; execution through orch ask/do/test | 0 |
+| **light** | Crosses one or more of the direct conditions, but: F <= 5 files, one or two modules · U = can be pinned down · R = git can revert it · no H | One deliverable (parallel if P >= 2) + **one independent verification lane**. Mechanical checks use orch test | 1-3 |
 | **full** | **One or more** of: F > 5 files or 3+ modules · P >= 3 · U = acceptance criteria need investigation to pin down · R = reverting is a hassle (multiple commits, config, a pre-publish stage of a document) | recon -> (Head design) -> produce -> mechanical + critical (+ neutral if user-facing output changed) -> integrate | 3 up to the D5 cap |
 | **full+** | **Any** H | same as full, plus a design challenge of the Head's decisions.md by a different family (`--author-family head`) after design and before produce, 2 critical lanes from different families + an adversarial lane | same as full |
 
@@ -399,25 +399,12 @@ Write it to ~/.orch/runs/<id>/results/<name>.md in the format below.
 - The user explicitly asks for "thorough" or "fully verified" work
 
 **Picking the one verification lane for light mode**
-- Code with existing tests -> Head runs the tests directly + **one critical lane** (a different family)
+- Code with existing tests -> Tests run through orch test + **one critical lane** (a different family)
 - Docs, writing, user-facing output -> **one neutral lane** (`gemini-medium-m`)
 - Both apply -> the critical lane takes priority
 
-### 8.4 Delegation break-even point (per individual subtask)
-Head decides whether to delegate a subtask or do it directly using the following.
-
-**Delegate if one or more apply:**
-1. Doing it directly would take Head **about 5 minutes or 10+ tool calls or more** — roughly 3x the fixed cost of delegating.
-2. Running it **at the same time as another subtask shortens the critical path.**
-3. The mode **requires an independent perspective** (a verification lane).
-4. It would badly pollute Head's context (large logs, long documents). If a worker returns just a summary, it saves Head's tokens.
-
-**Do it directly if none of the above apply:**
-- E.g., reading one file, running one command, a short edit, a small adjustment between result files.
-
-**Floor for splitting**
-- Never split a subtask below the break-even size. If the split-off chunks would each be under 5 minutes, merge them and give them to one worker.
-- Parallel width = the number of independent subtasks that clear the break-even point. Beyond the D5 cap, spawn in critical-path order.
+### 8.4 Execution ownership
+All execution goes through orch workers or orch test, including tiny edits, builds, tests, Git and installation. Direct is a lightweight orchestration mode. Length selects one-off versus pane; it never makes Head the executor. Five minutes is an operational routing heuristic, not a measured break-even point.
 
 ### 8.5 Adjusting the mode
 - **Step down**: if the investigation shows the scope is smaller than expected, drop a level right away, and close any worker that's no longer needed.
@@ -430,7 +417,7 @@ Head decides whether to delegate a subtask or do it directly using the following
 - **Head does not read worker transcripts.** Use `agent read` only when the result file is missing or the worker is stuck.
 - **Cut early**: if a shard's mechanical check fails, cancel that shard's other verification lanes. Rerun them once it's fixed.
 - **Rerun only the affected lanes.** If a fix is a one-line doc change, don't rerun the code review.
-- **Reuse panes**: once a worker with a given key finishes, it can take the next contract in the same run if that contract **doesn't need independence** from the previous one. Never reuse the same pane for both author and verifier.
+- **Never reuse panes**: close every finished worker immediately; use a new worker for the next contract.
 - **Cheapest key first**: if the primary in the assignment table (§9.2) is a cheap key, use it. Only escalate per the criteria in §9.4.
 
 ### 8.7 Example calls
@@ -580,7 +567,7 @@ There are exactly three families: OpenAI (`codex-*`), Anthropic (`claude-high-m`
 | Alternative implementation/design | `claude-medium-m` | `codex-high-m` | `claude-high-m` | If falling back would defeat the point of "alternative" (a different family), prefer `codex-high-m` |
 | Docs/writing, research synthesis | `claude-medium-m` | `codex-high-m` | `claude-high-m` | |
 | Data analysis | `codex-high-m` | `claude-high-m` | `claude-medium-m` | |
-| Integration, merging | `codex-high-m` | `claude-high-m` | Head does it directly | |
+| Integration, merging | `codex-high-m` | `claude-high-m` | orch workers execute | |
 | Mechanical verification | `codex-low-h` | `codex-high-m` | `claude-medium-m` | the author's own session is forbidden |
 | Critical review | assignment table E | swap within the same **different family** (`claude-medium-m`<->`claude-high-m`, and `codex-high-l`<->`codex-high-m` rather than `codex-high-m`<->`claude-high-m`) | whatever's left in a family different from the author | **The family constraint wins.** Never fall back into the author's family |
 | Neutral verification | `gemini-medium-m` | `claude-medium-m` (or `codex-high-m` if the author is Anthropic) | any other different family | Keep the output format (the checklist). Mark it "gemini-medium-m substitute" in the report |
@@ -590,7 +577,7 @@ Legacy alias keys are normalized before fallback, including attempted-key record
 
 #### If the whole fallback chain is blocked
 - Mark that shard `blocked` and **keep the other shards moving.** Don't stop everything.
-- If it's small enough for Head to do directly, do it directly.
+- Even the smallest execution task goes through orch ask/do/test.
 - Otherwise, report to the user what's blocked, which account/model is exhausted, and when it should free up (the reset time from the cr registry).
 
 #### Avoiding fallback in the first place
@@ -606,7 +593,7 @@ Legacy alias keys are normalized before fallback, including attempted-key record
 - The author's own test runs and self-review are supporting evidence only — **they never count as independent verification.**
 - A different session of the same model is not a different perspective. When a genuinely different viewpoint is needed, change the family.
 - **The mechanical lane is the first gate.** If it fails, don't spin up the LLM lanes (critical, neutral, adversarial) — send it straight back for a fix. Once it passes, launch the LLM lanes **at the same time.** For deliverables with nothing to execute (writing, research), launch the LLM lanes right away.
-- **Rows are for writers.** The mechanical gate runs as a `run` node (no model, no pane). Critical and neutral lanes default to `pane: false`: they run through `orch ask` with read-only tools, so the contract carries the diff path and the mechanical result. A reviewer gets a pane only when it must run code to reproduce a finding; adversarial lanes keep their pane.
+- **Independent review uses fresh panes.** Mechanical gates run through orch test or a model-less DAG run node. Critical, neutral and adversarial workers each get a new pane; contracts carry the diff path and mechanical results.
 - Give LLM reviewers test-execution permission too, and require every finding to cite evidence (file:line, a repro command).
 
 ### 10.2 Lane definitions
@@ -643,7 +630,7 @@ Legacy alias keys are normalized before fallback, including attempted-key record
 
 | Mode | Mechanical | Critical | Neutral | Adversarial |
 |---|---|---|---|---|
-| direct | Head directly, if needed | — | — | — |
+| direct | orch workers/test, if needed | — | — | — |
 | light | required (if there's something to run) | optional | required | — |
 | full | required | required | if user-facing output (docs, UI, CLI text, API surface) changed | optional |
 | full+ | required | required, two different families | required | required |
@@ -741,7 +728,7 @@ Playbooks live at `~/.orch/playbooks/<type>.yaml`. Head picks a type, adjusts it
 | Image generation | light | `gemini-medium-m` (references, style analysis) | whichever CLI has generation tooling (D4) | neutral `gemini-medium-m` (requirements check) + critical `claude-medium-m` (visual quality) |
 | Refactoring | full | `codex-low-h` (impact scope) | `claude-high-m` (core) + `codex-high-l` per mechanical shard | mechanical (full tests, same behavior) + critical `claude-high-m` |
 | Design/architecture review | full | `codex-low-h` + `gemini-medium-m` | `claude-high-m` | critical `codex-high-m` + neutral `gemini-medium-m` if user-facing output changed |
-| Simple question, single-file edit | direct | — | Head | Head directly, if needed |
+| Simple question, single-file edit | direct | — | Head | orch workers/test, if needed |
 
 ### 12.2 Playbook example (`feature.yaml`)
 
@@ -771,14 +758,14 @@ stages:
     start: per_shard          # start as soon as a shard finishes
     lanes:
       mechanical: { run: true, model: codex-low-h, required: true }   # run node; the model only reads a failure
-      critical:   { model: other_family(author), pane: false, required: true }
-      neutral:    { model: gemini-medium-m, pane: false, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
+      critical:   { model: other_family(author), pane: true, required: true }
+      neutral:    { model: gemini-medium-m, pane: true, required: false, when: "user_facing || mode == full+", withhold: [self_assessment] }
       adversarial:{ model: other_family(author, critical), when: "mode == full+" }
   integrate:
     owner: head
     mechanics: head
     escalate_to: codex-high-l
-    notes: "Clean merge: Head runs git merge and orch test directly, no model. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge all clean worktrees in one pass, then run the full suite and the interface contract tests once; on failure, find the culprit by reverting merges newest first. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema)."
+    notes: "Clean merge: A worker performs Git integration and runs checks; Head judges the evidence. Textual conflicts: codex-high-l. Semantic conflicts: claude-high-m. Merge all clean worktrees in one pass, then run the full suite and the interface contract tests once; on failure, find the culprit by reverting merges newest first. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema)."
 retry_limit: 2
 ```
 

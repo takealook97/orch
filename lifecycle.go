@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+type workerCloseError struct{ err error }
+
+func (e *workerCloseError) Error() string { return e.err.Error() }
+func (e *workerCloseError) Unwrap() error { return e.err }
+
 type waitOutcome struct {
 	Name   string
 	Status string // done, blocked, partial, agent-blocked, quota, idle-no-result, timeout, fallback:<new>, failed
@@ -83,7 +88,9 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				if t.Status == "running" {
 					if why := taskDead(t); why != "" {
 						t.Status, t.Note = "failed", why
-						_ = saveTask(t)
+						if err := saveTask(t); err != nil {
+							return outcomes, err
+						}
 					}
 				}
 				if t.Status != "running" {
@@ -113,28 +120,21 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				continue
 			}
 			if st != "" {
-				mergeErr := mergeKnowledge(runID, name, w.Result)
-				setStatus(runID, name, st)
-				// A finished worker's pane is always closed at once (no reuse).
-				detail := w.Result
-				if mergeErr != nil {
-					detail += " · knowledge merge failed: " + mergeErr.Error()
-				}
-				if w.Pane == "" && w.Reaped {
-					detail += " · pane closed by the reaper"
-				}
-				if w.Pane != "" {
-					if err := closeWorker(runID, name); err != nil {
-						// A pane that could not be removed is not a clean finish.
-						outcomes = append(outcomes, waitOutcome{name, "close-failed", detail + " · result is " + st + ", pane close failed: " + err.Error()})
+				detail, accepted, err := collectWorker(runID, name)
+				if err != nil {
+					var closeFailure *workerCloseError
+					if errors.As(err, &closeFailure) {
+						outcomes = append(outcomes, waitOutcome{name, "close-failed", detail + err.Error()})
 						continue
-					} else {
-						detail += " · pane closure confirmed"
-						_ = normalizeOwnedLayouts(headID())
 					}
+					return outcomes, err
 				}
-				markReported(runID, name)
-				outcomes = append(outcomes, waitOutcome{name, st, detail})
+				if accepted == "" {
+					// State can change between the preliminary check and collection.
+					still = append(still, name)
+					continue
+				}
+				outcomes = append(outcomes, waitOutcome{name, accepted, detail})
 				continue
 			}
 			info, _ := agentGet(workerAgent(w))
@@ -156,7 +156,9 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 						outcomes = append(outcomes, waitOutcome{name, "quota", ferr.Error()})
 						continue
 					}
-					setStatus(runID, name, "quota")
+					if err := setStatus(runID, name, "quota"); err != nil {
+						return outcomes, err
+					}
 					outcomes = append(outcomes, waitOutcome{name, "quota", "quota exhausted"})
 					continue
 				}
@@ -183,11 +185,15 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 									still = append(still, nw)
 									continue
 								}
-								setStatus(runID, name, "capacity")
+								if err := setStatus(runID, name, "capacity"); err != nil {
+									return outcomes, err
+								}
 								outcomes = append(outcomes, waitOutcome{name, "capacity", ferr.Error()})
 								continue
 							}
-							setStatus(runID, name, "capacity")
+							if err := setStatus(runID, name, "capacity"); err != nil {
+								return outcomes, err
+							}
 							outcomes = append(outcomes, waitOutcome{name, "capacity", "model at capacity; retries exhausted"})
 							continue
 						}
@@ -250,8 +256,8 @@ func unknownPanes(head string) []string {
 }
 
 // markReported clears the reaper's mark once wait or collect has reported the worker.
-func markReported(runID, name string) {
-	_ = withRun(runID, func(r *Run) error {
+func markReported(runID, name string) error {
+	return withRun(runID, func(r *Run) error {
 		if w := r.worker(name); w != nil {
 			w.Reaped = false
 		}
@@ -259,8 +265,8 @@ func markReported(runID, name string) {
 	})
 }
 
-func setStatus(runID, name, st string) {
-	_ = withRun(runID, func(r *Run) error {
+func setStatus(runID, name, st string) error {
+	return withRun(runID, func(r *Run) error {
 		if w := r.worker(name); w != nil && w.Status != st {
 			w.Status = st
 			r.event("status %s=%s", name, st)
@@ -299,7 +305,9 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 	}
 	// Bound the whole replacement lineage so accounts or keys can never cycle.
 	if len(w.Tried)+len(w.TriedAccounts) >= maxFallbacks {
-		setStatus(runID, name, "blocked")
+		if err := setStatus(runID, name, "blocked"); err != nil {
+			return "", err
+		}
 		return "", fmt.Errorf("%s: reached the fallback limit (%d). report to the user", name, maxFallbacks)
 	}
 	authors, _ := familiesOf(r, w.Reviews)
@@ -328,7 +336,9 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 		}
 		m, ok := nextFallback(purpose, w.Key, w.Role, authors, critics, tried)
 		if !ok {
-			setStatus(runID, name, "blocked")
+			if err := setStatus(runID, name, "blocked"); err != nil {
+				return "", err
+			}
 			return "", fmt.Errorf("%s: all models in fallback chain (%s) are unavailable", name, purpose)
 		}
 		key = m.Key
@@ -349,7 +359,9 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 	} else if strings.Contains(reason, "capacity") {
 		failStatus = "capacity"
 	}
-	setStatus(runID, name, failStatus)
+	if err := setStatus(runID, name, failStatus); err != nil {
+		return "", err
+	}
 	if err := closeWorker(runID, name); err != nil {
 		return "", fmt.Errorf("%s: fallback stopped because the old pane could not be closed: %w", name, err)
 	}
@@ -373,10 +385,19 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 	if err := os.WriteFile(r.contractPath(newName), body, 0600); err != nil {
 		return "", err
 	}
-	_ = withRun(runID, func(r *Run) error {
+	if err := withRun(runID, func(r *Run) error {
 		r.event("fallback %s(%s) → %s(%s): %s", name, w.Key, newName, key, reason)
 		return nil
-	})
+	}); err != nil {
+		return nw.Name, err
+	}
+	reasonCode := "capacity"
+	if strings.Contains(reason, "quota") {
+		reasonCode = "quota"
+	}
+	if err := recordMeasurement(Measurement{Version: 1, ID: nw.Name + "-recovery", Session: runID, Period: "run", Subject: "pane", Entity: nw.Name, Phase: "rework", Source: "orch-fallback", Kind: "missing", Coverage: "unavailable", Event: "recovery_started", Reason: reasonCode}); err != nil {
+		fmt.Fprintln(os.Stderr, "orch: warning: persist recovery measurement:", err)
+	}
 	if err := prompt(runID, nw.Name, "", false, 0); err != nil {
 		return nw.Name, err
 	}
@@ -421,6 +442,14 @@ func collectWorker(runFlag, name string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return "", "", fmt.Errorf("invalid worker name")
+	}
+	unlock, err := exclusiveFile(filepath.Join(runDir(runID), ".complete-"+name+".lock"), true)
+	if err != nil {
+		return "", "", err
+	}
+	defer unlock()
 	r, err := loadRun(runID)
 	if err != nil {
 		return "", "", err
@@ -442,11 +471,7 @@ func collectWorker(runFlag, name string) (string, string, error) {
 		return b.String(), "", nil
 	}
 	fmt.Fprintf(&b, "status: %s\nresult: %s\n", st, w.Result)
-	if w.Pane == "" || agentStopped(w) {
-		if err := mergeKnowledge(runID, name, w.Result); err != nil {
-			fmt.Fprintf(&b, "knowledge merge failed: %v\n", err)
-		}
-	}
+
 	if data, err := os.ReadFile(w.Result); err == nil {
 		if summary := collectSummary(string(data)); summary != "" {
 			fmt.Fprintln(&b, summary)
@@ -463,6 +488,7 @@ func collectWorker(runFlag, name string) (string, string, error) {
 	}
 	if w.Pane != "" && !agentStopped(w) {
 		fmt.Fprintf(&b, "agent still working; pane left open\n")
+		return b.String(), "", nil
 	} else if w.Pane != "" {
 		if closeErr = closeWorker(runID, name); closeErr != nil {
 			fmt.Fprintf(&b, "pane close failed: %v\n", closeErr)
@@ -471,44 +497,44 @@ func collectWorker(runFlag, name string) (string, string, error) {
 			_ = normalizeOwnedLayouts(r.HeadPane)
 		}
 	}
-	markReported(runID, name)
+	var fresh []string
 	if w.Contract != "" && w.Cwd != "" {
 		body, err := os.ReadFile(w.Contract)
 		// Preserve non-git tasks that declare no commit baseline.
 		checkScope := err != nil || isGitDir(w.Cwd) || explicitBase(contractBase(string(body)))
-		var root string
-		var changed []string
 		if err == nil && checkScope {
+			var root string
 			root, err = workerScopeRepository(w, string(body))
-		}
-		if err == nil && checkScope {
-			changed, err = changedFiles(root, workerScopeBase(w, string(body)))
-		}
-		if err != nil {
-			// Fail closed: an unverifiable scope is not a pass.
-			st = "failed"
-			fmt.Fprintf(&b, "scope could not be checked; marked failed: %v\n", err)
-		} else if checkScope {
-			// A file counts when it changed after the prompt (content differs from the baseline).
-			if root != repoRoot(w.Cwd) {
+			if err == nil && root != repoRoot(w.Cwd) {
 				fmt.Fprintf(&b, "scope checked in repository: %s\n", root)
 			}
-			baseline := w.Baseline
-			if (w.BaselineRoot != "" && w.BaselineRoot != root) || (w.BaselineRoot == "" && root != repoRoot(w.Cwd)) {
-				baseline = nil
+			if err == nil {
+				baseline := w.Baseline
+				if (w.BaselineRoot != "" && w.BaselineRoot != root) || (w.BaselineRoot == "" && root != repoRoot(w.Cwd)) {
+					baseline = nil
+				}
+				var bad []string
+				fresh, bad, err = completionChanges(w.Cwd, root, workerScopeBase(w, string(body)), baseline, workerOwnedGlobs(w, string(body)))
+				if len(bad) > 0 {
+					st = "failed"
+					fmt.Fprintf(&b, "scope violation; marked failed: change outside owned files %s\n", strings.Join(bad, ", "))
+				}
+				if len(fresh) > 0 {
+					fmt.Fprintf(&b, "changed files: %s\n", strings.Join(fresh, ", "))
+				}
 			}
-			fresh := freshChanges(root, changed, baseline)
-			if bad := repositoryScopeViolations(w.Cwd, root, fresh, workerOwnedGlobs(w, string(body))); len(bad) > 0 {
-				st = "failed"
-				fmt.Fprintf(&b, "scope violation; marked failed: change outside owned files %s\n", strings.Join(bad, ", "))
-			} else if len(fresh) > 0 {
-				fmt.Fprintf(&b, "changed files (in scope): %s\n", strings.Join(fresh, ", "))
-			}
+		} else if err == nil {
+			fmt.Fprintln(&b, "scope: unchecked (non-git task without explicit baseline)")
 		}
+		if err != nil {
+			st = "failed"
+			fmt.Fprintf(&b, "scope could not be checked; marked failed: %v\n", err)
+		}
+
 	}
 	if w.Branch != "" && !w.Committed && (st == "done" || st == "partial") && closeErr == nil && (w.Pane == "" || agentStopped(w)) {
 		body, _ := os.ReadFile(w.Result)
-		hash, err := commitWorktree(w.Worktree, runID, name, collectSummary(string(body)))
+		hash, err := commitCompletion(w.Worktree, runID, name, collectSummary(string(body)), fresh)
 		if err != nil {
 			st = "failed"
 			fmt.Fprintf(&b, "worktree commit failed; left in %s: %v\n", w.Worktree, err)
@@ -528,9 +554,30 @@ func collectWorker(runFlag, name string) (string, string, error) {
 			return b.String(), st, err
 		}
 	}
-	setStatus(runID, name, st)
+	if err := withRun(runID, func(r *Run) error {
+		x := r.worker(name)
+		if x == nil {
+			return fmt.Errorf("worker disappeared")
+		}
+		x.Status = st
+		x.Accepted = closeErr == nil && (st == "done" || st == "partial")
+		return nil
+	}); err != nil {
+		return b.String(), st, err
+	}
 	if closeErr != nil {
-		return b.String(), st, fmt.Errorf("worker %s pane could not be closed: %w", name, closeErr)
+		return b.String(), st, &workerCloseError{fmt.Errorf("worker %s pane could not be closed: %w", name, closeErr)}
+	}
+	if err := recordPaneCompletion(runID, w, st); err != nil {
+		fmt.Fprintf(&b, "warning: persist pane measurement: %v\n", err)
+	}
+	if st == "done" || st == "partial" {
+		if err := mergeKnowledge(runID, name, w.Result); err != nil {
+			return b.String(), st, err
+		}
+	}
+	if err := markReported(runID, name); err != nil {
+		return b.String(), st, err
 	}
 	return b.String(), st, nil
 }
@@ -567,26 +614,33 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 		return nil // the name was reused for a new worker; never close its pane
 	}
 	if pane == "" {
-		cleanRunOverflowWarning(runID)
-		return nil
+		return cleanRunOverflowWarning(runID)
 	}
 	var cerr error
 	if pane != "" {
 		if backend() == "app" {
 			cerr = appClose(terminal, appIdentity{runID, name})
 		} else {
-			cerr = closePane(pane)
+			exists, probeErr := paneExists(pane)
+			if probeErr != nil {
+				cerr = probeErr
+			} else if exists {
+				cerr = closePane(pane)
+			}
 		}
 	}
-	_ = withRun(runID, func(r *Run) error {
+	persistErr := withRun(runID, func(r *Run) error {
 		w := r.worker(name)
+		if w == nil {
+			return fmt.Errorf("worker disappeared")
+		}
 		if cerr == nil && w.Pane != pane {
 			return nil // another orch process recorded this close first, or the name was reused
 		}
 		if cerr == nil {
 			w.Closed = time.Now()
 			// Keep a final outcome (done/partial/blocked/failed/quota); otherwise mark closed.
-			if st := resultStatus(w.Result); st != "" {
+			if st := resultStatus(w.Result); st != "" && w.Status != "failed" {
 				w.Status = st
 			} else if w.Status != "failed" && w.Status != "quota" && w.Status != "capacity" && w.Status != "blocked" {
 				w.Status = "closed"
@@ -602,14 +656,21 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 		}
 		return nil
 	})
+	if persistErr != nil {
+		return errors.Join(cerr, persistErr)
+	}
 	if cerr == nil {
-		cleanRunOverflowWarning(runID)
+		if err := cleanRunOverflowWarning(runID); err != nil {
+			return err
+		}
 		if backend() == "app" {
 			if err := normalizeAppLayouts(headID()); err != nil {
-				_ = withRun(runID, func(r *Run) error {
+				if persistErr := withRun(runID, func(r *Run) error {
 					r.event("warning: app layout normalization after close %s: %v", name, err)
 					return nil
-				})
+				}); persistErr != nil {
+					return persistErr
+				}
 			}
 		}
 		return nil
@@ -618,26 +679,29 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 }
 
 // A confirmed pane close succeeds even if tab cleanup needs a later retry.
-func cleanRunOverflowWarning(runID string) {
-	if err := cleanRunOverflow(runID); err != nil {
-		fmt.Fprintln(os.Stderr, "orch: warning: overflow cleanup:", err)
+func cleanRunOverflowWarning(runID string) error {
+	cleanupErr, persistErr := cleanRunOverflowState(runID)
+	if cleanupErr != nil {
+		fmt.Fprintln(os.Stderr, "orch: warning: overflow cleanup:", cleanupErr)
 	}
+	return persistErr
 }
 
-// cleanRunOverflow persists partial cleanup even when another tab cannot be closed.
 func cleanRunOverflow(runID string) error {
-	var cleanupErr error
-	err := withRun(runID, func(r *Run) error {
+	cleanupErr, persistErr := cleanRunOverflowState(runID)
+	return errors.Join(cleanupErr, persistErr)
+}
+
+// Keep UI cleanup warnings separate from mandatory persistence errors.
+func cleanRunOverflowState(runID string) (cleanupErr, persistErr error) {
+	persistErr = withRun(runID, func(r *Run) error {
 		cleanupErr = cleanupOverflowTabs(r)
 		if cleanupErr != nil {
 			r.event("overflow cleanup warning: %v", cleanupErr)
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	return cleanupErr
+	return
 }
 
 // closeRun closes every recorded pane of a run, verifies removal and reports leftovers.
@@ -648,6 +712,14 @@ func closeRun(runID string, end bool) ([]string, error) {
 	}
 	if err := ownRun(r); err != nil {
 		return nil, err
+	}
+	if r.Status == "closed" && end {
+		return nil, nil
+	}
+	if end {
+		if err := withRun(runID, func(r *Run) error { r.EndRequested = true; r.Status = "active"; return nil }); err != nil {
+			return nil, err
+		}
 	}
 	var failed []string
 	for _, w := range r.liveWorkers() {
@@ -665,14 +737,19 @@ func closeRun(runID string, end bool) ([]string, error) {
 		failed = append(failed, cleanupErr.Error())
 	}
 	var notes []string
-	r, _ = loadRun(runID)
-	notes = append(notes, cleanupRunWorktrees(r, false)...)
-	if end {
-		_ = withRun(runID, func(r *Run) error {
-			r.Status = "closed"
-			r.event("run ended")
-			return nil
-		})
+	r, err = loadRun(runID)
+	if err != nil {
+		return notes, err
+	}
+	worktreeNotes, worktreeErr := cleanupRunWorktreesChecked(r, false)
+	notes = append(notes, worktreeNotes...)
+	if worktreeErr != nil {
+		failed = append(failed, worktreeErr.Error())
+	}
+	if end && len(failed) == 0 {
+		if err := withRun(runID, func(r *Run) error { r.Status = "closed"; r.EndRequested = false; r.event("run ended"); return nil }); err != nil {
+			return notes, err
+		}
 	}
 	if len(failed) > 0 {
 		return notes, fmt.Errorf("workers still open: %s", strings.Join(failed, ", "))
@@ -734,12 +811,14 @@ func gc(orphans bool) ([]string, error) {
 		default:
 			continue
 		}
+		var runCleanupErr error
 		for _, w := range r.liveWorkers() {
 			exists := live[w.Pane]
 			if backend() == "app" {
 				var err error
 				exists, err = paneExists(w.Terminal)
 				if err != nil {
+					runCleanupErr = errors.Join(runCleanupErr, err)
 					report = append(report, fmt.Sprintf("%s/%s: %v", r.ID, w.Name, err))
 					continue
 				}
@@ -752,12 +831,13 @@ func gc(orphans bool) ([]string, error) {
 					closeErr = closePane(w.Pane)
 				}
 				if err := closeErr; err != nil {
+					runCleanupErr = errors.Join(runCleanupErr, err)
 					report = append(report, fmt.Sprintf("%s/%s: %v", r.ID, w.Name, err))
 					continue
 				}
 			}
 			report = append(report, fmt.Sprintf("%s/%s pane %s cleaned", r.ID, w.Name, w.Pane))
-			_ = withRun(r.ID, func(r *Run) error {
+			if err := withRun(r.ID, func(r *Run) error {
 				if x := r.worker(w.Name); x != nil {
 					x.Pane = ""
 					if x.Status != "done" && x.Status != "partial" {
@@ -765,22 +845,31 @@ func gc(orphans bool) ([]string, error) {
 					}
 				}
 				return nil
-			})
+			}); err != nil {
+				return report, err
+			}
 		}
 		unlock, err := lockHead(r.HeadPane)
 		if err != nil {
 			return report, err
 		}
 		if err := cleanRunOverflow(r.ID); err != nil {
+			runCleanupErr = errors.Join(runCleanupErr, err)
 			report = append(report, fmt.Sprintf("%s: %v", r.ID, err))
 		}
 		unlock()
+		if runCleanupErr != nil {
+			persistErr := withRun(r.ID, func(r *Run) error { r.Status = "active"; r.EndRequested = true; return nil })
+			return report, errors.Join(runCleanupErr, persistErr)
+		}
 		if r.Status == "active" {
-			_ = withRun(r.ID, func(r *Run) error {
+			if err := withRun(r.ID, func(r *Run) error {
 				r.Status = "closed"
 				r.event("gc: Head pane %s disappeared; run ended", r.HeadPane)
 				return nil
-			})
+			}); err != nil {
+				return report, err
+			}
 			report = append(report, fmt.Sprintf("%s: Head disappeared; run ended", r.ID))
 		}
 		if fresh, err := loadRun(r.ID); err == nil {

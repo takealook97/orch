@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -100,10 +101,18 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 				offset = st.Size()
 			}
 		}
+		var publishErr error
 		res, err = execLoggedMode(t.Cwd, m.Kind, args, env, left, logPath, func(pgid int) {
 			t.Pgid = pgid
-			editTask(t, func(x *Task) { x.Pgid = pgid })
+			publishErr = editTask(t, func(x *Task) { x.Pgid = pgid })
+			if publishErr != nil {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			}
 		}, t.CapacityRetries > 0)
+		if publishErr != nil {
+			err = errors.Join(err, publishErr)
+			return
+		}
 		all, _ := os.ReadFile(logPath)
 		if offset <= int64(len(all)) {
 			raw = all[offset:]
@@ -148,11 +157,16 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 			return
 		}
 		t.CapacityRetries++
-		editTask(t, func(x *Task) { x.CapacityRetries = t.CapacityRetries; x.Pgid = 0 })
-		_ = withRun(t.Run, func(r *Run) error {
+		if err = editTask(t, func(x *Task) { x.CapacityRetries = t.CapacityRetries; x.Pgid = 0 }); err != nil {
+			return
+		}
+		err = withRun(t.Run, func(r *Run) error {
 			r.event("%s capacity: resume %d/%d after %s", t.ID, t.CapacityRetries, capacityMaxRetries(), delay)
 			return nil
 		})
+		if err != nil {
+			return
+		}
 		// A stale last-message file must not mask the resumed attempt's outcome.
 		_ = os.Remove(answerPath)
 	}

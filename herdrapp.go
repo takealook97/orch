@@ -11,20 +11,12 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
 func muxCommand(bin string, args ...string) ([]byte, error) {
-	c := exec.Command(bin, args...)
-	// Raw sends and independent runs must never inherit hc's sender/parent identity.
-	c.Env = withoutHCTerminal(os.Environ())
-	var stderr bytes.Buffer
-	c.Stderr = &stderr
-	out, err := c.Output()
-	if err != nil {
-		return out, fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, stderr.String())
-	}
-	return out, nil
+	return boundedControl(bin, args, withoutHCTerminal(os.Environ()), controlDeadline(bin, args))
 }
 func withoutHCTerminal(env []string) []string {
 	out := []string{}
@@ -44,6 +36,9 @@ var hcRPC = func(method string, params any) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, "hc", "connect")
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	c.WaitDelay = 100 * time.Millisecond
 	c.Env = withoutHCTerminal(os.Environ())
 	in, err := c.StdinPipe()
 	if err != nil {
@@ -58,7 +53,11 @@ var hcRPC = func(method string, params any) (json.RawMessage, error) {
 	if err = c.Start(); err != nil {
 		return nil, err
 	}
-	defer func() { _ = in.Close(); _ = c.Process.Kill(); _ = c.Wait() }()
+	defer func() { _ = in.Close(); _ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL); _ = c.Wait() }()
+	// StdoutPipe scanners are outside exec's copier; close them on deadline even if
+	// a detached descendant inherited the pipe.
+	stopClose := context.AfterFunc(ctx, func() { _ = out.Close() })
+	defer stopClose()
 	req := map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
 	if err = json.NewEncoder(in).Encode(req); err != nil {
 		return nil, err

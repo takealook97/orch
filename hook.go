@@ -130,6 +130,10 @@ func (h hookInput) tool() string {
 // commandText collects every string in the tool input so shell commands are found
 // regardless of the CLI's argument shape (command, cmd, CommandLine, argv arrays).
 func (h hookInput) commandText() string {
+	// An edit body is data even if it contains shell commands or patch examples.
+	if goalEditTool.MatchString(h.tool()) {
+		return ""
+	}
 	raw := h.ToolInput
 	if len(raw) == 0 && h.ToolCall != nil {
 		raw = h.ToolCall.Args
@@ -188,7 +192,13 @@ func decide(in hookInput, role string, inHerdr bool) string {
 		return ""
 	}
 	if !inHerdr {
+		if envOrch("RUN") != "" {
+			return headExecutionReason(in)
+		}
 		return ""
+	}
+	if reason := headExecutionReason(in); reason != "" {
+		return reason
 	}
 	if reason := codexGoalCompileReason(in); reason != "" {
 		return reason
@@ -324,7 +334,7 @@ func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 }
 
-var goalPatchTool = regexp.MustCompile(`(?i)(^|[.__])apply_patch$`)
+var goalPatchTool = regexp.MustCompile(`^(?:apply_patch|functions\.apply_patch)$`)
 var goalPatchPath = regexp.MustCompile(`(?m)^\*\*\* (?:Add File|Update File|Delete File|Move to):[ \t]*(.+)$`)
 var goalShellPatch = regexp.MustCompile(`\bapply_patch\b[^\n]*<<`)
 
@@ -361,7 +371,13 @@ func stripPatchHeredocs(cmd string) string {
 	}
 }
 
-var goalEditTool = regexp.MustCompile(`(?i)(^|[.__])(?:Edit|Write|MultiEdit|NotebookEdit)$`)
+// Only known edit APIs may exclude their bodies from command inspection.
+// Arbitrary MCP suffixes such as terminal.write can execute commands.
+var goalEditTool = regexp.MustCompile(`^(?:Edit|Write|MultiEdit|NotebookEdit|write_file|edit_file)$`)
+
+// Path enforcement is separate from command-body exemptions. Recognizing an MCP
+// filesystem edit must never exempt terminal.write or arbitrary suffix matches.
+var goalPathEditTool = regexp.MustCompile(`^(?:Edit|Write|MultiEdit|NotebookEdit|write_file|edit_file|mcp__filesystem__(?:write_file|edit_file))$`)
 
 func goalPath(p string) string {
 	if strings.HasPrefix(p, "~/") {
@@ -412,6 +428,11 @@ func goalEditPaths(in hookInput, patch bool) []string {
 		}
 		_ = json.Unmarshal(raw, &fields)
 		p, _ := fields["file_path"].(string)
+		for _, key := range []string{"path", "TargetFile", "target_file", "file", "absolute_path"} {
+			if p == "" {
+				p, _ = fields[key].(string)
+			}
+		}
 		if p == "" {
 			p, _ = fields["notebook_path"].(string)
 		}
@@ -429,7 +450,12 @@ func codexGoalCompileReason(in hookInput) string {
 	if in.TranscriptPath == "" {
 		return ""
 	}
-	if g, _ := activeGoalFor(headID()); g != nil {
+	if g, err := activeGoalFor(headID()); err != nil {
+		if goalShellTool.MatchString(in.tool()) && goalCompileCommand.MatchString(in.commandText()) {
+			return ""
+		}
+		return "Goal state unavailable: " + err.Error()
+	} else if g != nil {
 		return ""
 	}
 	objective, active := codexGoalState(in.TranscriptPath)
@@ -443,7 +469,7 @@ func codexGoalCompileReason(in hookInput) string {
 		return ""
 	}
 	patch := goalPatchTool.MatchString(in.tool()) || goalShellPatch.MatchString(in.commandText())
-	if patch || goalEditTool.MatchString(in.tool()) {
+	if patch || goalPathEditTool.MatchString(in.tool()) {
 		paths := goalEditPaths(in, patch)
 		allowed := len(paths) > 0
 		base := goalPath(orchHome())
@@ -465,14 +491,20 @@ func codexGoalCompileReason(in hookInput) string {
 
 func goalScopeReason(in hookInput) string {
 	patch := goalPatchTool.MatchString(in.tool()) || goalShellPatch.MatchString(in.commandText())
-	if !goalEditTool.MatchString(in.tool()) && !patch {
+	if !goalPathEditTool.MatchString(in.tool()) && !patch {
 		return ""
 	}
 	g, e := activeGoalFor(headID())
-	if e != nil || g == nil {
+	if e != nil {
+		return "Goal state unavailable: " + e.Error()
+	}
+	if g == nil {
 		return ""
 	}
 	paths := goalEditPaths(in, patch)
+	if len(paths) == 0 {
+		return "Goal scope cannot be checked: edit tool supplied no recognized file path"
+	}
 	home, _ := os.UserHomeDir()
 	for _, p := range paths {
 		if !filepath.IsAbs(p) && !strings.HasPrefix(p, "~/") && in.Cwd != "" {
@@ -517,7 +549,12 @@ func goalPromptHook(data []byte, stdout io.Writer) int {
 		return 0
 	}
 	g, e := activeGoalFor(headID())
-	if e != nil || g != nil {
+	if e != nil {
+		out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit", "additionalContext": "Goal state unavailable: " + e.Error()}})
+		fmt.Fprintln(stdout, string(out))
+		return 0
+	}
+	if g != nil {
 		return 0
 	}
 	quoted := "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "$", "\\$", "`", "\\`").Replace(in.Prompt) + "\""

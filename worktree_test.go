@@ -159,10 +159,10 @@ func TestLiveWritersAcrossHeadsAndBackends(t *testing.T) {
 	}
 	saveFixture(t, r)
 	refs := liveWritersIn(root, nil)
-	if len(refs) != 2 {
+	if len(refs) != 3 {
 		t.Fatalf("refs=%+v", refs)
 	}
-	if refs := liveWritersIn(root, func(ref writerRef) bool { return ref.Run == r.ID && ref.Name == "live" }); len(refs) != 1 {
+	if refs := liveWritersIn(root, func(ref writerRef) bool { return ref.Run == r.ID && ref.Name == "live" }); len(refs) != 2 {
 		t.Fatalf("exclude=%+v", refs)
 	}
 	var out bytes.Buffer
@@ -175,7 +175,7 @@ func TestLiveWritersAcrossHeadsAndBackends(t *testing.T) {
 	if err := os.Symlink(root, link); err != nil {
 		t.Fatal(err)
 	}
-	if len(liveWritersIn(link, nil)) != 2 {
+	if len(liveWritersIn(link, nil)) != 3 {
 		t.Fatal("symlink checkout not matched")
 	}
 }
@@ -486,8 +486,8 @@ func TestBackgroundWriterPIDPublication(t *testing.T) {
 	if err := saveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	if len(liveWritersIn(root, nil)) != 0 {
-		t.Fatal("unclaimed PID treated as live")
+	if len(liveWritersIn(root, nil)) != 1 {
+		t.Fatal("fresh unclaimed task lost writer protection")
 	}
 	if err := recordTaskRunner(r.ID, task.ID, os.Getpid()); err != nil {
 		t.Fatal(err)

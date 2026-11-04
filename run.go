@@ -15,6 +15,8 @@ import (
 )
 
 type Worker struct {
+	PromptState     string    `json:"prompt_state,omitempty"`
+	Accepted        bool      `json:"accepted,omitempty"`
 	CapacityRetries int       `json:"capacity_retries,omitempty"`
 	CapacitySeen    time.Time `json:"capacity_seen,omitempty"`
 	Branch          string    `json:"branch,omitempty"`
@@ -61,6 +63,7 @@ type Event struct {
 }
 
 type Run struct {
+	EndRequested  bool              `json:"end_requested,omitempty"`
 	Backend       string            `json:"backend,omitempty"`
 	ID            string            `json:"id"`
 	Created       time.Time         `json:"created"`
@@ -275,7 +278,11 @@ func createRun(request, mode, playbook, goal string) (*Run, error) {
 // save, so no other orch call can ever resolve it as the active run.
 func newRun(request, mode, playbook, goal string, adhoc bool) (*Run, error) {
 	if goal == "" {
-		if g, err := activeGoal(headID()); err == nil && g != nil {
+		g, err := activeGoal(headID())
+		if err != nil {
+			return nil, err
+		}
+		if g != nil {
 			goal = g.ID
 		}
 	}

@@ -15,7 +15,9 @@ check: build docs-check
 
 link: build
 	mkdir -p $(HOME)/.local/bin
-	ln -sf $(CURDIR)/$(BIN) $(HOME)/.local/bin/orch
+	@if [ -L "$(HOME)/.local/bin/orch" ] && [ "$$(readlink "$(HOME)/.local/bin/orch")" = "$(CURDIR)/$(BIN)" ]; then :; \
+	elif [ -e "$(HOME)/.local/bin/orch" ] || [ -L "$(HOME)/.local/bin/orch" ]; then echo 'foreign orch binary/link preserved' >&2; exit 1; \
+	else ln -s "$(CURDIR)/$(BIN)" "$(HOME)/.local/bin/orch"; fi
 
 install: check link
 	$(HOME)/.local/bin/orch install --repo $(CURDIR)
