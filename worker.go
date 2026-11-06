@@ -446,6 +446,9 @@ func spawn(o spawnOpts) (*Worker, error) {
 
 // startWorkerAgent verifies registration even when Herdr reports a successful start.
 func startWorkerAgent(name, pane, cwd string, args []string) error {
+	if err := clearPaneChildSession(pane); err != nil {
+		return fmt.Errorf("clear inherited Claude child session: %w", err)
+	}
 	_, startErr := herdrRun(args...)
 	debugf("agent start %s: err=%v", name, startErr)
 	if startErr != nil && !strings.Contains(startErr.Error(), "agent_not_ready") && !paneShowsTrust(pane) {

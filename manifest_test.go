@@ -203,6 +203,8 @@ func TestManifestSpawnRecordsInvocationSnapshot(t *testing.T) {
 		switch strings.Join(args[:2], " ") {
 		case "pane split":
 			overlayFile(t, "models: {sol: changed-sol}\n")
+		case "pane run", "pane wait-output":
+			return []byte(`{"result":{}}`), nil
 		case "agent start":
 			for i, arg := range args {
 				if arg == "--model" {

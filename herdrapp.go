@@ -389,8 +389,8 @@ func appWaitReady(address, cwd string) error {
 	}
 }
 func appLaunch(r *Run, tab, cwd, name string, env, argv []string) (string, string, error) {
-	args := []string{"run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", cwd, "--label", "herdr.space=" + r.Workspace, "--label", "herdr.tab=" + tab, "--label", "orch.run=" + r.ID, "--label", "orch.worker=" + name, "--", "env"}
-	args = append(args, env...)
+	args := []string{"run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", cwd, "--label", "herdr.space=" + r.Workspace, "--label", "herdr.tab=" + tab, "--label", "orch.run=" + r.ID, "--label", "orch.worker=" + name, "--", "env", "-u", "CLAUDE_CODE_CHILD_SESSION"}
+	args = append(args, childCLIEnv(env)...)
 	args = append(args, argv...)
 	out, err := hcRun(args...)
 	if err != nil {

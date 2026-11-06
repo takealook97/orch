@@ -91,7 +91,10 @@ func boundedControl(bin string, args []string, env []string, timeout time.Durati
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, bin, args...)
-	c.Env = env
+	if env == nil {
+		env = os.Environ()
+	}
+	c.Env = childCLIEnv(env)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
 	c.WaitDelay = 100 * time.Millisecond

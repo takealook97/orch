@@ -310,7 +310,10 @@ func execLoggedMode(cwd, bin string, args []string, env []string, timeout time.D
 	defer log.Close()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = cwd
-	cmd.Env = env
+	if env == nil {
+		env = os.Environ()
+	}
+	cmd.Env = childCLIEnv(env)
 	cmd.Stdin = nil
 	cmd.Stdout = log
 	cmd.Stderr = log

@@ -49,7 +49,7 @@ func TestAppLaunchAndLookup(t *testing.T) {
 		return appLS(`{"terminal":"th","pane":"ph"},{"terminal":"tw","pane":"pw"}`), nil
 	}
 	hcRun = func(args ...string) ([]byte, error) {
-		want := []string{"run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", "/cwd", "--label", "herdr.space=s", "--label", "herdr.tab=tab", "--label", "orch.run=run", "--label", "orch.worker=w", "--", "env", "ORCH_ROLE=worker", "ORCH_RUN=run", "ORCH_WORKER=w", "ORCH_MODEL=codex-high-l", "CODEX_HOME=/account", "codex", "--no-daemon"}
+		want := []string{"run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", "/cwd", "--label", "herdr.space=s", "--label", "herdr.tab=tab", "--label", "orch.run=run", "--label", "orch.worker=w", "--", "env", "-u", "CLAUDE_CODE_CHILD_SESSION", "ORCH_ROLE=worker", "ORCH_RUN=run", "ORCH_WORKER=w", "ORCH_MODEL=codex-high-l", "CODEX_HOME=/account", "codex", "--no-daemon"}
 		if !reflect.DeepEqual(args, want) {
 			t.Fatalf("argv\n%v\nwant\n%v", args, want)
 		}
@@ -58,7 +58,7 @@ func TestAppLaunchAndLookup(t *testing.T) {
 	if headSpace() != "s" || headTab() != "tab" {
 		t.Fatal("Head location")
 	}
-	terminal, pane, err := appLaunch(&Run{ID: "run", Workspace: "s"}, "tab", "/cwd", "w", []string{"ORCH_ROLE=worker", "ORCH_RUN=run", "ORCH_WORKER=w", "ORCH_MODEL=codex-high-l", "CODEX_HOME=/account"}, []string{"codex", "--no-daemon"})
+	terminal, pane, err := appLaunch(&Run{ID: "run", Workspace: "s"}, "tab", "/cwd", "w", []string{"CLAUDE_CODE_CHILD_SESSION=override", "ORCH_ROLE=worker", "ORCH_RUN=run", "ORCH_WORKER=w", "ORCH_MODEL=codex-high-l", "CODEX_HOME=/account"}, []string{"codex", "--no-daemon"})
 	if err != nil || terminal != "tw" || pane != "pw" {
 		t.Fatalf("launch %s %s %v", terminal, pane, err)
 	}

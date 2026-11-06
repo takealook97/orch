@@ -42,8 +42,8 @@ func shellArg(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"
 func crPaneCommand(path, kind, cwd string, env, launch []string) string {
 	// Clear inherited account pins and hints again at execution time: shell startup
 	// files may have changed them after Herdr created the pane.
-	argv := []string{"env", "-u", "CR_LAUNCH_EMAIL", "-u", "HERDR_AGENT"}
-	for _, e := range env {
+	argv := []string{"env", "-u", "CR_LAUNCH_EMAIL", "-u", "HERDR_AGENT", "-u", "CLAUDE_CODE_CHILD_SESSION"}
+	for _, e := range childCLIEnv(env) {
 		if !strings.HasPrefix(e, "CR_LAUNCH_EMAIL=") && !strings.HasPrefix(e, "HERDR_AGENT=") {
 			argv = append(argv, e)
 		}
@@ -83,4 +83,29 @@ func fallbackAccount(w *Worker) string {
 		return "cr"
 	}
 	return "same"
+}
+
+// childCLIEnv removes Claude's parent-session marker without changing account
+// selection or CLAUDECODE. The supplied slice is never mutated.
+func childCLIEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, "CLAUDE_CODE_CHILD_SESSION=") {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A legacy pane's shell is owned by Herdr, so sanitizing the orch process alone
+// cannot clean it. Wait for the shell to acknowledge unset before agent start.
+func clearPaneChildSession(pane string) error {
+	const marker = "orch-child-session-cleared"
+	// Split the marker so terminal input echo cannot satisfy wait-output.
+	command := "unset CLAUDE_CODE_CHILD_SESSION && printf '%s%s\\n' 'orch-child-session-' 'cleared'"
+	if _, err := herdrRun("pane", "run", pane, command); err != nil {
+		return err
+	}
+	_, err := herdrRun("pane", "wait-output", pane, "--match", marker, "--timeout", "15000")
+	return err
 }

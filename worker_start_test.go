@@ -52,6 +52,8 @@ func TestManifestSpawnUnregisteredCustomCwdClosesPane(t *testing.T) {
 				t.Fatalf("split args: %v", args)
 			}
 			return []byte(`{"result":{"pane":{"pane_id":"worker-pane"}}}`), nil
+		case "pane run", "pane wait-output":
+			return []byte(`{"result":{}}`), nil
 		case "agent start":
 			pretrusted = slices.Contains(args, codexTrustArg(cwd))
 			return []byte(`{"result":{}}`), nil
@@ -106,6 +108,8 @@ func TestStartWorkerAgentWaitsAfterSuccessfulStartAndRetry(t *testing.T) {
 			starts, gets := 0, 0
 			herdrRun = func(args ...string) ([]byte, error) {
 				switch strings.Join(args[:2], " ") {
+				case "pane run", "pane wait-output":
+					return []byte(`{"result":{}}`), nil
 				case "agent start":
 					starts++
 					if retry && starts == 1 {
@@ -166,6 +170,9 @@ func TestStartWorkerAgentNotReadyWaitsForReadiness(t *testing.T) {
 	startupTest(t)
 	gets := 0
 	herdrRun = func(args ...string) ([]byte, error) {
+		if args[0] == "pane" && (args[1] == "run" || args[1] == "wait-output") {
+			return []byte(`{"result":{}}`), nil
+		}
 		if args[1] == "start" {
 			return nil, errors.New("agent_not_ready")
 		}
@@ -259,6 +266,8 @@ func TestSpawnFailsWhenAgentLeavesShellOnlyPane(t *testing.T) {
 		case "pane split":
 			live = true
 			return []byte(`{"result":{"pane":{"pane_id":"worker-pane"}}}`), nil
+		case "pane run", "pane wait-output":
+			return []byte(`{"result":{}}`), nil
 		case "agent start":
 			return []byte(`{"result":{}}`), nil
 		case "agent get":

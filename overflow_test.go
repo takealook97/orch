@@ -156,6 +156,8 @@ func (f *overflowHerd) run(args ...string) ([]byte, error) {
 			rows = append(rows, map[string]string{"tab_id": tab, "label": f.labels[tab]})
 		}
 		result["tabs"] = rows
+	case "pane run", "pane wait-output":
+		return []byte(`{"result":{}}`), nil
 	case "agent start":
 		f.agents[args[2]] = value("--pane")
 	case "agent get":
