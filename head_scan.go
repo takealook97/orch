@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// This recognizer deliberately supports simple shell words, substitutions,
+// This recognizer deliberately supports simple shell words, quoted literals,
 // pipelines, and nested -c scripts only. It is a delegation aid, not a sandbox.
 // Grammar produces argv and redirects; policy below never reparses shell text.
 type headCommand struct {
@@ -100,6 +100,8 @@ func (s *headScanner) scan(sub bool, depth int) error {
 			}
 			continue
 		}
+		// Consume a whole shell word here: word handles quoted/escaped syntax
+		// before the outer scanner can interpret it as grouping or separators.
 		word, dynamic, err := s.word(depth)
 		if err != nil {
 			return err
@@ -169,12 +171,7 @@ func (s *headScanner) word(depth int) (string, bool, error) {
 		if quote != '\'' && c == '$' {
 			dynamic = true
 			if s.i < len(s.text) && s.text[s.i] == '(' {
-				s.i++
-				if err := s.scan(true, depth+1); err != nil {
-					return "", false, err
-				}
-				b.WriteString("substitution")
-				continue
+				return "", false, fmt.Errorf("command substitution (use orch)")
 			}
 		}
 		b.WriteByte(c)

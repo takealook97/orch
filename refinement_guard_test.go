@@ -25,7 +25,7 @@ func TestRefinementFullHooks(t *testing.T) {
 		{`or''ch do "run go test and git push"`, false}, {`rg "git push" .`, false}, {`grep -n 'sed -i' f`, false},
 		{`g''it --no-pager pu''sh`, true}, {`env FOO=1 git -P push`, true}, {`env -u X git push`, true},
 		{`orch do "safe"; git -P push`, true}, {`echo "$(git -P push)"`, true}, {`orch ask "$(make check)"`, true},
-		{`P=$(git status)`, false}, {`bash -lc 'git --no-pager push'`, true}, {`bash -c 'git status'`, false},
+		{`P=$(git status)`, true}, {`bash -lc 'git --no-pager push'`, true}, {`bash -c 'git status'`, false},
 		{"echo `git push`", true}, {`$CMD args`, true}, {`eval "$X"`, true}, {`cat <(git status)`, true}, {`echo 'unterminated`, true},
 		{`echo '$(git push)'`, false}, {`echo 'go test; git push'`, false}, {`echo x 3>out`, true}, {`echo x >&out`, true},
 		{`grep x 2>/dev/null 1>&2`, false}, {`awk '{print $1 > "x"}'`, true}, {`awk '{print $1}'`, false},

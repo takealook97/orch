@@ -127,8 +127,10 @@ func (h hookInput) tool() string {
 	return ""
 }
 
-// commandText collects every string in the tool input so shell commands are found
-// regardless of the CLI's argument shape (command, cmd, CommandLine, argv arrays).
+var bashCommandTool = regexp.MustCompile(`(?i)(^|[.__])Bash$`)
+
+// commandText reads only command for Bash; descriptions and other metadata are data.
+// Other tools retain their CLI-specific shapes (cmd, CommandLine, argv arrays).
 func (h hookInput) commandText() string {
 	// An edit body is data even if it contains shell commands or patch examples.
 	if goalEditTool.MatchString(h.tool()) {
@@ -141,6 +143,20 @@ func (h hookInput) commandText() string {
 	var v any
 	if json.Unmarshal(raw, &v) != nil {
 		return string(raw)
+	}
+	if bashCommandTool.MatchString(h.tool()) {
+		// Some clients encode the entire argument object as a JSON string.
+		for {
+			encoded, ok := v.(string)
+			if !ok || json.Unmarshal([]byte(encoded), &v) != nil {
+				break
+			}
+		}
+		if args, ok := v.(map[string]any); ok {
+			command, _ := args["command"].(string)
+			return command
+		}
+		return ""
 	}
 	var parts []string
 	var walk func(any)
