@@ -50,6 +50,83 @@ func TestHeadGitReadOnlyForms(t *testing.T) {
 	}
 }
 
+func TestHeadGitOptionGuard(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		blocked bool
+	}{
+		{"ls-remote origin", false},
+		{"ls-remote --heads origin refs/*", false},
+		{"ls-remote -h --tags -t --refs -q --quiet --symref --sort=refname --get-url --exit-code origin", false},
+		{"ls-remote --upload-pack=/tmp/x origin", true},
+		{"ls-remote --upload-pack /tmp/x origin", true},
+		{"ls-remote -u /tmp/x origin", true},
+		{"ls-remote -u/tmp/x origin", true},
+		{"ls-remote --exec=/tmp/x origin", true},
+		{"ls-remote --exec /tmp/x origin", true},
+		{"ls-remote --server-option=x origin", true},
+		{"ls-remote --server-option x origin", true},
+		{"ls-remote -o x origin", true},
+		{"ls-remote -ox origin", true},
+		{"ls-remote --upload=/tmp/x origin", true},
+		{"ls-remote origin --upload-pack=/tmp/x", true},
+		{"ls-remote --heads=yes origin", true},
+		{"ls-remote -- origin", true},
+		{"symbolic-ref HEAD", false},
+		{"symbolic-ref -q --short HEAD", false},
+		{"symbolic-ref --quiet --no-recurse HEAD", false},
+		{"symbolic-ref --recurse HEAD", false},
+		{"symbolic-ref -qd HEAD", true},
+		{"symbolic-ref -dq HEAD", true},
+		{"symbolic-ref --del HEAD", true},
+		{"symbolic-ref --delete HEAD", true},
+		{"symbolic-ref --d HEAD", true},
+		{"symbolic-ref HEAD --del", true},
+		{"symbolic-ref --short=yes HEAD", true},
+		{"symbolic-ref -m message HEAD", true},
+		{"branch --del x", true},
+		{"branch -vd x", true},
+		{"branch --set-u origin/main", true},
+		{"branch --list --del x", true},
+		{"branch --list -vd x", true},
+		{"branch --list --set-u origin/main", true},
+		{"tag --del v1", true},
+		{"tag -vd v1", true},
+		{"tag --set-u v1", true},
+		{"tag -l --del v1", true},
+		{"tag -l -vd v1", true},
+		{"tag -l --set-u v1", true},
+		{"tag -nd v1", true},
+		{"tag -n1d v1", true},
+		{"tag -l -nd v1", true},
+		{"tag -n", false},
+		{"tag -n12", false},
+		{"remote --verbose", false},
+		{"remote -v add x y", true},
+		{"remote --del x", true},
+		{"remote -vd x", true},
+		{"remote --set-u x", true},
+		{"stash --del x", true},
+		{"stash -vd x", true},
+		{"stash --set-u x", true},
+		{"reflog --del HEAD", true},
+		{"reflog -vd HEAD", true},
+		{"reflog --set-u HEAD", true},
+		{"worktree --del x", true},
+		{"worktree -vd x", true},
+		{"worktree --set-u x", true},
+		{"config --list --del", true},
+		{"config --list -vd", true},
+		{"config --list --set-u", true},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			if got := headGitExecutes(strings.Fields(tc.command)); got != tc.blocked {
+				t.Fatalf("headGitExecutes(%q) = %v, want %v", tc.command, got, tc.blocked)
+			}
+		})
+	}
+}
+
 func TestHeadGuardBlockedCommand(t *testing.T) {
 	t.Setenv("ORCH_HEAD_GUARD", "1")
 	const prefix = "Head execution is delegated, including tiny edits, builds, tests and Git. Use orch do for writes, orch ask for research, or orch test for commands; Head may inspect and write run contracts/acceptance/decisions."

@@ -385,8 +385,10 @@ func headGitExecutes(args []string) bool {
 	// include aliases, whose implementation cannot be inferred here.
 	switch args[0] {
 	case "log", "show", "diff", "status", "ls-files", "ls-tree", "rev-parse", "rev-list", "grep", "blame", "describe", "cat-file", "check-ignore", "check-attr", "for-each-ref", "show-ref", "version", "help",
-		"shortlog", "merge-base", "name-rev", "count-objects", "diff-tree", "diff-index", "diff-files", "cherry", "range-diff", "whatchanged", "var", "ls-remote":
+		"shortlog", "merge-base", "name-rev", "count-objects", "diff-tree", "diff-index", "diff-files", "cherry", "range-diff", "whatchanged", "var":
 		return false
+	case "ls-remote":
+		return !gitLsRemoteReadOnly(args[1:])
 	case "branch":
 		return !gitBranchReadOnly(args[1:])
 	case "remote":
@@ -414,6 +416,22 @@ func headGitExecutes(args []string) bool {
 func gitReadOnlyValueOption(arg string, names ...string) bool {
 	key, _, equals := strings.Cut(arg, "=")
 	return equals && contains1(names, key)
+}
+
+func gitLsRemoteReadOnly(args []string) bool {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		switch arg {
+		case "--heads", "-h", "--tags", "-t", "--refs", "-q", "--quiet", "--symref", "--get-url", "--exit-code":
+		default:
+			if !gitReadOnlyValueOption(arg, "--sort") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func gitBranchReadOnly(args []string) bool {
@@ -457,11 +475,23 @@ func gitRemoteReadOnly(args []string) bool {
 	return true
 }
 
+func gitTagLinesOption(arg string) bool {
+	if !strings.HasPrefix(arg, "-n") {
+		return false
+	}
+	for _, c := range arg[2:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func gitTagReadOnly(args []string) bool {
 	if len(args) == 0 {
 		return true
 	}
-	if args[0] != "-l" && args[0] != "--list" && !(strings.HasPrefix(args[0], "-n") && !strings.Contains(args[0], "=")) {
+	if args[0] != "-l" && args[0] != "--list" && !gitTagLinesOption(args[0]) {
 		return false
 	}
 	options := true
@@ -474,7 +504,7 @@ func gitTagReadOnly(args []string) bool {
 			continue
 		}
 		if contains1([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}, arg) ||
-			strings.HasPrefix(arg, "-n") && !strings.Contains(arg, "=") || gitReadOnlyValueOption(arg, "--sort", "--format") {
+			gitTagLinesOption(arg) || gitReadOnlyValueOption(arg, "--sort", "--format") {
 			continue
 		}
 		return false
@@ -516,7 +546,7 @@ func gitSymbolicRefReadOnly(args []string) bool {
 			continue
 		}
 		if options && strings.HasPrefix(arg, "-") {
-			if arg == "-d" || arg == "--delete" || strings.Contains(arg, "=") {
+			if !contains1([]string{"-q", "--quiet", "--short", "--no-recurse", "--recurse"}, arg) {
 				return false
 			}
 		} else {
