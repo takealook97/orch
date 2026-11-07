@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 func headExecutionReason(in hookInput) string {
@@ -57,15 +58,28 @@ func headExecutionReason(in hookInput) string {
 	if goalShellTool.MatchString(in.tool()) {
 		commands, err := scanHeadCommands(stripPatchHeredocs(in.commandText()))
 		if err != nil {
-			return reason + " Unsupported shell syntax: " + err.Error() + "; delegate the complete command."
+			return reason + " Unsupported shell syntax: " + err.Error() + "; delegate the complete command." + blockedCommandSuffix([]string{in.commandText()})
 		}
 		for _, command := range commands {
 			if headCommandExecutes(command) {
-				return reason
+				return reason + blockedCommandSuffix(command.argv)
 			}
 		}
 	}
 	return ""
+}
+
+// Limit the command text by bytes while preserving complete UTF-8 runes.
+func blockedCommandSuffix(argv []string) string {
+	command := strings.Join(argv, " ")
+	if len(command) > 160 {
+		command = command[:160]
+		for !utf8.ValidString(command) {
+			command = command[:len(command)-1]
+		}
+		command += "…"
+	}
+	return " Blocked: " + command
 }
 
 var awkString = regexp.MustCompile(`"(?:\\.|[^"\\])*"`)

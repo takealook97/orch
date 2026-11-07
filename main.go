@@ -109,6 +109,12 @@ func splitList(s string) []string {
 	return out
 }
 
+// Repository/documentation utilities do not manage runs or panes.
+// Worker authorization remains a separate gate in run.
+func commandNeedsHeadIdentity(name string) bool {
+	return !contains1([]string{"docs", "models", "help", "playbook", "doctor", "measure"}, name)
+}
+
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Fprint(stdout, usage)
@@ -128,7 +134,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return fail(fmt.Errorf("ORCH_ROLE=worker: workers cannot use orch %s (Head only)", cmd))
 	}
 	// A detached __task or __reap was verified by its parent before launch (it is reparented).
-	if !readOnly && cmd != "__task" && cmd != "__reap" && headID() != "" {
+	if !readOnly && commandNeedsHeadIdentity(cmd) && cmd != "__task" && cmd != "__reap" && headID() != "" {
 		if err := verifyCaller(headID()); err != nil {
 			if os.Getppid() == 1 {
 				err = fmt.Errorf("%w; detached orch processes cannot manage panes; run orch wait in the foreground or with your harness's background-task feature (not &, nohup or setsid)", err)

@@ -386,8 +386,145 @@ func headGitExecutes(args []string) bool {
 	}
 	// Only the known inspection subcommands bypass delegation. Unknown commands
 	// include aliases, whose implementation cannot be inferred here.
-	if args[0] == "branch" && (len(args) == 1 || len(args) == 2 && contains1([]string{"--show-current", "--list", "-a", "-r"}, args[1])) {
+	switch args[0] {
+	case "log", "show", "diff", "status", "ls-files", "ls-tree", "rev-parse", "rev-list", "grep", "blame", "describe", "cat-file", "check-ignore", "check-attr", "for-each-ref", "show-ref", "version", "help",
+		"shortlog", "merge-base", "name-rev", "count-objects", "diff-tree", "diff-index", "diff-files", "cherry", "range-diff", "whatchanged", "var", "ls-remote":
+		return false
+	case "branch":
+		return !gitBranchReadOnly(args[1:])
+	case "remote":
+		return !gitRemoteReadOnly(args[1:])
+	case "stash":
+		return len(args) < 2 || !contains1([]string{"list", "show"}, args[1])
+	case "tag":
+		return !gitTagReadOnly(args[1:])
+	case "reflog":
+		return len(args) > 1 && args[1] != "show"
+	case "worktree":
+		return len(args) < 2 || args[1] != "list"
+	case "config":
+		return !gitConfigReadOnly(args[1:])
+	case "symbolic-ref":
+		return !gitSymbolicRefReadOnly(args[1:])
+	case "submodule":
+		return len(args) < 2 || args[1] != "status"
+	default:
+		return true
+	}
+}
+
+// Only explicitly listed value options accept the --option=value form.
+func gitReadOnlyValueOption(arg string, names ...string) bool {
+	key, _, equals := strings.Cut(arg, "=")
+	return equals && contains1(names, key)
+}
+
+func gitBranchReadOnly(args []string) bool {
+	list, positional, options := false, false, true
+	for _, arg := range args {
+		if options && arg == "--" {
+			options = false
+			continue
+		}
+		if !options || !strings.HasPrefix(arg, "-") {
+			positional = true
+			continue
+		}
+		switch arg {
+		case "--list", "--merged", "--no-merged", "--contains", "--no-contains", "--points-at":
+			list = true
+		case "--show-current", "-a", "-r", "--all", "--remotes", "-v", "-vv", "-vvv", "--verbose", "--no-color", "--color", "--column", "--no-column":
+		default:
+			if !gitReadOnlyValueOption(arg, "--sort", "--format") {
+				return false
+			}
+		}
+	}
+	return !positional || list
+}
+
+func gitRemoteReadOnly(args []string) bool {
+	if len(args) > 0 && contains1([]string{"show", "get-url"}, args[0]) {
+		return true
+	}
+	options := true
+	for _, arg := range args {
+		if options && arg == "--" {
+			options = false
+			continue
+		}
+		if !options || !contains1([]string{"-v", "--verbose"}, arg) {
+			return false
+		}
+	}
+	return true
+}
+
+func gitTagReadOnly(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	if args[0] != "-l" && args[0] != "--list" && !(strings.HasPrefix(args[0], "-n") && !strings.Contains(args[0], "=")) {
 		return false
 	}
-	return !contains1(strings.Fields("log show diff status ls-files ls-tree rev-parse rev-list grep blame describe cat-file check-ignore check-attr for-each-ref show-ref version help"), args[0])
+	options := true
+	for _, arg := range args[1:] {
+		if options && arg == "--" {
+			options = false
+			continue
+		}
+		if !options || !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if contains1([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}, arg) ||
+			strings.HasPrefix(arg, "-n") && !strings.Contains(arg, "=") || gitReadOnlyValueOption(arg, "--sort", "--format") {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func gitConfigReadOnly(args []string) bool {
+	action, list, options, positional := false, false, true, 0
+	for _, arg := range args {
+		if options && arg == "--" {
+			options = false
+			continue
+		}
+		if !options || !strings.HasPrefix(arg, "-") {
+			positional++
+			continue
+		}
+		switch arg {
+		case "-l", "--list":
+			action, list = true, true
+		case "--get", "--get-all", "--get-regexp":
+			action = true
+		case "--global", "--local", "--system", "--worktree", "--show-origin", "--show-scope", "--null", "-z", "--name-only", "--bool", "--int", "--bool-or-int", "--path":
+		default:
+			if !gitReadOnlyValueOption(arg, "--type") {
+				return false
+			}
+		}
+	}
+	return action && (list && positional == 0 || !list && positional <= 1)
+}
+
+func gitSymbolicRefReadOnly(args []string) bool {
+	positional, options := 0, true
+	for _, arg := range args {
+		if options && arg == "--" {
+			options = false
+			continue
+		}
+		if options && strings.HasPrefix(arg, "-") {
+			if arg == "-d" || arg == "--delete" || strings.Contains(arg, "=") {
+				return false
+			}
+		} else {
+			positional++
+		}
+	}
+	return positional == 1
 }

@@ -106,3 +106,43 @@ func TestOperationsMirror(t *testing.T) {
 		t.Fatal("skill operations mirror is stale")
 	}
 }
+
+func TestDocsGenIgnoresInheritedPaneIdentity(t *testing.T) {
+	t.Setenv("ORCH_ROLE", "")
+	t.Setenv("ORCH_HOME", t.TempDir())
+	t.Setenv("HERDR_PANE_ID", "pX")
+	t.Setenv("HC_TERMINAL_ID", "tX")
+	root := t.TempDir()
+	for _, file := range generatedModelDocs {
+		path := filepath.Join(root, file)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(modelsBegin+"\nstale\n"+modelsEnd+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errs bytes.Buffer
+	if code := run([]string{"docs", "gen", "--root", root}, strings.NewReader(""), &out, &errs); code != 0 {
+		t.Fatalf("code %d: %s", code, errs.String())
+	}
+	for _, file := range generatedModelDocs {
+		data, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil || strings.Contains(string(data), "stale") {
+			t.Fatalf("%s: %s %v", file, data, err)
+		}
+	}
+}
+
+func TestCommandNeedsHeadIdentity(t *testing.T) {
+	for _, name := range []string{"docs", "models", "help", "playbook", "doctor", "measure"} {
+		if commandNeedsHeadIdentity(name) {
+			t.Errorf("utility %s requires identity", name)
+		}
+	}
+	for _, name := range []string{"spawn", "close", "run", "goal", "do", "ask", "install", "uninstall", "unknown"} {
+		if !commandNeedsHeadIdentity(name) {
+			t.Errorf("%s bypasses identity predicate", name)
+		}
+	}
+}
