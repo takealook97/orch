@@ -119,13 +119,15 @@ type hcStatus struct {
 	Msg   string `json:"msg"`
 }
 type hcTerminal struct {
-	Address string            `json:"address"`
-	State   string            `json:"state"`
-	PID     int               `json:"pid"`
-	Rows    int               `json:"rows"`
-	Cols    int               `json:"cols"`
-	Status  *hcStatus         `json:"status"`
-	Labels  map[string]string `json:"labels"`
+	Address  string            `json:"address"`
+	State    string            `json:"state"`
+	ExitCode *int              `json:"exit_code"`
+	Reason   string            `json:"reason"`
+	PID      int               `json:"pid"`
+	Rows     int               `json:"rows"`
+	Cols     int               `json:"cols"`
+	Status   *hcStatus         `json:"status"`
+	Labels   map[string]string `json:"labels"`
 }
 
 type appIdentity struct{ run, worker string }
@@ -369,10 +371,38 @@ func appTrust(name, cwd string) bool {
 	_, err := muxKeys(name, "enter")
 	return err == nil
 }
+func appTerminalTail(address string, n int) string {
+	out, err := hcRun("read", address)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	var lines []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	tail := strings.Join(lines, " | ")
+	if len(tail) > 300 {
+		tail = tail[:300]
+	}
+	return tail
+}
+
 func appWaitReady(address, cwd string) error {
 	deadline := time.Now().Add(timings.ReadyTimeout)
 	for {
 		t, err := hcGet(address)
+		if err == nil && t.State == "finished" {
+			exit := -1
+			if t.ExitCode != nil {
+				exit = *t.ExitCode
+			}
+			return fmt.Errorf("terminal %s exited before the agent registered (exit=%v reason=%s): %s", address, exit, t.Reason, appTerminalTail(address, 5))
+		}
 		if err == nil && t.State == "live" {
 			if !paneShowsTrust(address) {
 				if t.Status != nil {
@@ -383,14 +413,32 @@ func appWaitReady(address, cwd string) error {
 			}
 		}
 		if time.Now().After(deadline) {
+			if err == nil {
+				return fmt.Errorf("terminal %s not ready (login or folder trust may be blocking)", address)
+			}
 			return fmt.Errorf("terminal %s not ready (login or folder trust may be blocking): %v", address, err)
 		}
 		time.Sleep(timings.ReadyPoll)
 	}
 }
+
+func appLaunchEnv(env []string) []string {
+	out := append([]string(nil), env...)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "PATH=") {
+			return out
+		}
+	}
+	// herdr-core is a separate app and inherits launchd's PATH, so pass the Head's PATH.
+	if path := os.Getenv("PATH"); path != "" {
+		out = append(out, "PATH="+path)
+	}
+	return out
+}
+
 func appLaunch(r *Run, tab, cwd, name string, env, argv []string) (string, string, error) {
 	args := []string{"run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", cwd, "--label", "herdr.space=" + r.Workspace, "--label", "herdr.tab=" + tab, "--label", "orch.run=" + r.ID, "--label", "orch.worker=" + name, "--", "env", "-u", "CLAUDE_CODE_CHILD_SESSION"}
-	args = append(args, childCLIEnv(env)...)
+	args = append(args, childCLIEnv(appLaunchEnv(env))...)
 	args = append(args, argv...)
 	out, err := hcRun(args...)
 	if err != nil {
@@ -410,8 +458,16 @@ func appLaunch(r *Run, tab, cwd, name string, env, argv []string) (string, strin
 			return t.Address, pane, nil
 		}
 		if time.Now().After(deadline) {
+			lookupErr := fmt.Errorf("app pane lookup: %w", err)
+			if terminal, getErr := hcGet(t.Address); getErr == nil && terminal.State != "live" {
+				exit := -1
+				if terminal.ExitCode != nil {
+					exit = *terminal.ExitCode
+				}
+				lookupErr = fmt.Errorf("app pane lookup: %w (terminal %s state=%s exit=%v reason=%s screen: %s)", err, t.Address, terminal.State, exit, terminal.Reason, appTerminalTail(t.Address, 5))
+			}
 			_ = appClose(t.Address, appIdentity{r.ID, name})
-			return "", "", fmt.Errorf("app pane lookup: %w", err)
+			return "", "", lookupErr
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

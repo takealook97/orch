@@ -37,6 +37,7 @@ func appLS(terminals string) []byte {
 }
 func TestAppLaunchAndLookup(t *testing.T) {
 	appTest(t)
+	t.Setenv("PATH", "/x/bin:/usr/bin")
 	calls := 0
 	appRun = func(args ...string) ([]byte, error) {
 		if !reflect.DeepEqual(args, []string{"ls"}) {
@@ -49,7 +50,7 @@ func TestAppLaunchAndLookup(t *testing.T) {
 		return appLS(`{"terminal":"th","pane":"ph"},{"terminal":"tw","pane":"pw"}`), nil
 	}
 	hcRun = func(args ...string) ([]byte, error) {
-		want := []string{"run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", "/cwd", "--label", "herdr.space=s", "--label", "herdr.tab=tab", "--label", "orch.run=run", "--label", "orch.worker=w", "--", "env", "-u", "CLAUDE_CODE_CHILD_SESSION", "ORCH_ROLE=worker", "ORCH_RUN=run", "ORCH_WORKER=w", "ORCH_MODEL=codex-high-l", "CODEX_HOME=/account", "codex", "--no-daemon"}
+		want := []string{"run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", "/cwd", "--label", "herdr.space=s", "--label", "herdr.tab=tab", "--label", "orch.run=run", "--label", "orch.worker=w", "--", "env", "-u", "CLAUDE_CODE_CHILD_SESSION", "ORCH_ROLE=worker", "ORCH_RUN=run", "ORCH_WORKER=w", "ORCH_MODEL=codex-high-l", "CODEX_HOME=/account", "PATH=/x/bin:/usr/bin", "codex", "--no-daemon"}
 		if !reflect.DeepEqual(args, want) {
 			t.Fatalf("argv\n%v\nwant\n%v", args, want)
 		}
@@ -64,6 +65,158 @@ func TestAppLaunchAndLookup(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("lookup/cache calls=%d", calls)
+	}
+}
+
+func TestAppLaunchPassesHeadPath(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"inherited", []string{"ORCH_ROLE=worker"}, "PATH=/x/bin:/usr/bin"},
+		{"explicit", []string{"PATH=/keep", "ORCH_ROLE=worker"}, "PATH=/keep"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			appTest(t)
+			t.Setenv("PATH", "/x/bin:/usr/bin")
+			var captured []string
+			hcRun = func(args ...string) ([]byte, error) {
+				captured = append([]string(nil), args...)
+				return []byte(`{"address":"t9","state":"live"}`), nil
+			}
+			appRun = func(args ...string) ([]byte, error) {
+				if !reflect.DeepEqual(args, []string{"ls"}) {
+					t.Fatalf("app args %v", args)
+				}
+				return appLS(`{"terminal":"t9","pane":"p9"}`), nil
+			}
+			terminal, pane, err := appLaunch(&Run{ID: "run", Workspace: "s"}, "tab", "/cwd", "w", tt.env, []string{"codex", "--no-daemon"})
+			if err != nil || terminal != "t9" || pane != "p9" {
+				t.Fatalf("launch %s %s %v", terminal, pane, err)
+			}
+			unset := slices.Index(captured, "-u")
+			path := slices.Index(captured, tt.want)
+			argv := slices.Index(captured, "codex")
+			count := 0
+			for _, arg := range captured {
+				if strings.HasPrefix(arg, "PATH=") {
+					count++
+				}
+			}
+			if unset < 0 || unset+1 >= len(captured) || captured[unset+1] != "CLAUDE_CODE_CHILD_SESSION" || path <= unset+1 || path >= argv || count != 1 {
+				t.Fatalf("invalid PATH placement or duplication: %v", captured)
+			}
+		})
+	}
+}
+
+func TestAppWaitReadyFailsFastOnFinishedTerminal(t *testing.T) {
+	appTest(t)
+	timings.ReadyTimeout = 5 * time.Second
+	hcRun = func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "get":
+			return []byte(`{"address":"t9","state":"finished","exit_code":127,"reason":"exited"}`), nil
+		case "read":
+			return []byte("zsh: command not found: codex"), nil
+		default:
+			return nil, fmt.Errorf("unexpected %v", args)
+		}
+	}
+	start := time.Now()
+	err := appWaitReady("t9", "/cwd")
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Fatalf("waited %s for a finished terminal", elapsed)
+	}
+	want := "terminal t9 exited before the agent registered (exit=127 reason=exited): zsh: command not found: codex"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error=%v want %q", err, want)
+	}
+}
+
+func TestAppWaitReadyTimeoutDiagnostics(t *testing.T) {
+	for _, tt := range []struct {
+		name, terminal, want string
+		getErr               error
+	}{
+		{"live", `{"state":"live"}`, "terminal t9 not ready (login or folder trust may be blocking)", nil},
+		{"get error", "", "terminal t9 not ready (login or folder trust may be blocking): get failed", errors.New("get failed")},
+		{"unknown exit", `{"state":"finished","reason":"stopped"}`, "terminal t9 exited before the agent registered (exit=-1 reason=stopped): screen", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			appTest(t)
+			timings.ReadyTimeout = 0
+			hcRun = func(args ...string) ([]byte, error) {
+				if args[0] == "get" {
+					return []byte(tt.terminal), tt.getErr
+				}
+				if args[0] == "read" {
+					return []byte("screen"), nil
+				}
+				return nil, fmt.Errorf("unexpected %v", args)
+			}
+			if err := appWaitReady("t9", "/cwd"); err == nil || err.Error() != tt.want {
+				t.Fatalf("error=%v want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppLaunchLookupFailureDiagnostics(t *testing.T) {
+	appTest(t)
+	lookupErr := errors.New("inventory unavailable")
+	appRun = func(...string) ([]byte, error) { return nil, lookupErr }
+	readBeforeClose := false
+	hcRun = func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "run":
+			return []byte(`{"address":"t9"}`), nil
+		case "get":
+			return []byte(`{"address":"t9","state":"finished","exit_code":127,"reason":"exited","labels":{"orch.run":"run","orch.worker":"w"}}`), nil
+		case "read":
+			readBeforeClose = true
+			return []byte("zsh: command not found: codex"), nil
+		case "rm":
+			if !readBeforeClose {
+				t.Fatal("closed terminal before reading diagnostics")
+			}
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected %v", args)
+		}
+	}
+	_, _, err := appLaunch(&Run{ID: "run", Workspace: "s"}, "tab", "/cwd", "w", nil, []string{"codex"})
+	want := "app pane lookup: inventory unavailable (terminal t9 state=finished exit=127 reason=exited screen: zsh: command not found: codex)"
+	if err == nil || err.Error() != want || !errors.Is(err, lookupErr) {
+		t.Fatalf("error=%v want wrapped %q", err, want)
+	}
+}
+
+func TestAppTerminalTail(t *testing.T) {
+	appTest(t)
+	for _, tt := range []struct {
+		name, screen string
+		n            int
+		err          error
+		want         string
+	}{
+		{"last nonempty lines", "first\n\nsecond\n \nthird\n", 2, nil, "second | third"},
+		{"bounded", strings.Repeat("x", 400), 5, nil, strings.Repeat("x", 300)},
+		{"read error", "unavailable", 5, errors.New("read failed"), ""},
+		{"no lines", "first", 0, nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hcRun = func(args ...string) ([]byte, error) {
+				if !reflect.DeepEqual(args, []string{"read", "t9"}) {
+					t.Fatalf("read args %v", args)
+				}
+				return []byte(tt.screen), tt.err
+			}
+			if got := appTerminalTail("t9", tt.n); got != tt.want {
+				t.Fatalf("tail=%q want %q", got, tt.want)
+			}
+		})
 	}
 }
 func TestHCRawEnvironment(t *testing.T) {
