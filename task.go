@@ -39,6 +39,7 @@ type TestResult struct {
 }
 type Task struct {
 	CapacityRetries int               `json:"capacity_retries,omitempty"`
+	BlockRetries    int               `json:"block_retries,omitempty"`
 	Worktree        string            `json:"worktree,omitempty"`
 	Branch          string            `json:"branch,omitempty"`
 	WorktreeAuto    bool              `json:"worktree_auto,omitempty"`
@@ -759,6 +760,9 @@ func taskReport(t *Task, asJSON bool) string {
 	if asJSON {
 		v := map[string]any{"task": t.ID, "run": t.Run, "status": t.Status, "exit_code": t.ExitCode, "duration_ms": t.DurationMS, "dir": t.Dir}
 		v["capacity_retries"] = t.CapacityRetries
+		if t.BlockRetries > 0 {
+			v["block_retries"] = t.BlockRetries
+		}
 		if hint != "" {
 			v["hint"] = hint
 		}
@@ -799,6 +803,9 @@ func taskReport(t *Task, asJSON bool) string {
 	fmt.Fprintf(&b, "task: %s\nrun: %s\nstatus: %s\nexit code: %d\nduration: %d ms\n", t.ID, t.Run, t.Status, t.ExitCode, t.DurationMS)
 	if t.CapacityRetries > 0 {
 		fmt.Fprintf(&b, "capacity retries: %d/%d\n", t.CapacityRetries, capacityMaxRetries())
+	}
+	if t.BlockRetries > 0 {
+		fmt.Fprintf(&b, "content-blocked retries: %d/%d (Codex cyber_policy; a non-Codex key avoids it)\n", t.BlockRetries, blockMaxRetries())
 	}
 	if t.Note != "" {
 		fmt.Fprintf(&b, "note: %s\n", t.Note)

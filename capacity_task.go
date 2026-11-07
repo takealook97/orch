@@ -54,15 +54,82 @@ func latestSessionID(raw []byte) string {
 }
 
 // jsonErrorCapacity reports whether an error-type JSON event carries a capacity marker.
-func jsonErrorCapacity(raw []byte) bool {
+func jsonErrorCapacity(raw []byte) bool { return jsonErrorMarker(raw, capacityMarkers) }
+
+// taskIncident is a recoverable task stop: the capacity or the cyber_policy marker, with
+// the task's retry counter for it.
+type taskIncident struct {
+	name    string
+	markers []string
+	retries func() int
+	delay   func(int) time.Duration
+	text    func(int) string
+	count   func(*Task) *int
+}
+
+var taskIncidents = []taskIncident{
+	{blockIncident.name, blockMarkers, blockMaxRetries, blockBackoff,
+		func(n int) string { return blockContinues[n%len(blockContinues)] },
+		func(t *Task) *int { return &t.BlockRetries }},
+	{capacityIncident.name, capacityMarkers, capacityMaxRetries, capacityBackoff,
+		func(int) string { return capacityContinue },
+		func(t *Task) *int { return &t.CapacityRetries }},
+}
+
+// taskStop classifies a stopped attempt. Structured error events decide first, so answer
+// text that mentions one marker cannot hide another incident's real error; after a clean
+// exit only an error event counts, otherwise the output tail does too.
+func taskStop(raw []byte, clean bool) (taskIncident, bool) {
+	s := string(raw)
+	if quotaText(s) {
+		return taskIncident{}, false
+	}
+	for _, inc := range taskIncidents {
+		if jsonErrorMarker(raw, inc.markers) {
+			return inc, true
+		}
+	}
+	if clean {
+		return taskIncident{}, false
+	}
+	for _, inc := range taskIncidents {
+		if containsMarker(tailLines(s), inc.markers) {
+			return inc, true
+		}
+	}
+	return taskIncident{}, false
+}
+
+func jsonErrorMarker(raw []byte, markers []string) bool {
 	for _, line := range bytes.Split(raw, []byte("\n")) {
 		var ev map[string]any
 		if json.Unmarshal(line, &ev) != nil {
 			continue
 		}
-		_, hasErr := ev["error"]
-		if typ, _ := ev["type"].(string); typ == "error" || typ == "turn.failed" || hasErr {
-			if containsMarker([]string{string(line)}, capacityMarkers) {
+		if typ, _ := ev["type"].(string); typ == "error" || typ == "turn.failed" || hasErrorField(ev) {
+			if containsMarker([]string{string(line)}, markers) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasErrorField finds a non-null "error" at any depth; Codex nests the turn error in payload.
+func hasErrorField(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			if k == "error" && val != nil {
+				return true
+			}
+			if hasErrorField(val) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range x {
+			if hasErrorField(item) {
 				return true
 			}
 		}
@@ -89,14 +156,15 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 	logPath := filepath.Join(t.Dir, "output.log")
 	var sessionID string
 	for {
+		resumed := t.CapacityRetries > 0 || t.BlockRetries > 0
 		left := budget - time.Since(start)
-		if left <= 0 && t.CapacityRetries > 0 {
+		if left <= 0 && resumed {
 			res = execResult{Code: 124, Timed: true}
 			return
 		}
 		left = max(left, 0)
 		offset := int64(0)
-		if t.CapacityRetries > 0 {
+		if resumed {
 			if st, e := os.Stat(logPath); e == nil {
 				offset = st.Size()
 			}
@@ -108,7 +176,7 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 			if publishErr != nil {
 				_ = syscall.Kill(-pgid, syscall.SIGKILL)
 			}
-		}, t.CapacityRetries > 0)
+		}, resumed)
 		if publishErr != nil {
 			err = errors.Join(err, publishErr)
 			return
@@ -120,14 +188,16 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 		if id := latestSessionID(raw); id != "" {
 			sessionID = id
 		}
-		if err != nil || res.Timed || res.Interrupted || quotaText(string(raw)) || !capacityText(string(raw)) {
+		if err != nil || res.Timed || res.Interrupted {
 			return
 		}
-		// A clean exit with answer text that merely mentions capacity is a success.
-		if res.Code == 0 && !jsonErrorCapacity(raw) {
+		// A clean exit with answer text that merely mentions a marker is a success.
+		inc, stopped := taskStop(raw, res.Code == 0)
+		if !stopped {
 			return
 		}
-		if m.Kind == "agy" || sessionID == "" || t.CapacityRetries >= capacityMaxRetries() {
+		count := inc.count(t)
+		if m.Kind == "agy" || sessionID == "" || *count >= inc.retries() {
 			if res.Code == 0 {
 				res.Code = 1
 			}
@@ -138,11 +208,11 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 			err = e
 			return
 		}
-		args, err = a.resume(m, t.Kind, t.Cwd, answerPath, sessionID, capacityContinue)
+		args, err = a.resume(m, t.Kind, t.Cwd, answerPath, sessionID, inc.text(*count))
 		if err != nil {
 			return
 		}
-		delay := capacityBackoff(t.CapacityRetries)
+		delay := inc.delay(*count)
 		left = budget - time.Since(start)
 		if delay >= left {
 			if !capacityPause(left) {
@@ -156,12 +226,15 @@ func runTaskAttempts(t *Task, m Model, args, env []string, budget time.Duration,
 			res = execResult{Code: 130, Interrupted: true}
 			return
 		}
-		t.CapacityRetries++
-		if err = editTask(t, func(x *Task) { x.CapacityRetries = t.CapacityRetries; x.Pgid = 0 }); err != nil {
+		*count++
+		n := *count
+		if err = editTask(t, func(x *Task) {
+			x.CapacityRetries, x.BlockRetries, x.Pgid = t.CapacityRetries, t.BlockRetries, 0
+		}); err != nil {
 			return
 		}
 		err = withRun(t.Run, func(r *Run) error {
-			r.event("%s capacity: resume %d/%d after %s", t.ID, t.CapacityRetries, capacityMaxRetries(), delay)
+			r.event("%s %s: resume %d/%d after %s", t.ID, inc.name, n, inc.retries(), delay)
 			return nil
 		})
 		if err != nil {

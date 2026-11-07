@@ -91,10 +91,107 @@ type reaper struct {
 	runID      string
 	notWorking map[string]int // consecutive polls a finished worker's agent was not working
 	idleSince  time.Time
+	stalled    map[string]time.Time // when a worker without a result was first seen stopped
+	gone       map[string]int       // consecutive polls a worker's agent could not be found
+	blocked    map[string]int       // consecutive polls a worker sat at an approval dialog
 }
 
 func newReaper(runID string) *reaper {
-	return &reaper{runID: runID, notWorking: map[string]int{}}
+	return &reaper{runID: runID, notWorking: map[string]int{}, stalled: map[string]time.Time{},
+		gone: map[string]int{}, blocked: map[string]int{}}
+}
+
+// supervise keeps a worker without a final result moving: it resumes recoverable stops,
+// nudges a worker that went idle, and alerts the Head about anything it cannot fix.
+func (rp *reaper) supervise(w *Worker, log io.Writer) {
+	stamp := func(format string, args ...any) {
+		fmt.Fprintf(log, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
+	}
+	alert := func(reason string) {
+		if err := raiseAlert(rp.runID, w, reason); err != nil {
+			stamp("alert %s: %v", w.Name, err)
+		}
+	}
+	info, infoErr := agentGet(workerAgent(w))
+	if infoErr != nil {
+		delete(rp.stalled, w.Name)
+		rp.gone[w.Name]++
+		if agentStopped(w) { // the pane itself is gone
+			if rp.gone[w.Name] >= 2 {
+				alert("its pane is gone and no result was written")
+			}
+			return
+		}
+		// The pane lives but no agent answers: the CLI exited to a shell or crashed.
+		// Lookups can fail briefly, so only a stretch as long as IdleNoResult counts.
+		if time.Duration(rp.gone[w.Name])*timings.ReapPoll >= timings.IdleNoResult && rp.gone[w.Name] >= 3 {
+			alert("its agent is no longer running in the pane (the CLI exited or crashed) and no result was written")
+		}
+		return
+	}
+	delete(rp.gone, w.Name)
+	if info.Status != "blocked" {
+		delete(rp.blocked, w.Name)
+	}
+	switch info.Status {
+	case "working":
+		delete(rp.stalled, w.Name)
+		noteRecovered(rp.runID, w, "", true)
+		return
+	case "blocked":
+		delete(rp.stalled, w.Name)
+		rp.blocked[w.Name]++
+		if rp.blocked[w.Name] >= 2 {
+			alert("it is waiting at an approval or question dialog")
+		}
+		return
+	case "idle", "done":
+	default:
+		return
+	}
+	screen, err := agentRead(workerAgent(w), 40)
+	if err != nil {
+		return
+	}
+	noteRecovered(rp.runID, w, screen, false)
+	if quotaText(screen) {
+		delete(rp.stalled, w.Name)
+		alert("usage quota is exhausted; run orch fallback " + w.Name)
+		return
+	}
+	if inc, acted, exhausted, err := resumeOnIncident(rp.runID, w, screen); inc.name != "" {
+		delete(rp.stalled, w.Name)
+		switch {
+		case err != nil:
+			stamp("%s resume %s: %v", inc.name, w.Name, err)
+		case exhausted && inc.name == blockIncident.name:
+			alert("Codex keeps stopping it with \"This content can't be shown\" (cyber_policy) after every retry; run orch fallback " + w.Name + " to move it to a non-Codex key")
+		case exhausted:
+			alert("the model stays at capacity after every retry; run orch fallback " + w.Name)
+		case acted:
+		}
+		return
+	}
+	if w.Prompted.IsZero() {
+		return
+	}
+	since, ok := rp.stalled[w.Name]
+	if !ok {
+		rp.stalled[w.Name] = time.Now()
+		return
+	}
+	if time.Since(since) < timings.IdleNoResult {
+		return
+	}
+	acted, exhausted, err := nudgeIdle(rp.runID, w)
+	switch {
+	case err != nil:
+		stamp("nudge %s: %v", w.Name, err)
+	case acted:
+		rp.stalled[w.Name] = time.Now()
+	case exhausted:
+		alert("it stopped without writing a result and did not resume after a nudge")
+	}
 }
 
 // once runs one reaper pass and reports whether the reaper should exit.
@@ -120,20 +217,7 @@ func (rp *reaper) once(log io.Writer) (bool, error) {
 	for _, w := range r.liveWorkers() {
 		// Never close a worker that has not written its final status line.
 		if resultStatus(w.Result) == "" {
-			info, infoErr := agentGet(workerAgent(w))
-			if infoErr == nil && info.Status == "working" {
-				noteCapacityRecovered(rp.runID, w)
-			}
-			if infoErr == nil && (info.Status == "idle" || info.Status == "done") {
-				if screen, err := agentRead(workerAgent(w), 40); err == nil {
-					if !capacityText(screen) {
-						noteCapacityRecovered(rp.runID, w)
-					}
-					if _, _, err := resumeOnCapacity(rp.runID, w, screen); err != nil {
-						fmt.Fprintf(log, "capacity resume %s: %v\n", w.Name, err)
-					}
-				}
-			}
+			rp.supervise(w, log)
 			delete(rp.notWorking, w.Name)
 			continue
 		}

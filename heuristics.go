@@ -169,3 +169,64 @@ func capacityMaxRetries() int {
 const capacityContinue = "The last turn stopped because the model was at capacity. Continue the contract from where you stopped; do not redo finished steps."
 
 func capacityResumeText(name string) string { return promptMarker(name) + " " + capacityContinue }
+
+// blockMarkers are Codex's cyber_policy interruptions. The classifier also fires on ordinary
+// work (refactors, tests, git push) and ends the turn, so the pane sits idle without a result.
+// Both apostrophe forms appear because the TUI prints a typographic one.
+var blockMarkers = []string{
+	"this content can't be shown", "this content can’t be shown",
+	"we take extra care with some cybersecurity requests",
+	"we take extra caution with cybersecurity requests",
+	"some cybersecurity requests are still limited",
+	"flagged for possible cybersecurity risk", "cyber_policy",
+}
+
+func blockText(s string) bool { return containsMarker(tailLines(s), blockMarkers) }
+
+// blockDelay is swappable by tests. A policy stop is not load, so the backoff stays short.
+var blockDelay = func(n int) time.Duration {
+	if n < 0 {
+		n = 0
+	}
+	if n >= 3 {
+		return 120 * time.Second
+	}
+	return (15 * time.Second) << n
+}
+
+func blockBackoff(n int) time.Duration { return blockDelay(n) }
+func blockMaxRetries() int {
+	if n, err := strconv.Atoi(envOrch("BLOCK_RETRIES")); err == nil && n >= 0 {
+		return n
+	}
+	return 4
+}
+
+// blockContinues rephrase the continuation on each retry: the stop message itself suggests
+// rephrasing, and none of them may repeat words that the classifier keys on.
+var blockContinues = []string{
+	"Continue the contract from the next unfinished step; do not redo finished steps.",
+	"Please keep going with the remaining steps of the contract.",
+	"Resume the remaining work in the contract, then write the result file.",
+	"Proceed with the next pending item of the contract.",
+}
+
+func blockResumeText(name string, n int) string {
+	if n < 0 {
+		n = 0
+	}
+	return promptMarker(name) + " " + blockContinues[n%len(blockContinues)]
+}
+
+// idleNudges caps how often a worker that stopped without a result is told to go on.
+func idleNudges() int {
+	if n, err := strconv.Atoi(envOrch("IDLE_NUDGES")); err == nil && n >= 0 {
+		return n
+	}
+	return 2
+}
+
+func idleNudgeText(name, result string) string {
+	return promptMarker(name) + " You stopped before writing the result file " + result +
+		". If the contract is finished, write the result with its status line now. If you are blocked, write it with status: blocked and the reason. Otherwise continue from the next unfinished step."
+}

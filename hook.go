@@ -313,13 +313,22 @@ func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	if cli == "claude-prompt" || cli == "codex-prompt" {
-		return goalPromptHook(data, stdout)
+		return promptHook(data, stdout)
 	}
 	var in hookInput
 	if err := json.Unmarshal(data, &in); err != nil {
 		return 0
 	}
 	reason := decide(in, envOrch("ROLE"), inHerdr())
+	if reason == "" && cli == "claude" {
+		// Claude shows PreToolUse additionalContext to the model, so a busy Head learns of
+		// a stalled worker at its next tool call instead of at its next orch wait.
+		if text := headAlertContext(); text != "" {
+			out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "PreToolUse", "additionalContext": text}})
+			fmt.Fprintln(stdout, string(out))
+		}
+		return 0
+	}
 	if reason == "" {
 		if cli == "agy" {
 			// agy fails closed without a decision. Workers already bypass permissions, so
@@ -566,31 +575,52 @@ func goalScopeReason(in hookInput) string {
 
 var goalPrompt = regexp.MustCompile(`(?m)^\s*/goal\b`)
 
-func goalPromptHook(data []byte, stdout io.Writer) int {
+// headAlertContext drains the stalled-worker alerts queued for this Head.
+func headAlertContext() string {
 	if !inHerdr() || envOrch("ROLE") == "worker" {
+		return ""
+	}
+	return alertContext(takeAlerts(headID()))
+}
+
+// promptHook joins the stalled-worker alerts and the /goal guidance into one context.
+func promptHook(data []byte, stdout io.Writer) int {
+	var parts []string
+	if text := headAlertContext(); text != "" {
+		parts = append(parts, text)
+	}
+	if text := goalPromptContext(data); text != "" {
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
 		return 0
+	}
+	out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit", "additionalContext": strings.Join(parts, "\n\n")}})
+	fmt.Fprintln(stdout, string(out))
+	return 0
+}
+
+func goalPromptContext(data []byte) string {
+	if !inHerdr() || envOrch("ROLE") == "worker" {
+		return ""
 	}
 	var in struct {
 		Prompt string `json:"prompt"`
 	}
 	if json.Unmarshal(data, &in) != nil {
-		return 0
+		return ""
 	}
 	if !goalPrompt.MatchString(in.Prompt) && !strings.Contains(in.Prompt, "<command-name>/goal</command-name>") {
-		return 0
+		return ""
 	}
 	g, e := activeGoalFor(headID())
 	if e != nil {
-		out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit", "additionalContext": "Goal state unavailable: " + e.Error()}})
-		fmt.Fprintln(stdout, string(out))
-		return 0
+		return "Goal state unavailable: " + e.Error()
 	}
 	if g != nil {
-		return 0
+		return ""
 	}
 	quoted := "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "$", "\\$", "`", "\\`").Replace(in.Prompt) + "\""
 	text := fmt.Sprintf("Before any other work run orch goal new --text %s (the goal verbatim). Fill goal.md with at most 8 checkable criteria, non-goals, scope and budget, then run orch goal freeze. Pass --serves N on every spawn/do. Record anything else found with orch goal note. Treat the goal as complete when orch goal check exits 0, and as stopped (report results and backlog and ask the user whether to extend) when it exits 3. Format: numbered criteria '1. text' each with an indented '- check: <shell command>' line; '## Scope' bullets of globs; '## Budget' with numeric hours and max-workers. Edit the template sections in place.", quoted)
-	out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "UserPromptSubmit", "additionalContext": text}})
-	fmt.Fprintln(stdout, string(out))
-	return 0
+	return text
 }

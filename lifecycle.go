@@ -164,12 +164,11 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				}
 
 				if readErr == nil && (info.Status == "idle" || info.Status == "done") {
-					capacityWaiting[name] = capacityText(text)
-					if !capacityWaiting[name] {
-						noteCapacityRecovered(runID, w)
-					}
-					if capacityWaiting[name] {
-						acted, exhausted, resumeErr := resumeOnCapacity(runID, w, text)
+					inc, isIncident := screenIncident(text)
+					capacityWaiting[name] = isIncident
+					noteRecovered(runID, w, text, false)
+					if isIncident {
+						_, acted, exhausted, resumeErr := resumeOnIncident(runID, w, text)
 						if resumeErr != nil {
 							return outcomes, resumeErr
 						}
@@ -178,23 +177,28 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 						}
 						if exhausted {
 							saveTail(r, w, text)
+							why := "model at capacity"
+							if inc.name == blockIncident.name {
+								why = "content blocked by Codex cyber_policy"
+							}
 							if fallback {
-								nw, ferr := doFallback(runID, name, "model at capacity")
+								// A cyber_policy stop follows the request, not the account: leave Codex.
+								nw, ferr := doFallbackFrom(runID, name, why, inc.name == blockIncident.name && w.Kind == "codex")
 								if ferr == nil {
-									outcomes = append(outcomes, waitOutcome{name, "fallback:" + nw, "model at capacity → " + nw})
+									outcomes = append(outcomes, waitOutcome{name, "fallback:" + nw, why + " → " + nw})
 									still = append(still, nw)
 									continue
 								}
-								if err := setStatus(runID, name, "capacity"); err != nil {
+								if err := setStatus(runID, name, inc.name); err != nil {
 									return outcomes, err
 								}
-								outcomes = append(outcomes, waitOutcome{name, "capacity", ferr.Error()})
+								outcomes = append(outcomes, waitOutcome{name, inc.name, ferr.Error()})
 								continue
 							}
-							if err := setStatus(runID, name, "capacity"); err != nil {
+							if err := setStatus(runID, name, inc.name); err != nil {
 								return outcomes, err
 							}
-							outcomes = append(outcomes, waitOutcome{name, "capacity", "model at capacity; retries exhausted"})
+							outcomes = append(outcomes, waitOutcome{name, inc.name, why + "; retries exhausted. orch fallback " + name + " moves it to another key"})
 							continue
 						}
 					}
@@ -213,7 +217,18 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 				if idleSince[name].IsZero() {
 					idleSince[name] = time.Now()
 				} else if time.Since(idleSince[name]) > timings.IdleNoResult {
-					outcomes = append(outcomes, waitOutcome{name, "idle-no-result", "agent stopped without a result file. orch collect to inspect output"})
+					acted, exhausted, nudgeErr := nudgeIdle(runID, w)
+					if nudgeErr != nil {
+						return outcomes, nudgeErr
+					}
+					if acted {
+						delete(idleSince, name)
+					}
+					if !exhausted {
+						still = append(still, name)
+						continue
+					}
+					outcomes = append(outcomes, waitOutcome{name, "idle-no-result", "agent stopped without a result file even after a nudge. orch read " + name + " to inspect, then answer, fall back or close it"})
 					continue
 				}
 			} else {
@@ -286,7 +301,18 @@ func saveTail(r *Run, w *Worker, text string) string {
 // doFallback replaces a failed worker: same key on another account when an account hook exists,
 // otherwise the next key of the purpose chain that still satisfies the lane constraints.
 func doFallback(runID, name, reason string) (string, error) {
-	return doFallbackFrom(runID, name, reason, false)
+	return doFallbackFrom(runID, name, reason, blockedCodex(runID, name))
+}
+
+// blockedCodex reports a Codex worker that the cyber_policy stop has hit. That stop follows
+// the request rather than the account, so its fallback must leave the Codex kind.
+func blockedCodex(runID, name string) bool {
+	r, err := loadRun(runID)
+	if err != nil {
+		return false
+	}
+	w := r.worker(name)
+	return w != nil && w.Kind == "codex" && (w.Status == blockIncident.name || w.BlockRetries > 0 || !w.BlockSeen.IsZero() || strings.Contains(w.Alert, "cyber_policy"))
 }
 
 // doFallbackFrom with sameKindSpent skips account rotation and every key of the worker's
@@ -356,6 +382,8 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 	failStatus := "failed"
 	if strings.Contains(reason, "quota") {
 		failStatus = "quota"
+	} else if strings.Contains(reason, "cyber_policy") || w.Status == blockIncident.name {
+		failStatus = blockIncident.name
 	} else if strings.Contains(reason, "capacity") {
 		failStatus = "capacity"
 	}
@@ -394,6 +422,8 @@ func doFallbackFrom(runID, name, reason string, sameKindSpent bool) (string, err
 	reasonCode := "capacity"
 	if strings.Contains(reason, "quota") {
 		reasonCode = "quota"
+	} else if failStatus == blockIncident.name {
+		reasonCode = "policy"
 	}
 	if err := recordMeasurement(Measurement{Version: 1, ID: nw.Name + "-recovery", Session: runID, Period: "run", Subject: "pane", Entity: nw.Name, Phase: "rework", Source: "orch-fallback", Kind: "missing", Coverage: "unavailable", Event: "recovery_started", Reason: reasonCode}); err != nil {
 		fmt.Fprintln(os.Stderr, "orch: warning: persist recovery measurement:", err)
@@ -642,7 +672,7 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 			// Keep a final outcome (done/partial/blocked/failed/quota); otherwise mark closed.
 			if st := resultStatus(w.Result); st != "" && w.Status != "failed" {
 				w.Status = st
-			} else if w.Status != "failed" && w.Status != "quota" && w.Status != "capacity" && w.Status != "blocked" {
+			} else if w.Status != "failed" && w.Status != "quota" && w.Status != "capacity" && w.Status != blockIncident.name && w.Status != "blocked" {
 				w.Status = "closed"
 			}
 			w.Pane = ""

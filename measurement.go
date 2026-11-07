@@ -76,7 +76,7 @@ func (m Measurement) validate() error {
 	if m.Event != "" && !contains1([]string{"new_defect", "false_positive", "accepted_fix", "failure", "recovery_started", "recovered", "recovery_failed"}, m.Event) {
 		return fmt.Errorf("invalid evidence event")
 	}
-	if m.Reason != "" && !contains1([]string{"unknown", "timeout", "interrupted", "exit", "scope", "persistence", "capacity", "quota", "validation", "human_confirmed"}, m.Reason) {
+	if m.Reason != "" && !contains1([]string{"unknown", "timeout", "interrupted", "exit", "scope", "persistence", "capacity", "policy", "quota", "validation", "human_confirmed"}, m.Reason) {
 		return fmt.Errorf("invalid reason code")
 	}
 	if m.Related != "" && !evidenceID.MatchString(m.Related) {

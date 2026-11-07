@@ -19,6 +19,10 @@ type Worker struct {
 	Accepted        bool      `json:"accepted,omitempty"`
 	CapacityRetries int       `json:"capacity_retries,omitempty"`
 	CapacitySeen    time.Time `json:"capacity_seen,omitempty"`
+	BlockRetries    int       `json:"block_retries,omitempty"`
+	BlockSeen       time.Time `json:"block_seen,omitempty"`
+	Nudges          int       `json:"nudges,omitempty"`
+	NudgedAt        time.Time `json:"nudged_at,omitempty"`
 	Branch          string    `json:"branch,omitempty"`
 	WorktreeAuto    bool      `json:"worktree_auto,omitempty"`
 	WorktreeBase    string    `json:"worktree_base,omitempty"`
@@ -42,7 +46,7 @@ type Worker struct {
 	Worktree        string    `json:"worktree,omitempty"`
 	Contract        string    `json:"contract,omitempty"`
 	Result          string    `json:"result"`
-	Status          string    `json:"status"` // spawned, prompted, done, blocked, partial, failed, quota, lost, closed
+	Status          string    `json:"status"` // spawned, prompted, done, blocked, partial, failed, quota, capacity, content-blocked, lost, closed
 	FallbackOf      string    `json:"fallback_of,omitempty"`
 	Tried           []string  `json:"tried,omitempty"`
 	// Baseline maps files already changed at prompt time to their content hash.
@@ -55,6 +59,8 @@ type Worker struct {
 	Closed        time.Time         `json:"closed,omitempty"`
 	// Reaped marks a worker the reaper closed that wait or collect has not reported yet.
 	Reaped bool `json:"reaped,omitempty"`
+	// Alert is the stall last reported to the Head; it clears when the worker works again.
+	Alert string `json:"alert,omitempty"`
 }
 
 type Event struct {
