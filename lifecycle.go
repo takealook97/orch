@@ -812,7 +812,7 @@ func gc(orphans bool) ([]string, error) {
 			report = append(report, cleanupRunWorktrees(r, true)...)
 		}
 	}
-	report = append(report, pruneAdhoc(runs, adhocRetention)...)
+	report = append(report, diskPruneReport(time.Now())...)
 	panes, err := listPanes("")
 	if err != nil {
 		return report, err
@@ -909,36 +909,27 @@ func gc(orphans bool) ([]string, error) {
 	return report, nil
 }
 
-// adhocRetention is how long gc keeps the directory of an ad-hoc task run.
-const adhocRetention = 7 * 24 * time.Hour
-
-// pruneAdhoc deletes ad-hoc run directories created more than keep ago.
+// pruneAdhoc retains the standalone helper for callers with an explicit window.
 func pruneAdhoc(runs []*Run, keep time.Duration) []string {
+	if keep <= 0 {
+		return nil
+	}
+	home, err := resolvedOrchHome()
+	if err != nil {
+		return nil
+	}
+	info, err := os.Lstat(runsDir())
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	// Restrict the helper to the supplied runs.
 	var report []string
 	for _, r := range runs {
-		if !r.Adhoc || time.Since(r.Created) <= keep {
+		if r == nil || !r.Adhoc {
 			continue
 		}
-		// Worktree records must survive until integration and cleanup, even for ad-hoc tasks.
-		hasWorktree := false
-		fresh, err := loadRun(r.ID)
-		if err != nil {
-			continue
-		}
-		for _, e := range worktreeEntries(fresh) {
-			_, branchErr := gitOutput(*e.Base, "show-ref", "--verify", "refs/heads/"+*e.Branch)
-			if *e.Dir != "" || *e.Branch != "" && branchErr == nil {
-				hasWorktree = true
-			}
-		}
-		if hasWorktree {
-			continue
-		}
-		if err := os.RemoveAll(r.dir()); err != nil {
-			report = append(report, fmt.Sprintf("%s: ad-hoc run not deleted: %v", r.ID, err))
-			continue
-		}
-		report = append(report, fmt.Sprintf("%s: ad-hoc run deleted", r.ID))
+		lines, _ := pruneSelectedRuns(home, time.Now(), keep, []*Run{r})
+		report = append(report, lines...)
 	}
 	return report
 }

@@ -53,6 +53,14 @@ Flags go before the text; a text that starts with `-` goes after `--` (`orch ask
 
 See [advanced procedures](skill/references/advanced.md) for full/full+, DAG, accounts and layout; [measurement, eval, uninstall and guard boundaries](docs/operations.md) for local evidence and safe removal. Savings have not been demonstrated.
 
+## Disk retention
+
+`orch gc [--orphans] [--disk]` also prunes old disk data. Use `orch gc --disk` for disk cleanup alone without pane access; `--disk` and `--orphans` cannot be combined. Head invocations automatically launch detached disk cleanup at most once per 24 hours, with output in `~/.orch/prune.log`.
+
+`ORCH_RETENTION_DAYS` sets the retention window in whole days (default 7; invalid values use 7; 0 disables disk pruning). `ORCH_AUTO_PRUNE=0` disables only the automatic trigger. Old closed runs and ended goals retain metadata, Markdown at every depth, task records and lock files; heavy evidence and scratch data are removed. Old ad-hoc runs are deleted entirely. Active or recently updated runs/goals, runs holding worktrees or unfinished/live tasks, and ended goals referenced by non-closed runs are protected. Runs linked to a goal are compacted only when that goal is ended or missing. Compaction markers prevent repeat walks until new activity occurs.
+
+Old `tests/*.log`, `codex-goal-cache/*.json` and `cache/ask/*.json` files are removed; ask entries retain at least their configured cache TTL. Symlinks are never followed during cleanup. Measurements, backups, locks and hook-debug logs are outside this policy. Workers should keep toolchains, virtualenvs, package/module caches and build outputs in `$TMPDIR` outside `~/.orch`, with only small logs/excerpts under `evidence/`.
+
 ## Model catalog
 
 `orch models` shows the full list. `orch models --json` emits the resolved catalog as objects with `key`, `kind`, `family`, `tier`, `model`, `effort`, and `display` fields. The Head picks by key only; `orch` assembles the CLI arguments.

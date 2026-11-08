@@ -48,7 +48,7 @@ Maintenance
   orch layout                             Head 1/3 · restore equal rows in Head and overflow tabs
                                           ORCH_MAX_WORKERS: live pane workers per run (default 12)
   orch resume --run ID                    resume /goal: make this pane Head and mark missing workers
-  orch gc [--orphans]                     clean owned panes and merged, clean auto worktrees of closed runs
+  orch gc [--orphans] [--disk]            clean owned panes, worktrees and old disk data; --disk: disk only
                                         --orphans: also clean runs whose Head disappeared (abnormal exit)
   orch doctor [--probe-models] [--keys k1,k2]
   orch docs gen [--root DIR]             regenerate marked model catalog blocks
@@ -65,6 +65,7 @@ roles: recon design produce integrate verify-mech verify-critical verify-neutral
 `
 
 func main() {
+	maybeAutoPrune(os.Args[1:])
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
@@ -134,7 +135,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return fail(fmt.Errorf("ORCH_ROLE=worker: workers cannot use orch %s (Head only)", cmd))
 	}
 	// A detached __task or __reap was verified by its parent before launch (it is reparented).
-	if !readOnly && commandNeedsHeadIdentity(cmd) && cmd != "__task" && cmd != "__reap" && headID() != "" {
+	diskOnly := cmd == "gc" && len(rest) == 1 && rest[0] == "--disk"
+	if !diskOnly && !readOnly && commandNeedsHeadIdentity(cmd) && cmd != "__task" && cmd != "__reap" && headID() != "" {
 		if err := verifyCaller(headID()); err != nil {
 			if os.Getppid() == 1 {
 				err = fmt.Errorf("%w; detached orch processes cannot manage panes; run orch wait in the foreground or with your harness's background-task feature (not &, nohup or setsid)", err)
@@ -615,11 +617,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return failIf(fail, err)
 
 	case "gc":
+		disk := fs.Bool("disk", false, "only prune old disk data without pane work")
 		orphans := fs.Bool("orphans", false, "also clean runs whose Head pane is gone")
-		if _, err := parse(fs, rest); err != nil {
+		pos, err := parse(fs, rest)
+		if err != nil {
 			return 2
 		}
-		rep, err := gc(*orphans)
+		if len(pos) != 0 || (*disk && *orphans) {
+			return fail(fmt.Errorf("usage: orch gc [--orphans] [--disk]; --disk cannot be combined with --orphans"))
+		}
+		var rep []string
+		if *disk {
+			rep, _ = pruneDisk(time.Now())
+		} else {
+			rep, err = gc(*orphans)
+		}
 		for _, l := range rep {
 			fmt.Fprintln(stdout, l)
 		}

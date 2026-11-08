@@ -285,6 +285,8 @@ In full, skip the neutral lane when the change has no user-facing surface; recor
 
 ## 7. Cleanup and reporting
 
+- Disk retention defaults to 7 days (`ORCH_RETENTION_DAYS`; 0 disables it). `orch gc --disk` compacts old closed runs and ended goals, deletes old ad-hoc runs, test logs and cache entries, and preserves metadata, Markdown, locks and live/worktree state. Head invocations trigger detached cleanup at most daily; `ORCH_AUTO_PRUNE=0` disables that trigger. Keep toolchains, virtualenvs, caches and build outputs in `$TMPDIR`, with only small evidence excerpts under `~/.orch`. Measurements, backups and hook-debug logs are excluded.
+
 - The run's lifetime is the standard. Keep panes alive across turns while a `/goal` is in progress. Resume with `orch resume --run <id>`.
 - On completion (success, failure, cancellation, or early exit), call `orch run end`. Tell the user the removal confirmation. Report any leftover worktree along with the reason.
 - **Close only panes you spawned.** `orch` closes only pane IDs recorded in its run, and refuses another Head's run. Never close a user's pane or another session's pane.

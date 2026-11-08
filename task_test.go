@@ -611,9 +611,27 @@ func TestAdhocRunNeverActiveAndHidden(t *testing.T) {
 	if rep := pruneAdhoc(runs, time.Hour); len(rep) != 0 {
 		t.Fatalf("young run pruned: %v", rep)
 	}
-	_ = withRun(id, func(r *Run) error { r.Created = time.Now().Add(-8 * 24 * time.Hour); return nil })
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	if err := withRun(id, func(r *Run) error {
+		r.Created = old
+		for i := range r.Events {
+			r.Events[i].At = old
+		}
+		for _, task := range r.Tasks {
+			task.Heartbeat, task.Pid, task.Pgid = old, 0, 0
+			if err := writeTask(task); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(runDir(id), "run.json"), old, old); err != nil {
+		t.Fatal(err)
+	}
 	runs, _ = allRuns()
-	if rep := pruneAdhoc(runs, adhocRetention); len(rep) != 1 || fileExists(runDir(id)) {
+	if rep := pruneAdhoc(runs, retentionWindow()); len(rep) != 1 || fileExists(runDir(id)) {
 		t.Fatalf("old ad-hoc run kept: %v", rep)
 	}
 }
