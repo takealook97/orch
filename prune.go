@@ -66,32 +66,59 @@ func removeTree(path string) (int64, error) {
 	}
 	return removeTreeIn(home, path)
 }
+
+// chmodPruneDirIn repairs only real directories within the resolved home.
+func chmodPruneDirIn(home, path string) error {
+	path, err := prunePath(home, path)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("refusing to chmod non-directory: %s", path)
+	}
+	return os.Chmod(path, 0700)
+}
+
 func removeTreeIn(home, path string) (int64, error) {
 	path, err := prunePath(home, path)
 	if err != nil {
 		return 0, err
 	}
 	var size int64
-	err = filepath.WalkDir(path, func(p string, d fs.DirEntry, e error) error {
+	var measure fs.WalkDirFunc
+	measure = func(p string, d fs.DirEntry, e error) error {
 		if e != nil {
-			return e
+			if d != nil && d.IsDir() {
+				if errors.Is(e, fs.ErrPermission) && chmodPruneDirIn(home, p) == nil {
+					if entries, err := os.ReadDir(p); err == nil {
+						for _, entry := range entries {
+							_ = filepath.WalkDir(filepath.Join(p, entry.Name()), measure)
+						}
+					}
+				}
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if d.Type().IsRegular() {
 			fi, e := d.Info()
 			if e != nil {
-				return e
+				return nil
 			}
 			size += fi.Size()
 		}
 		return nil
-	})
-	if err != nil {
-		return 0, err
 	}
+	// Sizing is best effort: an unreadable subtree must not block removal.
+	_ = filepath.WalkDir(path, measure)
 	if err = os.RemoveAll(path); err != nil {
 		_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, e error) error {
 			if d != nil && d.IsDir() {
-				return os.Chmod(p, 0700)
+				return chmodPruneDirIn(home, p)
 			}
 			return e
 		})
@@ -148,6 +175,12 @@ func compactDirIn(home, dir string, keep func(string, fs.FileInfo) bool, now tim
 	var walk func(string) error
 	walk = func(parent string) error {
 		entries, err := os.ReadDir(parent)
+		if errors.Is(err, fs.ErrPermission) {
+			if e := chmodPruneDirIn(home, parent); e != nil {
+				return errors.Join(err, e)
+			}
+			entries, err = os.ReadDir(parent)
+		}
 		if err != nil {
 			return err
 		}
@@ -169,12 +202,16 @@ func compactDirIn(home, dir string, keep func(string, fs.FileInfo) bool, now tim
 				if len(remaining) != 0 {
 					continue
 				}
+				// Resume may write into these run directories after compaction.
+				if parent == dir && filepath.Dir(dir) == filepath.Join(home, "runs") && contains1([]string{"contracts", "results", "evidence", "tasks"}, entry.Name()) {
+					continue
+				}
 			} else if keep(rel, info) {
 				continue
 			}
 			n, err := removeTreeIn(home, path)
 			if err != nil && errors.Is(err, fs.ErrPermission) {
-				if e := os.Chmod(parent, 0700); e != nil {
+				if e := chmodPruneDirIn(home, parent); e != nil {
 					return errors.Join(err, e)
 				}
 				n, err = removeTreeIn(home, path)
@@ -251,10 +288,13 @@ func runHasLiveTask(r *Run) bool {
 		if disk, err := readTask(r.ID, t.ID); err == nil {
 			t = disk
 		}
-		if !contains1([]string{"done", "failed", "timeout"}, t.Status) {
-			return true
+		// Finished tasks cannot pin a run through a recycled runner PID.
+		if contains1([]string{"done", "failed", "timeout"}, t.Status) {
+			continue
 		}
-		if (t.Pid > 0 || t.Pgid > 0) && taskDead(t) == "" {
+		// Unfinished tasks need a live runner or heartbeat. An unclaimed task
+		// with neither has aged past TaskStale by the run's retention cutoff.
+		if (t.Pid > 0 || t.Pgid > 0 || !t.Heartbeat.IsZero()) && taskDead(t) == "" {
 			return true
 		}
 	}
@@ -401,7 +441,7 @@ func compactGoals(home string, now time.Time, keep time.Duration) ([]string, int
 				return
 			}
 			for _, r := range runs {
-				if r.Goal == g.ID && r.Status != "closed" {
+				if r.Goal == g.ID && (r.Status != "closed" || runHasLiveTask(r)) {
 					return
 				}
 			}

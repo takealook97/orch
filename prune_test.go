@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,12 +86,12 @@ func TestRetentionWindow(t *testing.T) {
 	}
 }
 func TestPruneEligibility(t *testing.T) {
-	for _, name := range []string{"closed-old", "active", "closed-new", "event-new", "mtime-new", "heartbeat-new", "adhoc-old", "worktree", "adhoc-worktree", "active-goal", "draft-goal", "ended-goal", "missing-goal", "live-task", "unfinished-task", "live-adhoc", "finished-live-runner"} {
+	for _, name := range []string{"closed-old", "active", "closed-new", "event-new", "mtime-new", "heartbeat-new", "adhoc-old", "worktree", "adhoc-worktree", "active-goal", "draft-goal", "ended-goal", "missing-goal", "live-task", "unfinished-task", "live-adhoc", "finished-live-runner", "dead-task", "dead-adhoc"} {
 		t.Run(name, func(t *testing.T) {
 			now := pruneEnv(t)
-			old := now.Add(-8 * 24 * time.Hour)
+			old := now.Add(-30 * 24 * time.Hour)
 			r := pruneRun(t, "run", old)
-			want := name == "closed-old" || name == "adhoc-old" || name == "ended-goal" || name == "missing-goal"
+			want := contains1([]string{"closed-old", "adhoc-old", "ended-goal", "missing-goal", "unfinished-task", "finished-live-runner", "dead-task", "dead-adhoc"}, name)
 			switch name {
 			case "active":
 				r.Status = "active"
@@ -118,6 +119,9 @@ func TestPruneEligibility(t *testing.T) {
 				r.Tasks = []*Task{{ID: "task-1", Status: "unknown"}}
 			case "finished-live-runner":
 				r.Tasks = []*Task{{ID: "task-1", Status: "done", Pid: os.Getpid()}}
+			case "dead-task", "dead-adhoc":
+				r.Tasks = []*Task{{ID: "task-1", Status: "running", Pid: 999999, Heartbeat: old}}
+				r.Adhoc = name == "dead-adhoc"
 			}
 			pruneSaveRun(t, r, old)
 			if name == "mtime-new" {
@@ -125,7 +129,7 @@ func TestPruneEligibility(t *testing.T) {
 			}
 			report, _ := pruneDisk(now)
 			pruneExists(t, filepath.Join(r.dir(), "evidence", "blob.bin"), !want)
-			if name == "adhoc-old" {
+			if r.Adhoc && want {
 				pruneExists(t, r.dir(), false)
 			} else {
 				pruneExists(t, filepath.Join(r.dir(), ".compacted"), want)
@@ -169,9 +173,10 @@ func TestPruneKeepSetRecallAndMarkers(t *testing.T) {
 	for _, name := range append(kept, "run.json") {
 		pruneExists(t, filepath.Join(r.dir(), name), true)
 	}
-	for _, name := range append(removed, "external.md", "evidence") {
+	for _, name := range append(removed, "external.md") {
 		pruneExists(t, filepath.Join(r.dir(), name), false)
 	}
+	pruneExists(t, filepath.Join(r.dir(), "evidence"), true)
 	pruneExists(t, outside, true)
 	after, _ := os.Stat(filepath.Join(r.dir(), ".lock"))
 	if !os.SameFile(inode, after) {
@@ -309,7 +314,8 @@ func TestRemoveTreeSafetyAndReadonly(t *testing.T) {
 		t.Fatal(err)
 	}
 	pruneDisk(time.Now())
-	pruneExists(t, filepath.Join(r.dir(), "evidence"), false)
+	pruneExists(t, filepath.Join(r.dir(), "evidence"), true)
+	pruneExists(t, filepath.Join(r.dir(), "evidence", "blob.bin"), false)
 }
 func TestPruneSymlinkRoots(t *testing.T) {
 	for _, name := range []string{"runs", "goals", "tests", "codex-goal-cache", "cache", "cache/ask"} {
@@ -561,5 +567,84 @@ func TestPruneResolvedHome(t *testing.T) {
 	if !strings.Contains(strings.Join(report, "\n"), "run compacted") {
 		t.Fatal(report)
 	}
-	pruneExists(t, filepath.Join(r.dir(), "evidence"), false)
+	pruneExists(t, filepath.Join(r.dir(), "evidence"), true)
+	pruneExists(t, filepath.Join(r.dir(), "evidence", "blob.bin"), false)
+}
+
+func TestPruneUnreadableDirectories(t *testing.T) {
+	for _, mode := range []os.FileMode{0000, 0300} {
+		for _, kind := range []string{"run", "goal", "remove-tree"} {
+			t.Run(fmt.Sprintf("%s/%04o", kind, mode), func(t *testing.T) {
+				now := pruneEnv(t)
+				old := now.Add(-30 * 24 * time.Hour)
+				var dir string
+				switch kind {
+				case "run":
+					dir = pruneRun(t, "unreadable", old).dir()
+				case "goal":
+					dir = pruneGoal(t, "unreadable", "ended", old).dir()
+				default:
+					dir = filepath.Join(orchHome(), "unreadable")
+				}
+				locked := filepath.Join(dir, "evidence", "locked")
+				prunePut(t, filepath.Join(locked, "x.bin"), "heavy")
+				kept := filepath.Join(dir, "results", "kept.md")
+				prunePut(t, kept, "retained knowledge")
+				t.Cleanup(func() { _ = os.Chmod(locked, 0700) })
+				if err := os.Chmod(locked, mode); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "remove-tree" {
+					n, err := removeTree(dir)
+					if err != nil || n != int64(len("heavy")+len("retained knowledge")) {
+						t.Fatalf("freed=%d err=%v", n, err)
+					}
+					pruneExists(t, dir, false)
+					return
+				}
+				report, _ := pruneDisk(now)
+				if !strings.Contains(strings.Join(report, "\n"), kind+" compacted") {
+					t.Fatal(report)
+				}
+				pruneExists(t, locked, false)
+				pruneExists(t, kept, true)
+				pruneExists(t, filepath.Join(dir, ".compacted"), true)
+			})
+		}
+	}
+}
+
+func TestPruneGoalWithLiveLinkedTask(t *testing.T) {
+	now := pruneEnv(t)
+	old := now.Add(-30 * 24 * time.Hour)
+	g := pruneGoal(t, "live-linked", "ended", old)
+	r := pruneRun(t, "live-adhoc", old)
+	r.Goal = g.ID
+	r.Adhoc = true
+	r.Tasks = []*Task{{ID: "task-1", Status: "running", Pid: os.Getpid()}}
+	pruneSaveRun(t, r, old)
+	report, _ := pruneDisk(now)
+	if strings.Contains(strings.Join(report, "\n"), "goal compacted") {
+		t.Fatal(report)
+	}
+	pruneExists(t, filepath.Join(g.dir(), "evidence", "blob.bin"), true)
+	pruneExists(t, filepath.Join(g.dir(), ".compacted"), false)
+	pruneExists(t, filepath.Join(r.dir(), "evidence", "blob.bin"), true)
+}
+
+func TestPruneKeepsEmptyRunSkeleton(t *testing.T) {
+	now := pruneEnv(t)
+	r := pruneRun(t, "skeleton", now.Add(-30*24*time.Hour))
+	for _, name := range []string{"contracts", "results", "evidence", "tasks", "other"} {
+		prunePut(t, filepath.Join(r.dir(), name, "delete.bin"), "heavy")
+	}
+	pruneDisk(now)
+	pruneExists(t, filepath.Join(r.dir(), ".compacted"), true)
+	for _, name := range []string{"contracts", "results", "evidence", "tasks"} {
+		entries, err := os.ReadDir(filepath.Join(r.dir(), name))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("%s: entries=%v err=%v", name, entries, err)
+		}
+	}
+	pruneExists(t, filepath.Join(r.dir(), "other"), false)
 }
