@@ -772,7 +772,7 @@ func closeRun(runID string, end bool) ([]string, error) {
 	if err != nil {
 		return notes, err
 	}
-	worktreeNotes, worktreeErr := cleanupRunWorktreesChecked(r, false)
+	worktreeNotes, worktreeErr := cleanupRecordedWorktrees(r, false)
 	notes = append(notes, worktreeNotes...)
 	if worktreeErr != nil {
 		failed = append(failed, worktreeErr.Error())
@@ -850,7 +850,50 @@ func staleRunActivity(r *Run, cutoff time.Time) (time.Time, bool) {
 	return last, last.Before(cutoff)
 }
 
-// closeStaleRun rechecks under the run lock and never touches pane or worktree state.
+// forgetMissingWorktrees clears only absent paths, preserving Git branches.
+// The caller holds the run lock; task files must agree with run.json.
+func forgetMissingWorktrees(r *Run) error {
+	clear := func(path *string, merged *bool) bool {
+		if *path == "" {
+			return false
+		}
+		if _, err := os.Lstat(*path); !os.IsNotExist(err) {
+			return false
+		}
+		*path = ""
+		// An empty merged entry otherwise triggers retained-branch cleanup.
+		*merged = false
+		return true
+	}
+	for _, w := range r.Workers {
+		if w != nil {
+			clear(&w.Worktree, &w.Merged)
+		}
+	}
+	for _, task := range r.Tasks {
+		if task != nil && clear(&task.Worktree, &task.Merged) {
+			if err := writeTask(task); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// cleanupRecordedWorktrees refreshes persisted records before normal cleanup.
+func cleanupRecordedWorktrees(r *Run, gcMode bool) ([]string, error) {
+	if err := withRun(r.ID, forgetMissingWorktrees); err != nil {
+		return nil, err
+	}
+	fresh, err := loadRun(r.ID)
+	if err != nil {
+		return nil, err
+	}
+	return cleanupRunWorktreesChecked(fresh, gcMode)
+}
+
+// closeStaleRun rechecks under the run lock and forgets absent worktree paths
+// without touching panes, existing worktrees, or Git branches.
 func closeStaleRun(candidate *Run, now time.Time, keep time.Duration) ([]string, bool, error) {
 	if keep <= 0 {
 		return nil, false, nil
@@ -865,6 +908,9 @@ func closeStaleRun(candidate *Run, now time.Time, keep time.Duration) ([]string,
 		last, eligible := staleRunActivity(r, cutoff)
 		if !eligible {
 			return skipped
+		}
+		if err := forgetMissingWorktrees(r); err != nil {
+			return err
 		}
 		r.Status = "closed"
 		r.event("gc: stale run closed after retention window")
@@ -915,7 +961,11 @@ func gc(orphans bool) ([]string, error) {
 			continue
 		}
 		if r.Status == "closed" && (r.Adhoc || r.HeadPane != headID() || runBackend(r) != currentBackend()) {
-			report = append(report, cleanupRunWorktrees(r, true)...)
+			notes, err := cleanupRecordedWorktrees(r, true)
+			report = append(report, notes...)
+			if err != nil {
+				return report, err
+			}
 		}
 		if !r.Adhoc && r.Status != "active" && runBackend(r) == currentBackend() && (r.HeadPane == headID() || orphans) {
 			paneRuns = append(paneRuns, r)
@@ -1012,7 +1062,11 @@ func gc(orphans bool) ([]string, error) {
 			report = append(report, fmt.Sprintf("%s: Head disappeared; run ended", r.ID))
 		}
 		if fresh, err := loadRun(r.ID); err == nil {
-			report = append(report, cleanupRunWorktrees(fresh, true)...)
+			notes, err := cleanupRecordedWorktrees(fresh, true)
+			report = append(report, notes...)
+			if err != nil {
+				return report, err
+			}
 		}
 	}
 	return report, nil
