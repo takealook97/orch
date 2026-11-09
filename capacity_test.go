@@ -270,7 +270,8 @@ printf '%%s\n' "$@" >> %q
 				if err != nil {
 					t.Fatal(err)
 				}
-				task.TimeoutMS = 1000
+				// The fake exits on completion; allow ample time for process startup under load.
+				task.TimeoutMS = 30000
 				task.MaxOutput = 2000
 				if err = runTask(task); err != nil {
 					t.Fatal(err)

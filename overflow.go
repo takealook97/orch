@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"sync"
 )
 
 // maxWorkers is a per-run limit, separate from the goal's admission budget.
@@ -206,6 +207,9 @@ func cleanupCreatedOverflow(label string) {
 	}
 }
 
+// overflowCloseWarnings suppresses repeated close warnings within one invocation.
+var overflowCloseWarnings sync.Map
+
 // cleanupOverflowTabs is called under the Head lock. Retain failed tab IDs for retry.
 func cleanupOverflowTabs(r *Run) error {
 	if backend() == "app" {
@@ -230,9 +234,6 @@ func cleanupOverflowTabs(r *Run) error {
 			}
 		}
 		if occupied {
-			if first == nil {
-				first = fmt.Errorf("I6: overflow tab %s still contains unowned panes; kept", tab)
-			}
 			continue
 		}
 		// Closing the last pane may already have removed the tab. Confirm either outcome.
@@ -256,7 +257,9 @@ func cleanupOverflowTabs(r *Run) error {
 		}
 		if exists {
 			if first == nil {
-				first = fmt.Errorf("overflow tab %s did not close (%v)", tab, closeErr)
+				if _, warned := overflowCloseWarnings.LoadOrStore(tab, struct{}{}); !warned {
+					first = fmt.Errorf("overflow tab %s did not close (%v)", tab, closeErr)
+				}
 			}
 			continue
 		}

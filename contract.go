@@ -61,6 +61,7 @@ func contractTemplate(r *Run, name, role, key string) string {
 ## Permissions
 - Allowed: <test runs, local file writes ...>
 - Keep toolchains, virtualenvs, package/module caches and build outputs in a temp dir ($TMPDIR) outside ~/.orch; store only small logs/excerpts under evidence/.
+- Leave temporary directories in place; never run `+"`rm -rf`"+`, especially on paths built from command substitution — orch cannot answer an approval dialog.
 - Forbidden: deployment, external writes, git push, out-of-scope edits, delegation (no panes, subagents, or orch)
 
 ## Deliverables

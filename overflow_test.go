@@ -510,8 +510,11 @@ func TestReproUserPaneMakesEveryCloseFail(t *testing.T) {
 	if got0(r).worker("w0").Pane != "" || !slices.Contains(f.tabs[ov], "user-pane") {
 		t.Fatal("close or user protection failed")
 	}
-	if _, err := closeRun(r.ID, true); err == nil || !strings.Contains(err.Error(), "I6") {
-		t.Fatalf("run end did not report kept tab: %v", err)
+	if _, err := closeRun(r.ID, true); err != nil {
+		t.Fatalf("run end warned about kept user tab: %v", err)
+	}
+	if !slices.Contains(f.tabs[ov], "user-pane") || slices.Contains(f.closed, ov) {
+		t.Fatal("run end did not preserve user tab")
 	}
 }
 
