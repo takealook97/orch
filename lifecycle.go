@@ -733,13 +733,28 @@ func cleanRunOverflow(runID string) error {
 
 // Keep UI cleanup warnings separate from mandatory persistence errors.
 func cleanRunOverflowState(runID string) (cleanupErr, persistErr error) {
+	unchanged := errors.New("overflow state unchanged")
 	persistErr = withRun(runID, func(r *Run) error {
+		before, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
 		cleanupErr = cleanupOverflowTabs(r)
 		if cleanupErr != nil {
 			r.event("overflow cleanup warning: %v", cleanupErr)
 		}
+		after, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		if string(before) == string(after) {
+			return unchanged
+		}
 		return nil
 	})
+	if errors.Is(persistErr, unchanged) {
+		persistErr = nil
+	}
 	return
 }
 
@@ -978,6 +993,21 @@ func gc(orphans bool) ([]string, error) {
 			}
 		}
 		return report, nil
+	}
+	// These runs cannot enter the dead-Head pane path. Close them before
+	// any pane access or cleanup error can prevent metadata-only retention.
+	if orphans {
+		for _, r := range runs {
+			if !r.Adhoc && runBackend(r) == currentBackend() {
+				continue
+			}
+			lines, _, err := closeStaleRun(r, now, retentionWindow())
+			if err != nil {
+				return report, err
+			}
+			report = append(report, lines...)
+			handled[r.ID] = true
+		}
 	}
 	var paneRuns []*Run
 	for _, r := range runs {
