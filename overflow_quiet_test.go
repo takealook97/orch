@@ -47,7 +47,7 @@ func TestOverflowCleanupQuietCloseFailure(t *testing.T) {
 			}
 		}
 	}
-	if warnings != 1 || attempts != 3 || !slices.Contains(r.OverflowTabs, tab) {
+	if warnings != 3 || attempts != 3 || !slices.Contains(r.OverflowTabs, tab) {
 		t.Fatalf("warnings=%d attempts=%d tabs=%v", warnings, attempts, r.OverflowTabs)
 	}
 	herdrRun = original

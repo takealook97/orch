@@ -59,9 +59,18 @@ func TestPaneCommittedScope(t *testing.T) {
 			// Baseline dirt left unchanged must never become a worker change.
 			putFile(t, root, "untouched.txt", "leave alone\n")
 			w := &Worker{Name: "impl", Cwd: root}
-			if name == "worktree-base" {
+			if name != "discard-dirty" && name != "empty-repo" {
 				w = fixtureWorktree(t, r, root, "impl")
 				w.WorktreeStart = strings.TrimSpace(git(t, w.Cwd, "rev-parse", "HEAD"))
+			}
+			if name == "empty-repo" {
+				w.Worktree, w.Branch = root, "unborn"
+			}
+			if w.Cwd != root {
+				if strings.HasPrefix(name, "dirty-") {
+					putFile(t, w.Cwd, file, "user dirty\n")
+				}
+				putFile(t, w.Cwd, "untouched.txt", "leave alone\n")
 			}
 			base := "none"
 			if name == "explicit-outside" || name == "revert-worktree" {

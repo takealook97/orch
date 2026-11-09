@@ -1165,11 +1165,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 			files, err = changedFiles(t.Cwd, "")
 			if err == nil {
 				t.Baseline = snapshot(t.Cwd, files)
-				t.StartHead, _ = gitOutput(t.Cwd, "rev-parse", "--verify", "-q", "HEAD")
-				if t.StartHead == "" {
-					refs, refErr := gitOutput(t.Cwd, "for-each-ref", "--count=1")
-					t.StartEmpty = refErr == nil && refs == ""
-				}
+				t.StartHead, t.StartEmpty = promptHeadState(t.Cwd)
 			}
 		}
 	}

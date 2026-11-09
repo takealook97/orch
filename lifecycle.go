@@ -545,7 +545,7 @@ func collectWorker(runFlag, name string) (string, string, error) {
 					baseline = nil
 				}
 				var bad []string
-				fresh, bad, err = completionChanges(w.Cwd, root, workerScopeBase(w, string(body)), baseline, workerOwnedGlobs(w, string(body)))
+				fresh, bad, err = completionChanges(w.Cwd, root, paneCommitBase(w), baseline, workerOwnedGlobs(w, string(body)))
 				if len(bad) > 0 {
 					st = "failed"
 					fmt.Fprintf(&b, "scope violation; marked failed: change outside owned files %s\n", strings.Join(bad, ", "))
@@ -713,7 +713,15 @@ func closeWorkerAs(runID, name, expect string, reap bool) error {
 func cleanRunOverflowWarning(runID string) error {
 	cleanupErr, persistErr := cleanRunOverflowState(runID)
 	if cleanupErr != nil {
-		fmt.Fprintln(os.Stderr, "orch: warning: overflow cleanup:", cleanupErr)
+		var closeErr *overflowCloseError
+		warn := true
+		if errors.As(cleanupErr, &closeErr) {
+			_, warned := overflowCloseWarnings.LoadOrStore(closeErr.tab, struct{}{})
+			warn = !warned
+		}
+		if warn {
+			fmt.Fprintln(os.Stderr, "orch: warning: overflow cleanup:", cleanupErr)
+		}
 	}
 	return persistErr
 }
@@ -852,7 +860,8 @@ func staleRunActivity(r *Run, cutoff time.Time) (time.Time, bool) {
 
 // forgetMissingWorktrees clears only absent paths, preserving Git branches.
 // The caller holds the run lock; task files must agree with run.json.
-func forgetMissingWorktrees(r *Run) error {
+func forgetMissingWorktrees(r *Run) (bool, error) {
+	changed := false
 	clear := func(path *string, merged *bool) bool {
 		if *path == "" {
 			return false
@@ -867,22 +876,34 @@ func forgetMissingWorktrees(r *Run) error {
 	}
 	for _, w := range r.Workers {
 		if w != nil {
-			clear(&w.Worktree, &w.Merged)
+			changed = clear(&w.Worktree, &w.Merged) || changed
 		}
 	}
 	for _, task := range r.Tasks {
 		if task != nil && clear(&task.Worktree, &task.Merged) {
+			changed = true
 			if err := writeTask(task); err != nil {
-				return err
+				return changed, err
 			}
 		}
 	}
-	return nil
+	return changed, nil
 }
 
 // cleanupRecordedWorktrees refreshes persisted records before normal cleanup.
 func cleanupRecordedWorktrees(r *Run, gcMode bool) ([]string, error) {
-	if err := withRun(r.ID, forgetMissingWorktrees); err != nil {
+	unchanged := errors.New("worktree records unchanged")
+	err := withRun(r.ID, func(fresh *Run) error {
+		changed, err := forgetMissingWorktrees(fresh)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return unchanged
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, unchanged) {
 		return nil, err
 	}
 	fresh, err := loadRun(r.ID)
@@ -909,7 +930,7 @@ func closeStaleRun(candidate *Run, now time.Time, keep time.Duration) ([]string,
 		if !eligible {
 			return skipped
 		}
-		if err := forgetMissingWorktrees(r); err != nil {
+		if _, err := forgetMissingWorktrees(r); err != nil {
 			return err
 		}
 		r.Status = "closed"
@@ -933,8 +954,8 @@ func closeStaleRun(candidate *Run, now time.Time, keep time.Duration) ([]string,
 	return report, err == nil, err
 }
 
-// gc cleans closed runs and, with orphans, closes idle active runs using only
-// persisted metadata, regardless of their backend or Head.
+// gc cleans closed runs and, with orphans, restores dead-Head cleanup first.
+// Remaining idle active runs may close using metadata regardless of backend or Head.
 func gc(orphans bool) ([]string, error) {
 	runs, err := allRuns()
 	if err != nil {
@@ -942,24 +963,24 @@ func gc(orphans bool) ([]string, error) {
 	}
 	now := time.Now()
 	var report []string
-	staleClosed := map[string]bool{}
-	if orphans {
-		for _, r := range runs {
-			lines, closed, err := closeStaleRun(r, now, retentionWindow())
-			if err != nil {
-				return report, err
+	handled := map[string]bool{}
+	finish := func() ([]string, error) {
+		if orphans {
+			for _, r := range runs {
+				if handled[r.ID] {
+					continue
+				}
+				lines, _, err := closeStaleRun(r, now, retentionWindow())
+				if err != nil {
+					return report, err
+				}
+				report = append(report, lines...)
 			}
-			report = append(report, lines...)
-			staleClosed[r.ID] = closed
 		}
+		return report, nil
 	}
-	// Newly closed stale runs retain all worktrees. Existing closed runs keep
-	// their normal cleanup path; active runs are handled by metadata above.
 	var paneRuns []*Run
 	for _, r := range runs {
-		if staleClosed[r.ID] {
-			continue
-		}
 		if r.Status == "closed" && (r.Adhoc || r.HeadPane != headID() || runBackend(r) != currentBackend()) {
 			notes, err := cleanupRecordedWorktrees(r, true)
 			report = append(report, notes...)
@@ -967,13 +988,15 @@ func gc(orphans bool) ([]string, error) {
 				return report, err
 			}
 		}
-		if !r.Adhoc && r.Status != "active" && runBackend(r) == currentBackend() && (r.HeadPane == headID() || orphans) {
+		if !r.Adhoc && runBackend(r) == currentBackend() && (r.HeadPane == headID() || orphans) {
 			paneRuns = append(paneRuns, r)
 		}
 	}
+	// Pane cleanup persists run state. Prune old closed evidence before those
+	// writes can refresh its activity timestamp, as in the original orphan path.
 	report = append(report, diskPruneReport(now)...)
 	if len(paneRuns) == 0 {
-		return report, nil
+		return finish()
 	}
 	panes, err := listPanes("")
 	if err != nil {
@@ -1000,6 +1023,7 @@ func gc(orphans bool) ([]string, error) {
 		default:
 			continue
 		}
+		handled[r.ID] = true
 		var runCleanupErr error
 		for _, w := range r.liveWorkers() {
 			exists := live[w.Pane]
@@ -1069,7 +1093,7 @@ func gc(orphans bool) ([]string, error) {
 			}
 		}
 	}
-	return report, nil
+	return finish()
 }
 
 // pruneAdhoc retains the standalone helper for callers with an explicit window.

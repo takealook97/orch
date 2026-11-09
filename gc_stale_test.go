@@ -21,7 +21,10 @@ func TestGCStaleRuns(t *testing.T) {
 			r.Status, r.Backend, r.HeadPane = "active", "herdr", "old-head"
 			switch name {
 			case "same-backend":
-				r.Backend = "app"
+				r.Backend = "herdr"
+				t.Setenv("ORCH_MUX", "herdr")
+				t.Setenv("HC_TERMINAL_ID", "")
+				t.Setenv("HERDR_PANE_ID", "current-head")
 			case "live-working", "live-prompted", "live-spawned":
 				r.Workers = []*Worker{{Name: "live", Status: strings.TrimPrefix(name, "live-")}}
 			case "live-pane":
@@ -54,7 +57,8 @@ func TestGCStaleRuns(t *testing.T) {
 				r.Workers = []*Worker{{Name: "done", Status: "closed", Worktree: dir, Branch: "stale-branch", WorktreeAuto: true}}
 			}
 			pruneSaveRun(t, r, old)
-			// Stale-run closure is metadata-only, even when its backend matches ours.
+			// Foreign-backend closure is metadata-only. On our backend a live
+			// Head must first rule out the legacy orphan-cleanup path.
 			oldHerdr, oldApp, oldHC, oldRPC, oldAlive := herdrRun, appRun, hcRun, hcRPC, paneAliveFn
 			t.Cleanup(func() { herdrRun, appRun, hcRun, hcRPC, paneAliveFn = oldHerdr, oldApp, oldHC, oldRPC, oldAlive })
 			unexpected := func(args ...string) ([]byte, error) {
@@ -62,6 +66,14 @@ func TestGCStaleRuns(t *testing.T) {
 				return nil, fmt.Errorf("pane calls forbidden")
 			}
 			herdrRun, appRun, hcRun = unexpected, unexpected, unexpected
+			if name == "same-backend" {
+				herdrRun = func(args ...string) ([]byte, error) {
+					if len(args) >= 2 && args[0] == "pane" && args[1] == "list" {
+						return []byte(`{"result":{"panes":[{"pane_id":"current-head"},{"pane_id":"old-head"}]}}`), nil
+					}
+					return unexpected(args...)
+				}
+			}
 			hcRPC = func(method string, params any) (json.RawMessage, error) {
 				t.Errorf("unexpected mux RPC: %s", method)
 				return nil, fmt.Errorf("pane calls forbidden")

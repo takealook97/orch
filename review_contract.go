@@ -38,8 +38,10 @@ func reviewContract(r *Run, name, role, key string, o reviewContractOptions) (st
 		return "", fmt.Errorf("reviewed worker %q not found", o.Reviews)
 	}
 	repo := o.Cwd
-	if repo == "" {
-		repo = author.Worktree
+	if repo == "" && author.Worktree != "" {
+		if info, err := os.Stat(author.Worktree); err == nil && info.IsDir() {
+			repo = author.Worktree
+		}
 	}
 	if repo == "" {
 		repo = author.Cwd

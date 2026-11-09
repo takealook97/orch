@@ -100,6 +100,24 @@ func workerScopeRepository(w *Worker, body string) (string, error) {
 	return root, nil
 }
 
+// Pane commits are attributable only in an orch-managed, isolated checkout.
+// The contract base still governs repository validation; it is not a start time.
+func paneCommitBase(w *Worker) string {
+	if w.Worktree == "" || w.Branch == "" {
+		return "none"
+	}
+	if w.StartHead != "" {
+		return w.StartHead
+	}
+	if w.StartEmpty {
+		return emptyTree
+	}
+	if w.WorktreeStart != "" {
+		return w.WorktreeStart
+	}
+	return "none"
+}
+
 func workerScopeBase(w *Worker, body string) string {
 	base := contractBase(body)
 	if w.Branch != "" && !explicitBase(base) && w.WorktreeStart != "" {

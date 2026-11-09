@@ -9,8 +9,22 @@ import (
 	"unicode"
 )
 
+// promptHeadState distinguishes an unborn branch from other Git failures, even
+// when the repository has commits on other refs.
+func promptHeadState(root string) (string, bool) {
+	cmd := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", "HEAD")
+	out, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out)), false
+	}
+	if e, ok := err.(*exec.ExitError); ok && e.ExitCode() == 1 {
+		return "", exec.Command("git", "-C", root, "symbolic-ref", "-q", "HEAD").Run() == nil
+	}
+	return "", false
+}
+
 // completionChanges unions current working-tree changes, modified/discarded
-// baseline dirt, and commits since the frozen scope base. Only working-tree
+// baseline dirt, and commits since the supplied start commit. Only working-tree
 // changes are baseline-filtered: committing user dirt is still a worker change.
 // Commits made only on other branches remain outside this HEAD-based check.
 func completionChanges(cwd, root, base string, baseline map[string]string, owned []string) ([]string, []string, error) {

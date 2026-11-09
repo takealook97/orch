@@ -86,6 +86,8 @@ Test `fakeCLI` fixtures place failing sentinels for `codex`, `claude`, `agy`, `g
 
 A provider process exiting zero does not establish success: nonempty denied_actions or an empty response fail the task and prevent ask caching, including reuse of older denied-result caches. Inspect output.log and resolve the specific permission before retrying; orch does not change global permissions. Structured provider envelopes are never substituted for an empty answer. Failed writing tasks still capture changed paths for scope review, but skip final tests and completion commits.
 
+Commits made in a shared checkout are not attributed to pane workers; writers should use orch worktrees.
+
 `do` requires a Git repository to freeze a baseline and validate owned paths. Non-Git run directories are planning artifacts: the Head can edit the exact permitted planning files directly; use --cwd with a repository for implementation work. Known limit: a worker that commits on another branch and switches back leaves HEAD and the working tree unchanged, so orch do does not detect it.
 
 A known interrupted inline DAG command is stopped and persisted pending before the resume instruction is printed. An uncertain launch or interrupted scheduler without confirmed child termination still requires inspection and state reconciliation. Knowledge merge failures propagate and are retryable after repairing knowledge.md; facts are deduplicated, and finished panes are closed before merge attempts. Worktrees with missing/corrupt task.json remain protected as unverified writers: inspect the recorded process/pane and restore task state from backup before retrying run end. No automatic timeout deletes unknown writers. Already closed runs stay closed.

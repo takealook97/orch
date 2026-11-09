@@ -210,6 +210,14 @@ func cleanupCreatedOverflow(label string) {
 // overflowCloseWarnings suppresses repeated close warnings within one invocation.
 var overflowCloseWarnings sync.Map
 
+type overflowCloseError struct {
+	tab string
+	err error
+}
+
+func (e *overflowCloseError) Error() string { return e.err.Error() }
+func (e *overflowCloseError) Unwrap() error { return e.err }
+
 // cleanupOverflowTabs is called under the Head lock. Retain failed tab IDs for retry.
 func cleanupOverflowTabs(r *Run) error {
 	if backend() == "app" {
@@ -257,9 +265,7 @@ func cleanupOverflowTabs(r *Run) error {
 		}
 		if exists {
 			if first == nil {
-				if _, warned := overflowCloseWarnings.LoadOrStore(tab, struct{}{}); !warned {
-					first = fmt.Errorf("overflow tab %s did not close (%v)", tab, closeErr)
-				}
+				first = &overflowCloseError{tab: tab, err: fmt.Errorf("overflow tab %s did not close (%v)", tab, closeErr)}
 			}
 			continue
 		}
