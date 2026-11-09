@@ -148,8 +148,8 @@ func TestDoCommittedScopeEmptyRepo(t *testing.T) {
 	if err := json.Unmarshal(saved, &persisted); err != nil {
 		t.Fatal(err)
 	}
-	if !persisted.StartEmpty || persisted.StartRefs == nil || len(*persisted.StartRefs) != 0 {
-		t.Fatalf("start empty=%v refs=%v", persisted.StartEmpty, persisted.StartRefs)
+	if !persisted.StartEmpty {
+		t.Fatalf("start empty=%v", persisted.StartEmpty)
 	}
 	if len(task.ScopeViolations) != 1 {
 		t.Fatalf("initial branch creation must be exempt: %v", task.ScopeViolations)
@@ -174,30 +174,6 @@ func TestDoCommittedScopeNetDiffstat(t *testing.T) {
 	code, task := runScopeScript(t, dir, "printf 'a\\nb\\n' > owned.txt\ngit add owned.txt\ngit commit -qm worker\nprintf 'a\\nc\\n' > owned.txt", "owned.txt")
 	if code != 0 || task.Status != "done" || task.Diffstat != "1 files, +2 -1" {
 		t.Fatalf("code=%d task=%+v", code, task)
-	}
-}
-
-func TestDoCommittedScopeRefs(t *testing.T) {
-	for _, tc := range []struct{ name, setup, script, ref string }{
-		{"SideBranch", "", "git switch -c side\nprintf 'outside\\n' > outside.txt\ngit add outside.txt\ngit commit -qm side\ngit switch -", "refs/heads/side"},
-		{"NewTag", "", "git tag worker-tag", "refs/tags/worker-tag"},
-		{"MovedTag", "git tag worker-tag", "git tag -f worker-tag HEAD~1", "refs/tags/worker-tag"},
-		{"OtherRef", "git branch other", "git branch -f other HEAD~1", "refs/heads/other"},
-		{"DeletedRef", "git branch other", "git branch -D other", "refs/heads/other"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			taskEnv(t)
-			dir := taskRepo(t)
-			git(t, dir, "commit", "--allow-empty", "-qm", "second")
-			if tc.setup != "" { // Setup uses only fixed, local Git commands.
-				args := strings.Fields(tc.setup)
-				git(t, dir, args[1:]...)
-			}
-			code, task := runScopeScript(t, dir, tc.script, "owned.txt")
-			if code != 1 || task.Status != "failed" || !slices.Contains(task.ScopeViolations, "ref:"+tc.ref) {
-				t.Fatalf("code=%d status=%s violations=%v", code, task.Status, task.ScopeViolations)
-			}
-		})
 	}
 }
 

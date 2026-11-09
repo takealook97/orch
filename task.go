@@ -38,10 +38,6 @@ type TestResult struct {
 	Interrupted bool `json:"-"`
 }
 type Task struct {
-	// A pointer preserves an empty snapshot across JSON round trips; nil means
-	// a legacy task for which refs were not captured.
-	StartRefs *map[string]string `json:"start_refs,omitempty"`
-
 	CapacityRetries int               `json:"capacity_retries,omitempty"`
 	BlockRetries    int               `json:"block_retries,omitempty"`
 	Worktree        string            `json:"worktree,omitempty"`
@@ -51,7 +47,6 @@ type Task struct {
 	WorktreeStart   string            `json:"worktree_start,omitempty"`
 	StartHead       string            `json:"start_head,omitempty"`
 	StartEmpty      bool              `json:"start_empty,omitempty"`
-	StartBranch     string            `json:"start_branch,omitempty"`
 	Commit          string            `json:"commit,omitempty"`
 	Committed       bool              `json:"committed,omitempty"`
 	Merged          bool              `json:"merged,omitempty"`
@@ -717,22 +712,6 @@ func runTask(t *Task) (retErr error) {
 	return nil
 }
 
-// taskRefs snapshots branches and tags; an empty snapshot is distinct from a
-// missing snapshot in task records created before ref tracking was introduced.
-func taskRefs(root string) (map[string]string, error) {
-	out, err := gitOutput(root, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/tags")
-	if err != nil {
-		return nil, err
-	}
-	refs := make(map[string]string)
-	for _, line := range strings.Split(out, "\n") {
-		if fields := strings.Fields(line); len(fields) == 2 {
-			refs[fields[0]] = fields[1]
-		}
-	}
-	return refs, nil
-}
-
 func captureTaskChanges(t *Task) error {
 	root := repoRoot(t.Cwd)
 	// Dirty-file filtering applies only to current working-tree changes. A commit
@@ -769,25 +748,6 @@ func captureTaskChanges(t *Task) error {
 	t.Changed = changed
 	sort.Strings(t.Changed)
 	t.ScopeViolations = repositoryScopeViolations(t.Cwd, root, t.Changed, t.Own)
-	if t.StartRefs != nil {
-		refs, err := taskRefs(root)
-		if err != nil {
-			return err
-		}
-		all := make(map[string]bool)
-		for ref := range *t.StartRefs {
-			all[ref] = true
-		}
-		for ref := range refs {
-			all[ref] = true
-		}
-		for ref := range all {
-			if ref != t.StartBranch && (*t.StartRefs)[ref] != refs[ref] {
-				t.ScopeViolations = append(t.ScopeViolations, "ref:"+ref)
-			}
-		}
-		sort.Strings(t.ScopeViolations)
-	}
 	diffForTask(t)
 	return nil
 }
@@ -1239,12 +1199,6 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 				if t.StartHead == "" {
 					refs, refErr := gitOutput(t.Cwd, "for-each-ref", "--count=1")
 					t.StartEmpty = refErr == nil && refs == ""
-				}
-				t.StartBranch, _ = gitOutput(t.Cwd, "symbolic-ref", "-q", "HEAD")
-				var refs map[string]string
-				refs, err = taskRefs(t.Cwd)
-				if err == nil {
-					t.StartRefs = &refs
 				}
 			}
 		}
