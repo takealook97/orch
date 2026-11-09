@@ -273,7 +273,7 @@ func TestAuditDAGCommitBeforeDependency(t *testing.T) {
 	os.WriteFile(w.Result, []byte("status: done\n"), 0600)
 	os.WriteFile(filepath.Join(w.Worktree, "owned.txt"), []byte("accepted"), 0600)
 	saveFixture(t, r)
-	y := fmt.Sprintf("nodes:\n  - {name: impl, model: codex-high-m, role: produce}\n  - {name: after, run: 'git log -1 --format=%%s | grep %s/impl', cwd: %q, role: verify-mech, needs: [impl]}\n", r.ID, w.Worktree)
+	y := fmt.Sprintf("nodes:\n  - {name: impl, model: codex-high-m, role: produce}\n  - {name: after, run: 'git log -1 --format=%%b | grep %s', cwd: %q, role: verify-mech, needs: [impl]}\n", r.ID, w.Worktree)
 	os.WriteFile(filepath.Join(r.dir(), "dag.yaml"), []byte(y), 0600)
 	saveDagState(r, &dagState{Nodes: map[string]*dagNodeState{"impl": {Status: "running", Worker: "impl"}, "after": {Status: "pending"}}})
 	st, e := dagRun(r.ID, 5*time.Second, io.Discard)

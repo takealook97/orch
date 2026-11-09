@@ -417,7 +417,7 @@ func TestDoWorktreeExecution(t *testing.T) {
 				t.Fatalf("missing worktree metadata: %+v", task)
 			}
 			if !tc.outside {
-				if !strings.Contains(git(t, task.Worktree, "log", "-1", "--format=%s"), "orch: "+r.ID+"/"+task.ID) {
+				if !strings.Contains(git(t, task.Worktree, "log", "-1", "--format=%b"), commitBody(r.ID, task.ID)) {
 					t.Fatal("missing collect commit")
 				}
 				if err := mergeWorktrees(r.ID, []string{task.ID}, "", false, true, &out, &errout); err != nil {

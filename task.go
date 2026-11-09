@@ -45,6 +45,7 @@ type Task struct {
 	WorktreeAuto    bool              `json:"worktree_auto,omitempty"`
 	WorktreeBase    string            `json:"worktree_base,omitempty"`
 	WorktreeStart   string            `json:"worktree_start,omitempty"`
+	StartHead       string            `json:"start_head,omitempty"`
 	Commit          string            `json:"commit,omitempty"`
 	Committed       bool              `json:"committed,omitempty"`
 	Merged          bool              `json:"merged,omitempty"`
@@ -509,13 +510,17 @@ func diffForTask(t *Task) {
 	base := "HEAD"
 	if t.WorktreeStart != "" {
 		base = t.WorktreeStart
+	} else if t.StartHead != "" {
+		base = t.StartHead
 	}
 	if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
 		base = emptyTree
 	}
 	var tracked, untracked []string
 	for _, f := range t.Changed {
-		if exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", f).Run() == nil {
+		// A worker may already have committed a deletion, so inspect the base too.
+		if exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", f).Run() == nil ||
+			exec.Command("git", "-C", root, "cat-file", "-e", base+":"+f).Run() == nil {
 			tracked = append(tracked, f)
 		} else {
 			untracked = append(untracked, f)
@@ -679,7 +684,11 @@ func runTask(t *Task) (retErr error) {
 }
 
 func captureTaskChanges(t *Task) error {
-	changed, bad, err := completionChanges(t.Cwd, repoRoot(t.Cwd), t.WorktreeStart, t.Baseline, t.Own)
+	base := t.WorktreeStart
+	if base == "" {
+		base = t.StartHead
+	}
+	changed, bad, err := completionChanges(t.Cwd, repoRoot(t.Cwd), base, t.Baseline, t.Own)
 	if err != nil {
 		return err
 	}
@@ -798,6 +807,30 @@ func taskReport(t *Task, asJSON bool) string {
 		}
 		b, _ := json.Marshal(v)
 		return string(b)
+	}
+	if t.Status == "done" && t.ExitCode == 0 && (t.Test == nil || t.Test.ExitCode == 0) && len(t.ScopeViolations) == 0 && hint == "" {
+		var b strings.Builder
+		fmt.Fprintf(&b, "done %s %s", t.ID, t.Kind)
+		if t.Key != "" {
+			fmt.Fprintf(&b, " key=%s", t.Key)
+		}
+		fmt.Fprintf(&b, " %.1fs", float64(t.DurationMS)/1000)
+		if t.Test != nil {
+			fmt.Fprint(&b, " test=0")
+		}
+		if t.Commit != "" {
+			fmt.Fprintf(&b, " commit=%s", t.Commit[:min(7, len(t.Commit))])
+		}
+		if t.Diffstat != "" {
+			var files, adds, dels int
+			_, _ = fmt.Sscanf(t.Diffstat, "%d files, +%d -%d", &files, &adds, &dels)
+			fmt.Fprintf(&b, " files=%d +%d -%d", len(t.Changed), adds, dels)
+		}
+		if t.Kind != "test" && t.Answer != "" {
+			fmt.Fprintf(&b, "\n%s", strings.TrimRight(t.Answer, "\n"))
+		}
+		fmt.Fprintf(&b, "\ndir: %s", t.Dir)
+		return b.String()
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "task: %s\nrun: %s\nstatus: %s\nexit code: %d\nduration: %d ms\n", t.ID, t.Run, t.Status, t.ExitCode, t.DurationMS)
@@ -1109,6 +1142,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 			files, err = changedFiles(t.Cwd, "")
 			if err == nil {
 				t.Baseline = snapshot(t.Cwd, files)
+				t.StartHead, _ = gitOutput(t.Cwd, "rev-parse", "HEAD")
 			}
 		}
 	}
