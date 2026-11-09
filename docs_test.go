@@ -135,7 +135,7 @@ func TestDocsGenIgnoresInheritedPaneIdentity(t *testing.T) {
 }
 
 func TestCommandNeedsHeadIdentity(t *testing.T) {
-	for _, name := range []string{"docs", "models", "help", "playbook", "doctor", "measure"} {
+	for _, name := range []string{"docs", "models", "help", "playbook", "doctor", "measure", "stats"} {
 		if commandNeedsHeadIdentity(name) {
 			t.Errorf("utility %s requires identity", name)
 		}

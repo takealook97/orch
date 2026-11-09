@@ -29,7 +29,9 @@ Delegation
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
 	orch models [--markdown|--json]         seven canonical keys (codex-medium-h: deprecated Luna alias)
-  orch contract new <name> --role R --model K [--run ID]    create contract template
+  orch stats [--since 168h] [--json]     read-only local task and pane statistics
+  orch contract new <name> --role R --model K [--run ID]
+           [--reviews AUTHOR --diff BASE..HEAD [--mech TASK|PATH] [--focus TEXT] [--cwd REPO]]
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
            [--cwd D|--worktree D] [--no-worktree] [--account auto|cr|same|hook] [--run ID]
   orch prompt <name> [--contract FILE] [--wait] [--timeout MS]
@@ -65,7 +67,10 @@ roles: recon design produce integrate verify-mech verify-critical verify-neutral
 `
 
 func main() {
-	maybeAutoPrune(os.Args[1:])
+	// A statistics query must never trigger disk cleanup or create lock files.
+	if len(os.Args) < 2 || os.Args[1] != "stats" {
+		maybeAutoPrune(os.Args[1:])
+	}
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
@@ -113,7 +118,7 @@ func splitList(s string) []string {
 // Repository/documentation utilities do not manage runs or panes.
 // Worker authorization remains a separate gate in run.
 func commandNeedsHeadIdentity(name string) bool {
-	return !contains1([]string{"docs", "models", "help", "playbook", "doctor", "measure", "__measure-head"}, name)
+	return !contains1([]string{"docs", "models", "help", "playbook", "doctor", "measure", "__measure-head", "stats"}, name)
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -127,7 +132,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	cmd, rest := args[0], args[1:]
 	// A worker may only read: every command that changes runs or panes is Head-only.
-	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "recall"}, cmd) ||
+	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "recall", "stats"}, cmd) ||
 		(cmd == "goal" && len(rest) > 0 && (rest[0] == "status" || rest[0] == "check")) ||
 		(cmd == "run" && len(rest) > 0 && rest[0] == "list") ||
 		(cmd == "dag" && len(rest) > 0 && (rest[0] == "check" || rest[0] == "status"))
@@ -149,6 +154,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	runFlag := fs.String("run", "", "run id")
 
 	switch cmd {
+	case "stats":
+		return statsCommand(rest, stdout)
 	case "measure":
 		return failIf(fail, measurementCommand(rest, stdin, stdout))
 	case "uninstall":
@@ -347,6 +354,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "contract":
 		role := fs.String("role", "", "role")
 		key := fs.String("model", "", "catalog key")
+		reviews := fs.String("reviews", "", "reviewed worker")
+		diff := fs.String("diff", "", "git diff range")
+		mech := fs.String("mech", "", "mechanical task id or evidence path")
+		focus := fs.String("focus", "", "review focus")
+		cwd := fs.String("cwd", "", "reviewed repository")
 		pos, err := parse(fs, rest)
 		if err != nil {
 			return 2
@@ -369,7 +381,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if fileExists(p) {
 			return fail(fmt.Errorf("already exists: %s", p))
 		}
-		if err := os.WriteFile(p, []byte(contractTemplate(r, pos[1], *role, *key)), 0600); err != nil {
+		body, err := reviewContract(r, pos[1], *role, *key, reviewContractOptions{Reviews: *reviews, Diff: *diff, Mech: *mech, Focus: *focus, Cwd: *cwd})
+		if err != nil {
+			return fail(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
 			return fail(err)
 		}
 		fmt.Fprintln(stdout, p)
