@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const maxMeasureLogBytes = 1 << 20
+
 var spawnHeadMeasure = func(exe string, args []string, log *os.File) error {
 	input, err := os.Open(os.DevNull)
 	if err != nil {
@@ -46,7 +48,12 @@ func stopHook(data []byte) int {
 	if err != nil {
 		return 0
 	}
-	log, err := os.OpenFile(filepath.Join(home, "measure.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
+	logPath := filepath.Join(home, "measure.log")
+	flags := os.O_APPEND | os.O_CREATE | os.O_WRONLY | syscall.O_NOFOLLOW
+	if info, err := os.Lstat(logPath); err == nil && info.Mode().IsRegular() && info.Size() > maxMeasureLogBytes {
+		flags = os.O_TRUNC | os.O_CREATE | os.O_WRONLY | syscall.O_NOFOLLOW
+	}
+	log, err := os.OpenFile(logPath, flags, 0600)
 	if err != nil {
 		return 0
 	}

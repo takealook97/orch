@@ -58,6 +58,47 @@ func TestStopHook(t *testing.T) {
 	}
 }
 
+func TestStopHookLogSize(t *testing.T) {
+	old := spawnHeadMeasure
+	t.Cleanup(func() { spawnHeadMeasure = old })
+	for _, tc := range []struct {
+		name     string
+		size     int
+		wantSize int64
+	}{
+		{"over-cap", maxMeasureLogBytes + 1, 0},
+		{"below-cap", maxMeasureLogBytes - 1, maxMeasureLogBytes - 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("ORCH_HOME", home)
+			t.Setenv("ORCH_ROLE", "")
+			t.Setenv("ORCH_AUTO_MEASURE", "")
+			content := bytes.Repeat([]byte("x"), tc.size)
+			if err := os.WriteFile(filepath.Join(home, "measure.log"), content, 0600); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			spawnHeadMeasure = func(_ string, _ []string, log *os.File) error {
+				calls++
+				info, err := log.Stat()
+				if err != nil || info.Size() != tc.wantSize {
+					t.Fatalf("log stat=%v error=%v, want size %d", info, err, tc.wantSize)
+				}
+				return nil
+			}
+			stopHook([]byte(`{"session_id":"session-1","transcript_path":"/tmp/session.jsonl"}`))
+			if calls != 1 {
+				t.Fatalf("calls=%d, want 1", calls)
+			}
+			got, err := os.ReadFile(filepath.Join(home, "measure.log"))
+			if err != nil || !bytes.Equal(got, content[:int(tc.wantSize)]) {
+				t.Fatalf("log contents changed unexpectedly: size=%d error=%v", len(got), err)
+			}
+		})
+	}
+}
+
 func TestMeasureHeadCollection(t *testing.T) {
 	t.Setenv("ORCH_HOME", t.TempDir())
 	file := filepath.Join(t.TempDir(), "session.jsonl")
