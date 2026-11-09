@@ -717,7 +717,14 @@ func prompt(runFlag, name, contractFile string, wait bool, timeoutMS int) error 
 		if w.Cwd != "" && w.BaselineRoot == "" {
 			if root, err := workerScopeRepository(w, string(body)); err == nil && isGitDir(root) {
 				base := workerScopeBase(w, string(body))
-				if files, err := changedFiles(root, base); err == nil {
+				if files, err := changedFiles(root, ""); err == nil {
+					if !explicitBase(base) {
+						w.StartHead, _ = gitOutput(root, "rev-parse", "--verify", "-q", "HEAD")
+						if w.StartHead == "" {
+							refs, refErr := gitOutput(root, "for-each-ref", "--count=1")
+							w.StartEmpty = refErr == nil && refs == ""
+						}
+					}
 					w.Baseline = snapshot(root, files)
 					w.BaselineRoot = root
 				}

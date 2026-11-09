@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -714,40 +713,11 @@ func runTask(t *Task) (retErr error) {
 
 func captureTaskChanges(t *Task) error {
 	root := repoRoot(t.Cwd)
-	// Dirty-file filtering applies only to current working-tree changes. A commit
-	// made during the task must remain visible even if it contains baseline dirt.
-	changed, _, err := completionChanges(t.Cwd, root, "", t.Baseline, t.Own)
+	var err error
+	t.Changed, t.ScopeViolations, err = completionChanges(t.Cwd, root, taskChangeBase(t), t.Baseline, t.Own)
 	if err != nil {
 		return err
 	}
-	seen := make(map[string]bool, len(changed))
-	for _, f := range changed {
-		seen[f] = true
-	}
-	add := func(f string) {
-		if f != "" && !seen[f] {
-			changed = append(changed, f)
-			seen[f] = true
-		}
-	}
-	// A baseline path can disappear from git diff when user dirt is discarded.
-	for f, hash := range t.Baseline {
-		if fileHash(root, f) != hash {
-			add(f)
-		}
-	}
-	if base := taskChangeBase(t); base != "" && exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() == nil {
-		committed, err := gitOutput(root, "-c", "core.quotepath=off", "diff", "--no-renames", "--name-only", base, "HEAD", "--")
-		if err != nil {
-			return err
-		}
-		for _, f := range strings.Split(committed, "\n") {
-			add(f)
-		}
-	}
-	t.Changed = changed
-	sort.Strings(t.Changed)
-	t.ScopeViolations = repositoryScopeViolations(t.Cwd, root, t.Changed, t.Own)
 	diffForTask(t)
 	return nil
 }

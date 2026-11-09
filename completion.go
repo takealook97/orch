@@ -2,20 +2,50 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 )
 
-// Both pane collection and do's post-test gate compare against the frozen baseline.
-// Git ignores generated artifacts according to the repository's existing rules.
+// completionChanges unions current working-tree changes, modified/discarded
+// baseline dirt, and commits since the frozen scope base. Only working-tree
+// changes are baseline-filtered: committing user dirt is still a worker change.
+// Commits made only on other branches remain outside this HEAD-based check.
 func completionChanges(cwd, root, base string, baseline map[string]string, owned []string) ([]string, []string, error) {
-	changed, err := changedFiles(root, base)
+	changed, err := changedFiles(root, "")
 	if err != nil {
 		return nil, nil, err
 	}
-	fresh := freshChanges(root, changed, baseline)
-	return fresh, repositoryScopeViolations(cwd, root, fresh, owned), nil
+	changed = freshChanges(root, changed, baseline)
+	seen := make(map[string]bool, len(changed))
+	for _, f := range changed {
+		seen[f] = true
+	}
+	add := func(f string) {
+		if f != "" && !seen[f] {
+			changed = append(changed, f)
+			seen[f] = true
+		}
+	}
+	// Discarded dirt can disappear from git diff entirely.
+	for f, hash := range baseline {
+		if fileHash(root, f) != hash {
+			add(f)
+		}
+	}
+	if (explicitBase(base) || base == emptyTree) && exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() == nil {
+		committed, err := gitOutput(root, "-c", "core.quotepath=off", "diff", "--no-renames", "--name-only", base, "HEAD", "--")
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, f := range strings.Split(committed, "\n") {
+			add(f)
+		}
+	}
+	sort.Strings(changed)
+	return changed, repositoryScopeViolations(cwd, root, changed, owned), nil
 }
 
 // Commit only accepted fresh paths. Unrelated staged or preexisting changes stay intact.

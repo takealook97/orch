@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -798,21 +799,132 @@ func ownRun(r *Run) error {
 	return nil
 }
 
-// gc closes recorded panes of this Head's closed runs. With orphans, it also cleans runs
-// whose Head pane no longer exists (a crashed session); live Heads' runs are never touched.
+// staleRunActivity checks persisted metadata only. A stale Head or a different
+// backend cannot prove a worker stopped, so live statuses always pin the run.
+func staleRunActivity(r *Run, cutoff time.Time) (time.Time, bool) {
+	if r.Status != "active" {
+		return time.Time{}, false
+	}
+	for _, w := range r.Workers {
+		if w != nil && (contains1([]string{"working", "prompted", "spawned"}, w.Status) ||
+			(w.Pane != "" || w.Terminal != "") && w.Status != "closed" && w.Status != "lost") {
+			return time.Time{}, false
+		}
+	}
+	info, err := os.Stat(filepath.Join(r.dir(), "run.json"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	last := info.ModTime()
+	tasks := make(map[string]*Task)
+	for _, task := range r.Tasks {
+		if task != nil {
+			tasks[task.ID] = task
+		}
+	}
+	paths, err := filepath.Glob(filepath.Join(r.dir(), "tasks", "*", "task.json"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return time.Time{}, false
+		}
+		var task Task
+		if json.Unmarshal(data, &task) != nil {
+			return time.Time{}, false
+		}
+		tasks[filepath.Base(filepath.Dir(path))] = &task
+		info, err := os.Stat(path)
+		if err != nil {
+			return time.Time{}, false
+		}
+		last = latestTime(last, info.ModTime())
+	}
+	for _, task := range tasks {
+		if contains1([]string{"running", "queued", "pending"}, task.Status) {
+			return last, false
+		}
+	}
+	return last, last.Before(cutoff)
+}
+
+// closeStaleRun rechecks under the run lock and never touches pane or worktree state.
+func closeStaleRun(candidate *Run, now time.Time, keep time.Duration) ([]string, bool, error) {
+	if keep <= 0 {
+		return nil, false, nil
+	}
+	cutoff := now.Add(-keep)
+	if _, eligible := staleRunActivity(candidate, cutoff); !eligible {
+		return nil, false, nil
+	}
+	skipped := errors.New("run no longer stale")
+	var report []string
+	err := withRun(candidate.ID, func(r *Run) error {
+		last, eligible := staleRunActivity(r, cutoff)
+		if !eligible {
+			return skipped
+		}
+		r.Status = "closed"
+		r.event("gc: stale run closed after retention window")
+		report = append(report, fmt.Sprintf("closed stale run %s (backend %s, head %s, idle %dd)", r.ID, runBackend(r), r.HeadPane, int(now.Sub(last)/(24*time.Hour))))
+		for _, w := range r.Workers {
+			if w != nil && w.Worktree != "" {
+				report = append(report, fmt.Sprintf("worktree remains: %s (branch %s)", w.Worktree, w.Branch))
+			}
+		}
+		for _, task := range r.Tasks {
+			if task != nil && task.Worktree != "" {
+				report = append(report, fmt.Sprintf("worktree remains: %s (branch %s)", task.Worktree, task.Branch))
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, skipped) {
+		return nil, false, nil
+	}
+	return report, err == nil, err
+}
+
+// gc cleans closed runs and, with orphans, closes idle active runs using only
+// persisted metadata, regardless of their backend or Head.
 func gc(orphans bool) ([]string, error) {
 	runs, err := allRuns()
 	if err != nil {
 		return nil, err
 	}
-	// Ad-hoc task runs own no panes; old ones are only clutter.
+	now := time.Now()
 	var report []string
+	staleClosed := map[string]bool{}
+	if orphans {
+		for _, r := range runs {
+			lines, closed, err := closeStaleRun(r, now, retentionWindow())
+			if err != nil {
+				return report, err
+			}
+			report = append(report, lines...)
+			staleClosed[r.ID] = closed
+		}
+	}
+	// Newly closed stale runs retain all worktrees. Existing closed runs keep
+	// their normal cleanup path; active runs are handled by metadata above.
+	var paneRuns []*Run
 	for _, r := range runs {
+		if staleClosed[r.ID] {
+			continue
+		}
 		if r.Status == "closed" && (r.Adhoc || r.HeadPane != headID() || runBackend(r) != currentBackend()) {
 			report = append(report, cleanupRunWorktrees(r, true)...)
 		}
+		if !r.Adhoc && r.Status != "active" && runBackend(r) == currentBackend() && (r.HeadPane == headID() || orphans) {
+			paneRuns = append(paneRuns, r)
+		}
 	}
-	report = append(report, diskPruneReport(time.Now())...)
+	report = append(report, diskPruneReport(now)...)
+	if len(paneRuns) == 0 {
+		return report, nil
+	}
 	panes, err := listPanes("")
 	if err != nil {
 		return report, err
@@ -822,10 +934,7 @@ func gc(orphans bool) ([]string, error) {
 		live[p.ID] = true
 	}
 	head := headID()
-	for _, r := range runs {
-		if r.Adhoc || runBackend(r) != currentBackend() {
-			continue
-		}
+	for _, r := range paneRuns {
 		mine := r.HeadPane == head
 		deadHead := !live[r.HeadPane]
 		if backend() == "app" {
