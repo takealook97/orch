@@ -133,7 +133,7 @@ func writeJSONFile(path string, m map[string]any) error {
 	return atomicStateWrite(path, append(data, '\n'))
 }
 
-var ownHook = regexp.MustCompile(`/orch' hook (claude|claude-prompt|codex|codex-prompt|agy)$`)
+var ownHook = regexp.MustCompile(`/orch' hook (claude|claude-prompt|claude-stop|codex|codex-prompt|agy)$`)
 
 func hookCommand(bin, cli string) string { return fmt.Sprintf("'%s' hook %s", bin, cli) }
 
@@ -319,6 +319,7 @@ func install(repo string, dry bool) (*installReport, error) {
 		}
 		added := ensureGroupedHook(hooks, "Agent|Task|Workflow|Bash|Edit|Write|MultiEdit|NotebookEdit", hookCommand(bin, "claude"), owners("claude")...)
 		ensurePromptHook(hooks, hookCommand(bin, "claude-prompt"), owners("claude-prompt")...)
+		ensureEventHook(hooks, "Stop", hookCommand(bin, "claude-stop"), owners("claude-stop")...)
 		s["hooks"] = hooks
 		before, _ := os.ReadFile(claudeSettings())
 		changed, err := writeHooks(claudeSettings(), before, s)
@@ -610,7 +611,11 @@ func probeExcerpt(s string) string {
 
 // UserPromptSubmit uses the same grouped hook shape without a tool matcher.
 func ensurePromptHook(hooks map[string]any, command string, owners ...string) bool {
-	list, _ := hooks["UserPromptSubmit"].([]any)
+	return ensureEventHook(hooks, "UserPromptSubmit", command, owners...)
+}
+
+func ensureEventHook(hooks map[string]any, event, command string, owners ...string) bool {
+	list, _ := hooks[event].([]any)
 	for _, g := range list {
 		gm, _ := g.(map[string]any)
 		inner, _ := gm["hooks"].([]any)
@@ -623,6 +628,6 @@ func ensurePromptHook(hooks map[string]any, command string, owners ...string) bo
 			}
 		}
 	}
-	hooks["UserPromptSubmit"] = append(list, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}})
+	hooks[event] = append(list, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}})
 	return true
 }

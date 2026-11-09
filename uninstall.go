@@ -52,7 +52,7 @@ func uninstall(repo string, apply bool) (*installReport, error) {
 			bins = append(bins, manifest.Bin)
 		}
 		for _, bin := range bins {
-			for _, cli := range []string{"claude", "claude-prompt", "codex", "codex-prompt", "agy"} {
+			for _, cli := range []string{"claude", "claude-prompt", "claude-stop", "codex", "codex-prompt", "agy"} {
 				if c == hookCommand(bin, cli) {
 					return true
 				}
@@ -119,7 +119,7 @@ func uninstall(repo string, apply bool) (*installReport, error) {
 				return nil, false, fmt.Errorf("invalid hooks object: %s", p)
 			}
 			changed := false
-			for _, event := range []string{"PreToolUse", "UserPromptSubmit"} {
+			for _, event := range []string{"PreToolUse", "UserPromptSubmit", "Stop"} {
 				v, exists := hooks[event]
 				if !exists {
 					continue
@@ -291,7 +291,7 @@ func validHookConfig(s map[string]any) error {
 			if !ok {
 				return fmt.Errorf("invalid %s object", key)
 			}
-			for _, event := range []string{"PreToolUse", "UserPromptSubmit"} {
+			for _, event := range []string{"PreToolUse", "UserPromptSubmit", "Stop"} {
 				if value, ok := m[event]; ok {
 					groups, ok := value.([]any)
 					if !ok {

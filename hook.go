@@ -305,6 +305,9 @@ func literalLine(s string) string {
 
 func runHook(cli string, stdin io.Reader, stdout, stderr io.Writer) int {
 	data, _ := io.ReadAll(stdin)
+	if cli == "claude-stop" {
+		return stopHook(data)
+	}
 	// Debugging aid: with ~/.orch/hook-debug present, append every input per CLI.
 	if fileExists(filepath.Join(orchHome(), "hook-debug")) {
 		if f, err := os.OpenFile(filepath.Join(orchHome(), "hook-debug-"+cli+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600); err == nil {

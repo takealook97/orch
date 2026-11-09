@@ -53,6 +53,8 @@ Flags go before the text; a text that starts with `-` goes after `--` (`orch ask
 
 See [advanced procedures](skill/references/advanced.md) for full/full+, DAG, accounts and layout; [measurement, eval, uninstall and guard boundaries](docs/operations.md) for local evidence and safe removal. Savings have not been demonstrated.
 
+Claude Stop can collect Head usage automatically with phase `session`; `ORCH_AUTO_MEASURE=0` opts out and `~/.orch/measure.log` records errors. See [Automatic Head collection](docs/operations.md#automatic-head-collection) for installation and partial-coverage limits.
+
 ## Disk retention
 
 `orch gc [--orphans] [--disk]` also prunes old disk data. Use `orch gc --disk` for disk cleanup alone without pane access; `--disk` and `--orphans` cannot be combined. Head invocations automatically launch detached disk cleanup at most once per 24 hours, with output in `~/.orch/prune.log`.

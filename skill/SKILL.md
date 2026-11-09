@@ -13,6 +13,8 @@ The Head only plans, evaluates, instructs, reviews, judges and communicates. All
 
 Spend Head tokens/context first, total tokens second, time third. Delegate execution to cheaper catalog keys regardless of length; length selects the channel. Use only the seven canonical keys from `orch models`; do not inherit CLI model/effort defaults or set models directly. The manifest is `models.yaml`; the generated full catalog lives in the repository README. Overrides and selection rules are in the advanced guide.
 
+Head reads stay in context and are re-read on every later turn. Send investigation to `orch ask`; read files directly only when a judgment needs the exact code, and read only the needed range.
+
 Inside Herdr, delegate only through orch; never use built-in subagent/Workflow tools or drive agent panes directly. `ORCH_MUX=herdr|app` overrides detection; otherwise `HERDR_ENV=1` chooses legacy, then `HC_TERMINAL_ID` chooses app. Outside both, ask/do/test still work but panes do not. Runs cannot cross backends.
 
 External writes (deploy, payment, ordering, publishing) require separate authorization. Bypass flags waive local sandbox/approval prompts only; they do not waive this gate or repository gates.

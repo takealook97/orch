@@ -62,7 +62,7 @@ func (m Measurement) validate() error {
 			return fmt.Errorf("evidence identity/source must be 1-160 identifier characters (no prose)")
 		}
 	}
-	if m.Version != 1 || !contains1([]string{"head", "pane", "task"}, m.Subject) || !contains1([]string{"contract", "execution", "review", "rework"}, m.Phase) || !contains1([]string{"measured", "estimate", "missing"}, m.Kind) || !contains1([]string{"complete", "partial", "unavailable"}, m.Coverage) {
+	if m.Version != 1 || !contains1([]string{"head", "pane", "task"}, m.Subject) || !contains1([]string{"contract", "execution", "review", "rework", "session"}, m.Phase) || !contains1([]string{"measured", "estimate", "missing"}, m.Kind) || !contains1([]string{"complete", "partial", "unavailable"}, m.Coverage) {
 		return fmt.Errorf("invalid evidence version, subject, phase, kind or coverage")
 	}
 	for _, n := range []*int64{m.Input, m.Output, m.DurationMS} {

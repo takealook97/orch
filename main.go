@@ -59,7 +59,7 @@ Maintenance
   orch goal new|freeze|status|check|note|extend|end  Frozen goals and budgets
   orch spawn ... --serves N[,M] [--fix-of SHARD]  Work for an active goal
   orch do ... --serves N[,M] [--fix-of SHARD]     Work for an active goal
-  orch hook claude|claude-prompt|codex|codex-prompt|agy       Claude/Codex prompts / PreToolUse (stdin JSON)
+  orch hook claude|claude-prompt|claude-stop|codex|codex-prompt|agy       Prompts / Claude Stop / PreToolUse (stdin JSON)
 
 roles: recon design produce integrate verify-mech verify-critical verify-neutral verify-adversarial
 `
@@ -113,7 +113,7 @@ func splitList(s string) []string {
 // Repository/documentation utilities do not manage runs or panes.
 // Worker authorization remains a separate gate in run.
 func commandNeedsHeadIdentity(name string) bool {
-	return !contains1([]string{"docs", "models", "help", "playbook", "doctor", "measure"}, name)
+	return !contains1([]string{"docs", "models", "help", "playbook", "doctor", "measure", "__measure-head"}, name)
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -170,6 +170,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return recallCommand(rest, stdout, stderr)
 	case "ask", "do", "test":
 		return taskCommand(cmd, rest, stdout, stderr)
+	case "__measure-head":
+		return measureHeadCommand(rest, stderr)
 	case "__task":
 		pos, err := parse(fs, rest)
 		if err != nil || len(pos) != 1 {
@@ -183,7 +185,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return reapCommand(*runFlag, stderr)
 	case "hook":
 		if len(rest) != 1 {
-			return fail(fmt.Errorf("usage: orch hook claude|claude-prompt|codex|codex-prompt|agy"))
+			return fail(fmt.Errorf("usage: orch hook claude|claude-prompt|claude-stop|codex|codex-prompt|agy"))
 		}
 		return runHook(rest[0], stdin, stdout, stderr)
 
