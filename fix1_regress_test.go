@@ -195,6 +195,27 @@ func TestReviewContractMissingWorktreeFallsBack(t *testing.T) {
 	}
 }
 
+func TestReviewContractMissingCwdFallsBack(t *testing.T) {
+	r, repo := reviewFixture(t)
+	missing := filepath.Join(t.TempDir(), "removed-worktree")
+	if err := os.Mkdir(missing, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(missing); err != nil {
+		t.Fatal(err)
+	}
+	r.Workers[0].Worktree, r.Workers[0].Cwd = missing, missing
+	t.Chdir(repo)
+	body, err := reviewContract(r, "missing-cwd", "verify-critical", "codex-high-l", reviewContractOptions{Reviews: "author", Diff: "HEAD~1..HEAD"})
+	if err != nil || !strings.Contains(body, "Repository: "+repo) {
+		t.Fatalf("err=%v body=%s", err, body)
+	}
+	diff, err := os.ReadFile(filepath.Join(r.dir(), "evidence", "missing-cwd.diff"))
+	if err != nil || !strings.Contains(string(diff), "-one\n+two") {
+		t.Fatalf("diff=%s err=%v", diff, err)
+	}
+}
+
 // Pane cleanup persists state, so disk retention must run before it refreshes
 // an old closed run owned by this Head.
 func TestGCCompactsOldOwnedClosedRun(t *testing.T) {

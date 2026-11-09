@@ -43,8 +43,10 @@ func reviewContract(r *Run, name, role, key string, o reviewContractOptions) (st
 			repo = author.Worktree
 		}
 	}
-	if repo == "" {
-		repo = author.Cwd
+	if repo == "" && author.Cwd != "" {
+		if info, err := os.Stat(author.Cwd); err == nil && info.IsDir() {
+			repo = author.Cwd
+		}
 	}
 	if repo == "" {
 		repo = "."
