@@ -503,32 +503,43 @@ func capText(s string, n int, path string) (string, bool) {
 	return string(r[:n]) + "… (truncated; full: " + path + ")", true
 }
 
-// diffForTask writes diff.patch for the task's own changed files only (paths relative to the
-// repository root), so the patch applies with git apply and matches Changed.
+// taskChangeBase is the frozen starting revision, including an unborn repository.
+func taskChangeBase(t *Task) string {
+	if t.WorktreeStart != "" {
+		return t.WorktreeStart
+	}
+	if t.StartHead != "" {
+		return t.StartHead
+	}
+	return emptyTree
+}
+
+// diffForTask records committed changes first, then working-tree changes. Keeping
+// both stages preserves evidence when the working tree undoes a worker commit.
 func diffForTask(t *Task) {
 	root := repoRoot(t.Cwd)
-	base := "HEAD"
-	if t.WorktreeStart != "" {
-		base = t.WorktreeStart
-	} else if t.StartHead != "" {
-		base = t.StartHead
-	}
+	base := taskChangeBase(t)
+	head := "HEAD"
 	if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
-		base = emptyTree
+		head = emptyTree
 	}
 	var tracked, untracked []string
 	for _, f := range t.Changed {
-		// A worker may already have committed a deletion, so inspect the base too.
+		// A staged deletion is absent from the index but still tracked in HEAD.
 		if exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", f).Run() == nil ||
-			exec.Command("git", "-C", root, "cat-file", "-e", base+":"+f).Run() == nil {
+			exec.Command("git", "-C", root, "cat-file", "-e", head+":"+f).Run() == nil {
 			tracked = append(tracked, f)
 		} else {
 			untracked = append(untracked, f)
 		}
 	}
 	var patch bytes.Buffer
+	if len(t.Changed) > 0 && head != emptyTree {
+		b, _ := exec.Command("git", append([]string{"-C", root, "diff", "--no-renames", "--binary", base, head, "--"}, t.Changed...)...).Output()
+		patch.Write(b)
+	}
 	if len(tracked) > 0 {
-		b, _ := exec.Command("git", append([]string{"-C", root, "diff", "--no-renames", "--binary", base, "--"}, tracked...)...).Output()
+		b, _ := exec.Command("git", append([]string{"-C", root, "diff", "--no-renames", "--binary", head, "--"}, tracked...)...).Output()
 		patch.Write(b)
 	}
 	for _, f := range untracked {
@@ -538,7 +549,7 @@ func diffForTask(t *Task) {
 	}
 	t.DiffPath = filepath.Join(t.Dir, "diff.patch")
 	_ = os.WriteFile(t.DiffPath, patch.Bytes(), 0600)
-	files, adds, dels := 0, 0, 0
+	files, adds, dels := len(t.Changed), 0, 0
 	stat := exec.Command("git", "apply", "--numstat", "-")
 	stat.Stdin = bytes.NewReader(patch.Bytes())
 	out, _ := stat.Output()
@@ -547,7 +558,6 @@ func diffForTask(t *Task) {
 		if len(f) < 3 {
 			continue
 		}
-		files++
 		a, _ := strconv.Atoi(f[0]) // "-" for binary files counts as 0
 		d, _ := strconv.Atoi(f[1])
 		adds += a
@@ -684,17 +694,32 @@ func runTask(t *Task) (retErr error) {
 }
 
 func captureTaskChanges(t *Task) error {
-	base := t.WorktreeStart
-	if base == "" {
-		base = t.StartHead
-	}
-	changed, bad, err := completionChanges(t.Cwd, repoRoot(t.Cwd), base, t.Baseline, t.Own)
+	root := repoRoot(t.Cwd)
+	// Dirty-file filtering applies only to current working-tree changes. A commit
+	// made during the task must remain visible even if it contains baseline dirt.
+	changed, _, err := completionChanges(t.Cwd, root, "", t.Baseline, t.Own)
 	if err != nil {
 		return err
 	}
+	if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() == nil {
+		committed, err := gitOutput(root, "-c", "core.quotepath=off", "diff", "--no-renames", "--name-only", taskChangeBase(t), "HEAD", "--")
+		if err != nil {
+			return err
+		}
+		seen := make(map[string]bool, len(changed))
+		for _, f := range changed {
+			seen[f] = true
+		}
+		for _, f := range strings.Split(committed, "\n") {
+			if f != "" && !seen[f] {
+				changed = append(changed, f)
+				seen[f] = true
+			}
+		}
+	}
 	t.Changed = changed
 	sort.Strings(t.Changed)
-	t.ScopeViolations = bad
+	t.ScopeViolations = repositoryScopeViolations(t.Cwd, root, t.Changed, t.Own)
 	diffForTask(t)
 	return nil
 }
@@ -808,7 +833,7 @@ func taskReport(t *Task, asJSON bool) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
-	if t.Status == "done" && t.ExitCode == 0 && (t.Test == nil || t.Test.ExitCode == 0) && len(t.ScopeViolations) == 0 && hint == "" {
+	if t.Status == "done" && t.ExitCode == 0 && (t.Test == nil || t.Test.ExitCode == 0 && len(t.Test.Failures) == 0 && t.Test.Excerpt == "") && len(t.ScopeViolations) == 0 && hint == "" {
 		var b strings.Builder
 		fmt.Fprintf(&b, "done %s %s", t.ID, t.Kind)
 		if t.Key != "" {

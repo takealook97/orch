@@ -34,7 +34,7 @@ type statsReport struct {
 }
 
 // statsCommand only reads records. Older task schemas have no start timestamp: use
-// run creation time, never heartbeat or file mtime (both can change after a run).
+// run creation time, or task file mtime when run metadata is unavailable.
 func statsCommand(args []string, out io.Writer) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -169,7 +169,8 @@ func collectStats(cutoff time.Time) (statsReport, error) {
 			if !td.IsDir() {
 				continue
 			}
-			b, e := os.ReadFile(filepath.Join(dir, "tasks", td.Name(), "task.json"))
+			taskPath := filepath.Join(dir, "tasks", td.Name(), "task.json")
+			b, e := os.ReadFile(taskPath)
 			if os.IsNotExist(e) {
 				continue
 			}
@@ -192,8 +193,12 @@ func collectStats(cutoff time.Time) (statsReport, error) {
 				at = run.Created
 			}
 			if at.IsZero() {
-				report.Skipped++
-				continue
+				info, err := os.Stat(taskPath)
+				if err != nil {
+					report.Skipped++
+					continue
+				}
+				at = info.ModTime()
 			}
 			if at.Before(cutoff) {
 				continue

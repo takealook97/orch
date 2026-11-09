@@ -100,7 +100,7 @@ func reviewContract(r *Run, name, role, key string, o reviewContractOptions) (st
 		return "", fmt.Errorf("diff range %q is empty", o.Diff)
 	}
 	diffPath := filepath.Join(r.dir(), "evidence", name+".diff")
-	inputs := fmt.Sprintf("- Original request: %s/request.md\n- Acceptance criteria: %s/acceptance.md\n- Head decisions: %s/decisions.md\n- Reviewed worker: %s\n- Reviewed result: %s\n- Diff: %s (git diff %s)\n- Repository: %s", r.dir(), r.dir(), r.dir(), o.Reviews, r.resultPath(o.Reviews), diffPath, o.Diff, repo)
+	inputs := fmt.Sprintf("- Original request: %s/request.md\n- Acceptance criteria: %s/acceptance.md\n- Head decisions: %s/decisions.md\n- Reviewed worker: %s\n- Diff: %s (git diff %s)\n- Repository: %s", r.dir(), r.dir(), r.dir(), o.Reviews, diffPath, o.Diff, repo)
 	if mech != "" {
 		inputs += "\n- Mechanical evidence: " + mech
 	}

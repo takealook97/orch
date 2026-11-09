@@ -91,3 +91,20 @@ func TestCompactReportJSONUnchanged(t *testing.T) {
 		t.Fatalf("got %s want %s", got, want)
 	}
 }
+
+func TestCompactReportParsedFailuresKeepFull(t *testing.T) {
+	for _, tr := range []*TestResult{
+		{ExitCode: 0, Failures: []string{"TestBroken"}},
+		{ExitCode: 0, Excerpt: "--- FAIL: TestBroken"},
+	} {
+		task := compactReportTask(t, "do")
+		task.Test = tr
+		got := taskReport(task, false)
+		if !strings.HasPrefix(got, "task: task-1\n") {
+			t.Fatalf("test failure signal hidden: %q", got)
+		}
+		if len(tr.Failures) > 0 && !strings.Contains(got, "TestBroken") || tr.Excerpt != "" && !strings.Contains(got, tr.Excerpt) {
+			t.Fatalf("missing failure details: %q", got)
+		}
+	}
+}

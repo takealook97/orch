@@ -150,3 +150,37 @@ func TestStatsGroupingAndWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsCorruptRunSkippedOnce(t *testing.T) {
+	t.Setenv("ORCH_HOME", t.TempDir())
+	dir := runDir("corrupt")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, fixture := range []struct {
+		name string
+		at   time.Time
+	}{
+		{"recent-a", now}, {"recent-b", now}, {"old", now.Add(-200 * time.Hour)},
+	} {
+		td := filepath.Join(dir, "tasks", fixture.name)
+		if err := os.MkdirAll(td, 0700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(td, "task.json")
+		if err := os.WriteFile(path, []byte(`{"kind":"ask","status":"done"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, fixture.at, fixture.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := collectStats(now.Add(-168 * time.Hour))
+	if err != nil || report.Skipped != 1 || len(report.Rows) != 1 || report.Rows[0].N != 2 || report.Rows[0].Done != 2 {
+		t.Fatalf("report=%+v rows=%+v err=%v", report, report.Rows, err)
+	}
+}

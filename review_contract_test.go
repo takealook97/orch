@@ -71,6 +71,24 @@ func TestReviewContractGenerated(t *testing.T) {
 	}
 }
 
+func TestReviewContractOmitsAuthorResult(t *testing.T) {
+	for _, role := range []string{"verify-critical", "verify-neutral", "verify-adversarial"} {
+		t.Run(role, func(t *testing.T) {
+			r, _ := reviewFixture(t)
+			body, err := reviewContract(r, "reviewer", role, "codex-high-l", reviewContractOptions{Reviews: "author", Diff: "HEAD~1..HEAD", Focus: "edge cases"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(body, filepath.Join("results", "author.md")) {
+				t.Fatalf("contract references author result: %s", body)
+			}
+			if !strings.Contains(body, "Reviewed worker: author") {
+				t.Fatal("contract omits reviewed worker")
+			}
+		})
+	}
+}
+
 func TestReviewContractErrors(t *testing.T) {
 	r, _ := reviewFixture(t)
 	for _, o := range []reviewContractOptions{{Reviews: "author", Diff: "HEAD..HEAD"}, {Reviews: "author"}, {Reviews: "missing", Diff: "HEAD~1..HEAD"}, {Reviews: "author", Diff: "HEAD~1..HEAD", Mech: "missing"}} {
