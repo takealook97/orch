@@ -38,6 +38,8 @@ Before selecting full/full+, read [advanced procedures — modes, contracts and 
 
 ## Select the channel
 
+Before choosing a key for repeated work, check `orch stats`.
+
 Before new research, use `orch recall "query"`; use `--all-repos` when needed. Ask caches successful identical questions; `--fresh` bypasses the cache.
 
 | Work | Channel |
@@ -50,6 +52,8 @@ Before new research, use `orch recall "query"`; use `--all-repos` when needed. A
 A `hint:` on ask/do means the channel was wrong; use panes for that kind of task next time. When unsure, use a pane. Long read-only reviews also require panes. Read [advanced procedures — channels and worker selection](references/advanced.md) before choosing workers, fallback, escalation or recovery.
 
 ## Production and verification
+
+Generate review contracts with `orch contract new --reviews <author> --diff <range>` and add only focus text.
 
 Write finite acceptance criteria and Head decisions before production. Contracts specify scope, permissions, plan, tests and result format. Workers do not resolve missing Head design decisions. Read [advanced procedures — contracts and DAG](references/advanced.md) before creating a run, contract, DAG or goal.
 

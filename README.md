@@ -47,7 +47,18 @@ orch test "go test ./..."                                                       
 
 Flags go before the text; a text that starts with `-` goes after `--` (`orch ask --model codex-low-h -- "-1 or 1?"`).
 
-`orch do` returns only status, changed files, diff stat, owned-scope violations (a violation fails the task), orch's own final test run, and a capped summary; the full diff, answer, and logs stay in `~/.orch/runs/<id>/tasks/task-N/`. No `orch run new` is needed. Children run with `ORCH_ROLE=worker`, so they cannot delegate further. Add `--json` for a machine-readable report.
+Successful `orch do`/`orch ask`/`orch test` text reports start with `done <task> <kind> key=<key> <seconds>s` (seconds to one decimal), adding `test=0`, `commit=<first 7 characters>`, and `files=<n> +<adds> -<deletions>` when present. The answer follows for ask/do, then one `dir: <task dir>` line; successful tests have no answer section. Failures, scope violations, hints, and nonzero tests keep the full report. The full diff, answer, and logs stay in `~/.orch/runs/<id>/tasks/task-N/`. No `orch run new` is needed. Children run with `ORCH_ROLE=worker`, so they cannot delegate further. `--json` is unchanged.
+
+## Local statistics and review contracts
+
+`orch stats [--since <duration>] [--json]` reads local `runs/*/tasks/*/task.json` (ask/do/test) and `run.json` pane workers without changing files or triggering disk cleanup. The default window is `168h`. Records are grouped by kind, catalog key and purpose when recorded, sorted by kind then descending count. Columns show record count, done, failed (including timeout, blocked, partial, quota, capacity, content-blocked and lost), records with test failures or scope violations, total capacity/content-block retries, fallback replacements, and mean recorded seconds. Missing values print `-` (JSON `null`); malformed records are counted in `skipped`. One-off fallbacks and pane test/scope outcomes are not recorded and remain unknown. Means use only available completed durations: task `duration_ms`, or pane `closed - started`. Filtering uses record `started`, falling back to run `created` for older tasks without start timestamps; heartbeat and file modification times are never used. This reports retained local evidence; pruning can remove older records.
+
+```bash
+orch stats --since 336h
+orch contract new crit --role verify-critical --model claude-medium-m --reviews impl --diff HEAD~1..HEAD --mech task-4 --focus "empty input" --run RUN_ID
+```
+
+`--reviews` generates a filled, read-only review contract and saves the nonempty diff as `evidence/<name>.diff`. `--cwd` selects the repository; otherwise the reviewed worker's recorded worktree, then cwd, then the current directory is used. `--mech` accepts a task id (resolved to this run's `tasks/<id>/test.log`) or an existing file path. Critical reviews require severity-sorted defects with file:line and repro evidence (top 10); neutral reviews embed the acceptance checklist; adversarial reviews require `--focus` and seek a refutation or counterexample. Focus text is included in every role's plan. Without `--reviews`, the existing editable template is unchanged.
 
 ## Advanced operations
 
