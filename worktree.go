@@ -105,6 +105,14 @@ func workerScopeBase(w *Worker, body string) string {
 	if w.Branch != "" && !explicitBase(base) && w.WorktreeStart != "" {
 		return w.WorktreeStart
 	}
+	if !explicitBase(base) {
+		if w.StartHead != "" {
+			return w.StartHead
+		}
+		if w.StartEmpty {
+			return emptyTree
+		}
+	}
 	return base
 }
 
