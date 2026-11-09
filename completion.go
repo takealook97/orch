@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Both pane collection and do's post-test gate compare against the frozen baseline.
@@ -44,12 +46,42 @@ func commitCompletion(dir, runID, name, summary string, fresh []string) (string,
 		if _, err = gitOutput(dir, args...); err != nil {
 			return "", err
 		}
-		line := strings.SplitN(strings.TrimSpace(summary), "\n", 2)[0]
-		args = []string{"--literal-pathspecs", "commit", "--only", "-m", "orch: " + runID + "/" + name + ":" + line, "--"}
+		args = []string{"--literal-pathspecs", "commit", "--only", "-m", commitSubject(summary), "-m", commitBody(runID, name), "--"}
 		args = append(args, fresh...)
 		if _, err = gitOutput(dir, args...); err != nil {
 			return "", err
 		}
 	}
 	return gitOutput(dir, "rev-parse", "HEAD")
+}
+
+var conventionalSubject = regexp.MustCompile(`^(feat|fix|refactor|docs|test|chore|perf|ci)(\([^\r\n)]+\))?!?:\s+`)
+
+// commitSubject keeps the first summary line readable in standard Git log views.
+func commitSubject(summary string) string {
+	line := ""
+	for _, candidate := range strings.Split(summary, "\n") {
+		if candidate = strings.TrimSpace(candidate); candidate != "" {
+			line = candidate
+			break
+		}
+	}
+	if len(line) >= len("summary:") && strings.EqualFold(line[:len("summary:")], "summary:") {
+		line = strings.TrimSpace(line[len("summary:"):])
+	}
+	if line == "" {
+		line = "complete work"
+	}
+	if !conventionalSubject.MatchString(line) {
+		line = "chore: " + line
+	}
+	runes := []rune(line)
+	if len(runes) > 72 {
+		line = string(runes[:72])
+	}
+	return strings.TrimRightFunc(line, func(r rune) bool { return r == '.' || unicode.IsSpace(r) })
+}
+
+func commitBody(runID, name string) string {
+	return fmt.Sprintf("orch-run: %s\norch-worker: %s", runID, name)
 }

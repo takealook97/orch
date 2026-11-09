@@ -404,8 +404,7 @@ func commitWorktree(dir, runID, name, summary string) (string, error) {
 		if _, err := gitOutput(dir, "add", "-A"); err != nil {
 			return "", err
 		}
-		line := strings.SplitN(strings.TrimSpace(summary), "\n", 2)[0]
-		if _, err := gitOutput(dir, "commit", "-m", "orch: "+runID+"/"+name+": "+line); err != nil {
+		if _, err := gitOutput(dir, "commit", "-m", commitSubject(summary), "-m", commitBody(runID, name)); err != nil {
 			return "", err
 		}
 	}
