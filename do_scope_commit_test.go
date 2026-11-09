@@ -131,7 +131,7 @@ func TestDoCommittedScopeRevertWorktree(t *testing.T) {
 	if !strings.Contains(string(patch), "new file mode") || !strings.Contains(string(patch), "deleted file mode") {
 		t.Errorf("patch must show committed addition and working-tree deletion: %s", patch)
 	}
-	if task.Diffstat != "1 files, +1 -1" {
+	if task.Diffstat != "1 files, +0 -0" {
 		t.Errorf("diffstat=%s", task.Diffstat)
 	}
 }
@@ -139,5 +139,116 @@ func TestDoCommittedScopeRevertWorktree(t *testing.T) {
 func TestDoCommittedScopeEmptyRepo(t *testing.T) {
 	taskEnv(t)
 	dir := gitInit(t)
-	runCommittedScopeViolation(t, dir, "printf 'outside\\n' > outside.txt\ngit add -- outside.txt\ngit commit -qm 'first commit'", "outside.txt")
+	task := runCommittedScopeViolation(t, dir, "printf 'outside\\n' > outside.txt\ngit add -- outside.txt\ngit commit -qm 'first commit'", "outside.txt")
+	saved, err := os.ReadFile(filepath.Join(task.Dir, "task.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted Task
+	if err := json.Unmarshal(saved, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.StartEmpty || persisted.StartRefs == nil || len(*persisted.StartRefs) != 0 {
+		t.Fatalf("start empty=%v refs=%v", persisted.StartEmpty, persisted.StartRefs)
+	}
+	if len(task.ScopeViolations) != 1 {
+		t.Fatalf("initial branch creation must be exempt: %v", task.ScopeViolations)
+	}
+}
+
+func runScopeScript(t *testing.T, dir, script, own string) (int, Task) {
+	t.Helper()
+	fakeCLI(t, "claude", "set -eu\n"+script+"\necho '{\"result\":\"SUMMARY: changed\"}'\n")
+	var out, stderr bytes.Buffer
+	code := run([]string{"do", "--model", "claude-medium-m", "--no-worktree", "--own", own, "--cwd", dir, "--json", "change"}, strings.NewReader(""), &out, &stderr)
+	var task Task
+	if err := json.Unmarshal(out.Bytes(), &task); err != nil {
+		t.Fatalf("decode: %v; output=%s stderr=%s", err, out.String(), stderr.String())
+	}
+	return code, task
+}
+
+func TestDoCommittedScopeNetDiffstat(t *testing.T) {
+	taskEnv(t)
+	dir := taskRepo(t)
+	code, task := runScopeScript(t, dir, "printf 'a\\nb\\n' > owned.txt\ngit add owned.txt\ngit commit -qm worker\nprintf 'a\\nc\\n' > owned.txt", "owned.txt")
+	if code != 0 || task.Status != "done" || task.Diffstat != "1 files, +2 -1" {
+		t.Fatalf("code=%d task=%+v", code, task)
+	}
+}
+
+func TestDoCommittedScopeRefs(t *testing.T) {
+	for _, tc := range []struct{ name, setup, script, ref string }{
+		{"SideBranch", "", "git switch -c side\nprintf 'outside\\n' > outside.txt\ngit add outside.txt\ngit commit -qm side\ngit switch -", "refs/heads/side"},
+		{"NewTag", "", "git tag worker-tag", "refs/tags/worker-tag"},
+		{"MovedTag", "git tag worker-tag", "git tag -f worker-tag HEAD~1", "refs/tags/worker-tag"},
+		{"OtherRef", "git branch other", "git branch -f other HEAD~1", "refs/heads/other"},
+		{"DeletedRef", "git branch other", "git branch -D other", "refs/heads/other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			taskEnv(t)
+			dir := taskRepo(t)
+			git(t, dir, "commit", "--allow-empty", "-qm", "second")
+			if tc.setup != "" { // Setup uses only fixed, local Git commands.
+				args := strings.Fields(tc.setup)
+				git(t, dir, args[1:]...)
+			}
+			code, task := runScopeScript(t, dir, tc.script, "owned.txt")
+			if code != 1 || task.Status != "failed" || !slices.Contains(task.ScopeViolations, "ref:"+tc.ref) {
+				t.Fatalf("code=%d status=%s violations=%v", code, task.Status, task.ScopeViolations)
+			}
+		})
+	}
+}
+
+func TestDoCommittedScopeDiscardUserDirty(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, script string
+		owned              bool
+	}{
+		{"outside", "x", "git checkout -- x", false},
+		{"owned", "owned.txt", "git checkout -- owned.txt", true},
+		{"deleted-untracked", "x", "rm x", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			taskEnv(t)
+			dir := taskRepo(t)
+			if tc.file == "x" && tc.name != "deleted-untracked" {
+				putFile(t, dir, "x", "base\n")
+				git(t, dir, "add", "x")
+				git(t, dir, "commit", "-qm", "add x")
+			}
+			putFile(t, dir, tc.file, "user dirty\n")
+			code, task := runScopeScript(t, dir, tc.script, "owned.txt")
+			wantCode := 1
+			if tc.owned {
+				wantCode = 0
+			}
+			if code != wantCode || !slices.Contains(task.Changed, tc.file) || slices.Contains(task.ScopeViolations, tc.file) == tc.owned {
+				t.Fatalf("code=%d changed=%v violations=%v", code, task.Changed, task.ScopeViolations)
+			}
+		})
+	}
+}
+
+func TestDoCommittedScopeStartHeadUnknown(t *testing.T) {
+	taskEnv(t)
+	dir := taskRepo(t)
+	putFile(t, dir, "outside.txt", "existing\n")
+	git(t, dir, "add", "outside.txt")
+	git(t, dir, "commit", "-qm", "outside already committed")
+	task := Task{Cwd: dir, Dir: t.TempDir(), Own: []string{"owned.txt"}}
+	if err := captureTaskChanges(&task); err != nil {
+		t.Fatal(err)
+	}
+	if len(task.Changed) != 0 || len(task.ScopeViolations) != 0 {
+		t.Fatalf("changed=%v violations=%v", task.Changed, task.ScopeViolations)
+	}
+	putFile(t, dir, "owned.txt", "new\n")
+	if err := captureTaskChanges(&task); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(task.Changed, []string{"owned.txt"}) || task.Diffstat != "1 files, +1 -1" {
+		t.Fatalf("changed=%v stat=%s", task.Changed, task.Diffstat)
+	}
 }

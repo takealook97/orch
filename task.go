@@ -38,6 +38,10 @@ type TestResult struct {
 	Interrupted bool `json:"-"`
 }
 type Task struct {
+	// A pointer preserves an empty snapshot across JSON round trips; nil means
+	// a legacy task for which refs were not captured.
+	StartRefs *map[string]string `json:"start_refs,omitempty"`
+
 	CapacityRetries int               `json:"capacity_retries,omitempty"`
 	BlockRetries    int               `json:"block_retries,omitempty"`
 	Worktree        string            `json:"worktree,omitempty"`
@@ -46,6 +50,8 @@ type Task struct {
 	WorktreeBase    string            `json:"worktree_base,omitempty"`
 	WorktreeStart   string            `json:"worktree_start,omitempty"`
 	StartHead       string            `json:"start_head,omitempty"`
+	StartEmpty      bool              `json:"start_empty,omitempty"`
+	StartBranch     string            `json:"start_branch,omitempty"`
 	Commit          string            `json:"commit,omitempty"`
 	Committed       bool              `json:"committed,omitempty"`
 	Merged          bool              `json:"merged,omitempty"`
@@ -511,7 +517,10 @@ func taskChangeBase(t *Task) string {
 	if t.StartHead != "" {
 		return t.StartHead
 	}
-	return emptyTree
+	if t.StartEmpty {
+		return emptyTree
+	}
+	return ""
 }
 
 // diffForTask records committed changes first, then working-tree changes. Keeping
@@ -522,6 +531,9 @@ func diffForTask(t *Task) {
 	head := "HEAD"
 	if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() != nil {
 		head = emptyTree
+	}
+	if base == "" {
+		base = head
 	}
 	var tracked, untracked []string
 	for _, f := range t.Changed {
@@ -550,9 +562,21 @@ func diffForTask(t *Task) {
 	t.DiffPath = filepath.Join(t.Dir, "diff.patch")
 	_ = os.WriteFile(t.DiffPath, patch.Bytes(), 0600)
 	files, adds, dels := len(t.Changed), 0, 0
-	stat := exec.Command("git", "apply", "--numstat", "-")
-	stat.Stdin = bytes.NewReader(patch.Bytes())
-	out, _ := stat.Output()
+	// The patch retains both stages as evidence; the summary counts their net effect.
+	var numstat bytes.Buffer
+	if len(t.Changed) > 0 {
+		out, _ := exec.Command("git", append([]string{"-C", root, "diff", "--no-renames", "--numstat", base, "--"}, t.Changed...)...).Output()
+		numstat.Write(out)
+	}
+	for _, f := range untracked {
+		// A path removed from the index but present in the base is already counted.
+		if exec.Command("git", "-C", root, "cat-file", "-e", base+":"+f).Run() == nil {
+			continue
+		}
+		out, _ := exec.Command("git", "-C", root, "diff", "--no-index", "--numstat", "--", "/dev/null", f).Output()
+		numstat.Write(out)
+	}
+	out := numstat.Bytes()
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.Fields(l)
 		if len(f) < 3 {
@@ -693,6 +717,22 @@ func runTask(t *Task) (retErr error) {
 	return nil
 }
 
+// taskRefs snapshots branches and tags; an empty snapshot is distinct from a
+// missing snapshot in task records created before ref tracking was introduced.
+func taskRefs(root string) (map[string]string, error) {
+	out, err := gitOutput(root, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/tags")
+	if err != nil {
+		return nil, err
+	}
+	refs := make(map[string]string)
+	for _, line := range strings.Split(out, "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 {
+			refs[fields[0]] = fields[1]
+		}
+	}
+	return refs, nil
+}
+
 func captureTaskChanges(t *Task) error {
 	root := repoRoot(t.Cwd)
 	// Dirty-file filtering applies only to current working-tree changes. A commit
@@ -701,25 +741,53 @@ func captureTaskChanges(t *Task) error {
 	if err != nil {
 		return err
 	}
-	if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() == nil {
-		committed, err := gitOutput(root, "-c", "core.quotepath=off", "diff", "--no-renames", "--name-only", taskChangeBase(t), "HEAD", "--")
+	seen := make(map[string]bool, len(changed))
+	for _, f := range changed {
+		seen[f] = true
+	}
+	add := func(f string) {
+		if f != "" && !seen[f] {
+			changed = append(changed, f)
+			seen[f] = true
+		}
+	}
+	// A baseline path can disappear from git diff when user dirt is discarded.
+	for f, hash := range t.Baseline {
+		if fileHash(root, f) != hash {
+			add(f)
+		}
+	}
+	if base := taskChangeBase(t); base != "" && exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD").Run() == nil {
+		committed, err := gitOutput(root, "-c", "core.quotepath=off", "diff", "--no-renames", "--name-only", base, "HEAD", "--")
 		if err != nil {
 			return err
 		}
-		seen := make(map[string]bool, len(changed))
-		for _, f := range changed {
-			seen[f] = true
-		}
 		for _, f := range strings.Split(committed, "\n") {
-			if f != "" && !seen[f] {
-				changed = append(changed, f)
-				seen[f] = true
-			}
+			add(f)
 		}
 	}
 	t.Changed = changed
 	sort.Strings(t.Changed)
 	t.ScopeViolations = repositoryScopeViolations(t.Cwd, root, t.Changed, t.Own)
+	if t.StartRefs != nil {
+		refs, err := taskRefs(root)
+		if err != nil {
+			return err
+		}
+		all := make(map[string]bool)
+		for ref := range *t.StartRefs {
+			all[ref] = true
+		}
+		for ref := range refs {
+			all[ref] = true
+		}
+		for ref := range all {
+			if ref != t.StartBranch && (*t.StartRefs)[ref] != refs[ref] {
+				t.ScopeViolations = append(t.ScopeViolations, "ref:"+ref)
+			}
+		}
+		sort.Strings(t.ScopeViolations)
+	}
 	diffForTask(t)
 	return nil
 }
@@ -1167,7 +1235,17 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 			files, err = changedFiles(t.Cwd, "")
 			if err == nil {
 				t.Baseline = snapshot(t.Cwd, files)
-				t.StartHead, _ = gitOutput(t.Cwd, "rev-parse", "HEAD")
+				t.StartHead, _ = gitOutput(t.Cwd, "rev-parse", "--verify", "-q", "HEAD")
+				if t.StartHead == "" {
+					refs, refErr := gitOutput(t.Cwd, "for-each-ref", "--count=1")
+					t.StartEmpty = refErr == nil && refs == ""
+				}
+				t.StartBranch, _ = gitOutput(t.Cwd, "symbolic-ref", "-q", "HEAD")
+				var refs map[string]string
+				refs, err = taskRefs(t.Cwd)
+				if err == nil {
+					t.StartRefs = &refs
+				}
 			}
 		}
 	}
