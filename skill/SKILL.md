@@ -51,6 +51,8 @@ Before new research, use `orch recall "query"`; use `--all-repos` when needed. A
 
 A `hint:` on ask/do means the channel was wrong; use panes for that kind of task next time. When unsure, use a pane. Long read-only reviews also require panes. Read [advanced procedures — channels and worker selection](references/advanced.md) before choosing workers, fallback, escalation or recovery.
 
+Request economy: each Head request re-reads the whole context (measured: 72.6% of delegating-turn weighted units came from requests at >= 400k context; 5% of requests batched tools). Batch independent inspection calls as parallel tool calls in one request. After a delegation, judge from the report (summary, diffstat, included diff, test result) and put any extra evidence you will need into the contract instead of re-inspecting. Chain `orch spawn ... && orch prompt ... && orch wait ...` in one command, wait once in the foreground (`--timeout 570000` under a 10-minute tool limit) and rerun the printed command on timeout; never poll with `orch status`, `orch read`, `sleep` or scheduled wakeups. At a goal boundary, hand off to a fresh session instead of carrying the context.
+
 ## Production and verification
 
 Generate review contracts with `orch contract new --reviews <author> --diff <range>` and add only focus text.

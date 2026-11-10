@@ -29,8 +29,10 @@ type statsRow struct {
 	durations       int
 }
 type statsReport struct {
-	Rows    []*statsRow `json:"rows"`
-	Skipped int         `json:"skipped"`
+	Head      headStats   `json:"head"`
+	HeadError string      `json:"head_error,omitempty"`
+	Rows      []*statsRow `json:"rows"`
+	Skipped   int         `json:"skipped"`
 }
 
 // statsCommand only reads records. Older task schemas have no start timestamp: use
@@ -83,12 +85,37 @@ func statsCommand(args []string, out io.Writer) int {
 	if err = tw.Flush(); err != nil {
 		return 1
 	}
-	fmt.Fprintf(out, "skipped=%d\n", report.Skipped)
+	fmt.Fprintf(out, "skipped=%d\n\nHead\n", report.Skipped)
+	if report.HeadError != "" {
+		fmt.Fprintf(out, "head: unavailable (%s)\n", report.HeadError)
+		return 0
+	}
+	fmt.Fprintln(tw, "sessions\trequests\tmedian_max_context\tmax_context\tdelegations\tinspect_bash\trequests_per_delegation\tskipped")
+	decimal := func(n *float64) string {
+		if n == nil {
+			return "-"
+		}
+		return strconv.FormatFloat(*n, 'f', -1, 64)
+	}
+	maxContext := "-"
+	if report.Head.MaxContext != nil {
+		maxContext = strconv.FormatInt(*report.Head.MaxContext, 10)
+	}
+	h := report.Head
+	fmt.Fprintf(tw, "%d\t%d\t%s\t%s\t%d\t%d\t%s\t%d\n", h.Sessions, h.Requests, decimal(h.MedianMaxContext), maxContext, h.Delegations, h.InspectBash, decimal(h.RequestsPerDelegation), h.Skipped)
+	if err = tw.Flush(); err != nil {
+		return 1
+	}
 	return 0
 }
 
 func collectStats(cutoff time.Time) (statsReport, error) {
-	report := statsReport{Rows: []*statsRow{}}
+	// The Head section never blocks task and pane rows.
+	head, headErr := collectHeadStats(cutoff)
+	report := statsReport{Rows: []*statsRow{}, Head: head}
+	if headErr != nil {
+		report.HeadError = headErr.Error()
+	}
 	entries, err := os.ReadDir(runsDir())
 	if os.IsNotExist(err) {
 		return report, nil

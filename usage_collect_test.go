@@ -315,3 +315,29 @@ func TestCollectExistingSessionSmoke(t *testing.T) {
 	}
 	t.Logf("provider=%s lines=%d events=%d missing=%d inclusive_input=%d output=%d coverage=%s replay=unchanged binding=operator-declared", b.Provider, r.Lines, r.Events, missing, in, out, r.Coverage)
 }
+
+func TestCollectClaudeSyntheticPlaceholder(t *testing.T) {
+	b := usageTestBinding(t, "claude")
+	placeholder := strings.Replace(claudeUsage("placeholder", 0, 0, "stop_sequence"), "claude-test", "<synthetic>", 1)
+	data := claudeUsage("a", 2, 9, "end_turn") + placeholder + claudeUsage("b", 3, 10, "end_turn")
+	r, err := collectUsage(b, strings.NewReader(data))
+	if err != nil || len(r.Records) != 2 {
+		t.Fatalf("synthetic placeholder aborted provider evidence: records=%d error=%v", len(r.Records), err)
+	}
+	for _, m := range r.Records {
+		if m.Model != "claude-test" {
+			t.Fatal("synthetic placeholder became provider evidence")
+		}
+	}
+	// Unknown invalid model metadata still fails with a fixed-string cause.
+	bad := strings.Replace(placeholder, "<synthetic>", "invalid "+usageSecret, 1)
+	_, err = collectUsage(b, strings.NewReader(bad))
+	if err == nil || err.Error() != "invalid provider metadata: invalid model identity" {
+		t.Fatalf("invalid metadata cause lost: %v", err)
+	}
+	// A placeholder cannot hide a session binding mismatch.
+	_, err = collectUsage(b, strings.NewReader(strings.ReplaceAll(placeholder, "session-1", "other-session")))
+	if err == nil || err.Error() != "provider session binding mismatch" {
+		t.Fatalf("placeholder bypassed session validation: %v", err)
+	}
+}

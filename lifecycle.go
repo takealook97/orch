@@ -99,7 +99,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 					continue
 				}
 				if time.Now().After(deadline) {
-					outcomes = append(outcomes, waitOutcome{name, "timeout", "wait deadline reached"})
+					outcomes = append(outcomes, waitOutcome{name, "timeout", waitTimeoutDetail("working", name)})
 					continue
 				}
 				still = append(still, name)
@@ -114,7 +114,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 			if st != "" && w.Pane != "" && !agentStopped(w) {
 				// A status line alone is not a finish while the agent still works on the file.
 				if time.Now().After(deadline) {
-					outcomes = append(outcomes, waitOutcome{name, "timeout", "result has a status line but the agent is still working"})
+					outcomes = append(outcomes, waitOutcome{name, "timeout", waitTimeoutDetail(workerAgentState(w), name)})
 					continue
 				}
 				still = append(still, name)
@@ -243,13 +243,40 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 		}
 		if time.Now().After(deadline) {
 			for _, n := range pending {
-				outcomes = append(outcomes, waitOutcome{n, "timeout", "orch read to check progress, then extend or fall back"})
+				state := "working" // Pending tasks are still running.
+				if w := r.worker(n); w != nil {
+					state = workerAgentState(w)
+				}
+				outcomes = append(outcomes, waitOutcome{n, "timeout", waitTimeoutDetail(state, n)})
 			}
 			break
 		}
 		time.Sleep(timings.WaitPoll)
 	}
 	return outcomes, nil
+}
+
+// waitTimeoutDetail states the agent state and the exact rerun command. A
+// foreground rerun replaces polling with status or screen reads.
+func waitTimeoutDetail(state, name string) string {
+	return state + "; rerun: orch wait " + name
+}
+
+// workerAgentState maps the multiplexer agent status to working, idle, blocked or unknown.
+func workerAgentState(w *Worker) string {
+	info, err := agentGet(workerAgent(w))
+	if err != nil {
+		return "unknown"
+	}
+	switch info.Status {
+	case "working":
+		return "working"
+	case "idle", "done", "stopped", "finished":
+		return "idle"
+	case "blocked":
+		return "blocked"
+	}
+	return "unknown"
 }
 
 // unknownPanes lists panes in the Head's tab that no active run of this Head recorded.

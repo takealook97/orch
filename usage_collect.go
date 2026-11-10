@@ -120,6 +120,11 @@ func collectUsage(b usageBinding, r io.Reader) (usageCollection, error) {
 			if rec.Type != "assistant" || rec.Message.Usage == nil {
 				continue
 			}
+			// Claude local placeholders are not provider requests or usage evidence.
+			// Check session binding above even for these non-provider rows.
+			if rec.Message.Model == "<synthetic>" {
+				continue
+			}
 			if rec.Message.ID == "" || !evidenceID.MatchString(rec.Message.ID) {
 				return result, fmt.Errorf("missing or invalid message identity")
 			}
@@ -160,7 +165,7 @@ func collectUsage(b usageBinding, r io.Reader) (usageCollection, error) {
 				m.Coverage = "unavailable"
 			}
 			if e = m.validate(); e != nil {
-				return result, fmt.Errorf("invalid provider metadata")
+				return result, fmt.Errorf("invalid provider metadata: %w", e)
 			}
 			// A message identity must not be silently reassigned to another request/model.
 			if old, ok := claude[m.ID]; ok {
@@ -229,7 +234,7 @@ func collectUsage(b usageBinding, r io.Reader) (usageCollection, error) {
 					m.Coverage = "unavailable"
 				}
 				if e = m.validate(); e != nil {
-					return result, fmt.Errorf("invalid provider metadata")
+					return result, fmt.Errorf("invalid provider metadata: %w", e)
 				}
 				result.Records = append(result.Records, m)
 			}

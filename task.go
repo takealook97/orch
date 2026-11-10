@@ -63,6 +63,8 @@ type Task struct {
 	Changed         []string          `json:"changed,omitempty"`
 	ScopeViolations []string          `json:"scope_violations,omitempty"`
 	Diffstat        string            `json:"diffstat,omitempty"`
+	DiffLines       int               `json:"diff_lines,omitempty"` // net diff threshold; 0 disables
+	NetDiff         string            `json:"net_diff,omitempty"`
 	DiffPath        string            `json:"diff_path,omitempty"`
 	Test            *TestResult       `json:"test,omitempty"`
 	Usage           *Usage            `json:"usage,omitempty"`
@@ -520,6 +522,7 @@ func taskChangeBase(t *Task) string {
 // diffForTask records committed changes first, then working-tree changes. Keeping
 // both stages preserves evidence when the working tree undoes a worker commit.
 func diffForTask(t *Task) {
+	t.NetDiff = "" // recomputed on every capture; only the final capture may set it
 	root := repoRoot(t.Cwd)
 	base := taskChangeBase(t)
 	head := "HEAD"
@@ -532,7 +535,7 @@ func diffForTask(t *Task) {
 	var tracked, untracked []string
 	for _, f := range t.Changed {
 		// A staged deletion is absent from the index but still tracked in HEAD.
-		if exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", f).Run() == nil ||
+		if exec.Command("git", "--literal-pathspecs", "-C", root, "ls-files", "--error-unmatch", "--", f).Run() == nil ||
 			exec.Command("git", "-C", root, "cat-file", "-e", head+":"+f).Run() == nil {
 			tracked = append(tracked, f)
 		} else {
@@ -541,11 +544,11 @@ func diffForTask(t *Task) {
 	}
 	var patch bytes.Buffer
 	if len(t.Changed) > 0 && head != emptyTree {
-		b, _ := exec.Command("git", append([]string{"-C", root, "diff", "--no-renames", "--binary", base, head, "--"}, t.Changed...)...).Output()
+		b, _ := exec.Command("git", append([]string{"--literal-pathspecs", "-C", root, "diff", "--no-renames", "--binary", base, head, "--"}, t.Changed...)...).Output()
 		patch.Write(b)
 	}
 	if len(tracked) > 0 {
-		b, _ := exec.Command("git", append([]string{"-C", root, "diff", "--no-renames", "--binary", head, "--"}, tracked...)...).Output()
+		b, _ := exec.Command("git", append([]string{"--literal-pathspecs", "-C", root, "diff", "--no-renames", "--binary", head, "--"}, tracked...)...).Output()
 		patch.Write(b)
 	}
 	for _, f := range untracked {
@@ -557,20 +560,14 @@ func diffForTask(t *Task) {
 	_ = os.WriteFile(t.DiffPath, patch.Bytes(), 0600)
 	files, adds, dels := len(t.Changed), 0, 0
 	// The patch retains both stages as evidence; the summary counts their net effect.
-	var numstat bytes.Buffer
-	if len(t.Changed) > 0 {
-		out, _ := exec.Command("git", append([]string{"-C", root, "diff", "--no-renames", "--numstat", base, "--"}, t.Changed...)...).Output()
-		numstat.Write(out)
-	}
+	var newFiles []string
 	for _, f := range untracked {
 		// A path removed from the index but present in the base is already counted.
-		if exec.Command("git", "-C", root, "cat-file", "-e", base+":"+f).Run() == nil {
-			continue
+		if exec.Command("git", "-C", root, "cat-file", "-e", base+":"+f).Run() != nil {
+			newFiles = append(newFiles, f)
 		}
-		out, _ := exec.Command("git", "-C", root, "diff", "--no-index", "--numstat", "--", "/dev/null", f).Output()
-		numstat.Write(out)
 	}
-	out := numstat.Bytes()
+	out := netTaskDiff(root, base, t.Changed, newFiles, "--numstat")
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.Fields(l)
 		if len(f) < 3 {
@@ -582,6 +579,33 @@ func diffForTask(t *Task) {
 		dels += d
 	}
 	t.Diffstat = fmt.Sprintf("%d files, +%d -%d", files, adds, dels)
+	if t.DiffLines > 0 && files > 0 && adds+dels <= t.DiffLines {
+		// Same range as the diffstat; binary files appear by name only.
+		if d := netTaskDiff(root, base, t.Changed, newFiles); len(d) <= netDiffMaxBytes {
+			t.NetDiff = string(d)
+		}
+	}
+}
+
+// netDiffMaxBytes caps the diff included in the success report.
+const netDiffMaxBytes = 8192
+
+// netTaskDiff runs one git diff over the net task range: base to the working tree
+// for changed paths, plus new untracked files against /dev/null.
+func netTaskDiff(root, base string, changed, newFiles []string, extra ...string) []byte {
+	var buf bytes.Buffer
+	if len(changed) > 0 {
+		args := append([]string{"--literal-pathspecs", "-C", root, "diff", "--no-renames"}, extra...)
+		out, _ := exec.Command("git", append(append(args, base, "--"), changed...)...).Output()
+		buf.Write(out)
+	}
+	for _, f := range newFiles {
+		// Exit status 1 only means the files differ.
+		args := append([]string{"-C", root, "diff", "--no-index"}, extra...)
+		out, _ := exec.Command("git", append(args, "--", "/dev/null", f)...).Output()
+		buf.Write(out)
+	}
+	return buf.Bytes()
 }
 func runTask(t *Task) (retErr error) {
 	start := time.Now()
@@ -787,6 +811,11 @@ func paneHint(t *Task, inHerdr bool) string {
 	return fmt.Sprintf("ran %d min without a pane; hand work this long to a pane worker (orch spawn) so the user can watch it", t.DurationMS/time.Minute.Milliseconds())
 }
 
+// taskSucceeded selects the compact success report; everything else keeps the full report.
+func taskSucceeded(t *Task, hint string) bool {
+	return t.Status == "done" && t.ExitCode == 0 && (t.Test == nil || t.Test.ExitCode == 0 && len(t.Test.Failures) == 0 && t.Test.Excerpt == "") && len(t.ScopeViolations) == 0 && hint == ""
+}
+
 func taskReport(t *Task, asJSON bool) string {
 	hint := paneHint(t, inHerdr())
 	if asJSON {
@@ -813,6 +842,9 @@ func taskReport(t *Task, asJSON bool) string {
 			v["truncated"] = t.Truncated
 		}
 		if t.Kind == "do" {
+			if t.NetDiff != "" && taskSucceeded(t, hint) {
+				v["diff"] = t.NetDiff
+			}
 			v["changed"] = t.Changed
 			v["scope_violations"] = t.ScopeViolations
 			v["diffstat"] = t.Diffstat
@@ -831,7 +863,7 @@ func taskReport(t *Task, asJSON bool) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
-	if t.Status == "done" && t.ExitCode == 0 && (t.Test == nil || t.Test.ExitCode == 0 && len(t.Test.Failures) == 0 && t.Test.Excerpt == "") && len(t.ScopeViolations) == 0 && hint == "" {
+	if taskSucceeded(t, hint) {
 		var b strings.Builder
 		fmt.Fprintf(&b, "done %s %s", t.ID, t.Kind)
 		if t.Key != "" {
@@ -851,6 +883,9 @@ func taskReport(t *Task, asJSON bool) string {
 		}
 		if t.Kind != "test" && t.Answer != "" {
 			fmt.Fprintf(&b, "\n%s", strings.TrimRight(t.Answer, "\n"))
+		}
+		if t.NetDiff != "" {
+			fmt.Fprintf(&b, "\n%s", strings.TrimRight(t.NetDiff, "\n"))
 		}
 		fmt.Fprintf(&b, "\ndir: %s", t.Dir)
 		return b.String()
@@ -1007,6 +1042,9 @@ func parseTask(fs *flag.FlagSet, args []string) ([]string, error) {
 	return pos, fs.Parse(flags)
 }
 
+// defaultDiffLines keeps small diffs in the report so the Head judges without re-inspecting.
+const defaultDiffLines = 60
+
 func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("orch "+kind, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1028,7 +1066,9 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	asJSON := fs.Bool("json", false, "JSON output")
 	maxLines := fs.Int("max-lines", 40, "test excerpt lines")
 	var servesFlag, fixOf string
+	diffLines := 0
 	if kind == "do" {
+		fs.IntVar(&diffLines, "diff-lines", defaultDiffLines, "include the net diff when added+deleted lines are at most N; 0 disables")
 		fs.StringVar(&servesFlag, "serves", "", "goal criteria, comma-separated")
 		fs.StringVar(&fixOf, "fix-of", "", "fix shard")
 	}
@@ -1068,7 +1108,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if *maxOutput < 0 || *maxLines < 0 {
+	if *maxOutput < 0 || *maxLines < 0 || diffLines < 0 {
 		fmt.Fprintln(stderr, "orch: caps must be nonnegative")
 		return 2
 	}
@@ -1144,6 +1184,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	t.TestCmd = *testCmd
 	t.TimeoutMS = *timeout
 	t.MaxOutput = *maxOutput
+	t.DiffLines = diffLines
 	t.Account = *account
 	if *background {
 		t.Pid = 0 // the __task runner claims the task with its own pid

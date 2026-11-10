@@ -174,6 +174,7 @@ func TestMeasureHeadFailureLogs(t *testing.T) {
 		{"missing", "", true},
 		{"malformed", usageSecret + "\n", false},
 		{"identity", strings.ReplaceAll(claudeUsage("a", 2, 9, "end_turn"), "session-1", "other-session"), false},
+		{"metadata", strings.ReplaceAll(claudeUsage("a", 2, 9, "end_turn"), "claude-test", "bad "+usageSecret), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			file := filepath.Join(t.TempDir(), "session.jsonl")
@@ -187,6 +188,9 @@ func TestMeasureHeadFailureLogs(t *testing.T) {
 				t.Fatal(code)
 			}
 			s := stderr.String()
+			if tc.name == "metadata" && !strings.Contains(s, "invalid provider metadata: invalid model identity") {
+				t.Fatal("validation cause missing from log")
+			}
 			if strings.Count(s, "\n") != 1 || !regexp.MustCompile(`^\S+ measure-head session=\S+ error=.+\n$`).MatchString(s) || strings.Contains(s, usageSecret) {
 				t.Fatal(s)
 			}

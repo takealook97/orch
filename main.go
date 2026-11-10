@@ -24,12 +24,12 @@ Run management
 Delegation
   orch ask --model K [--cwd DIR] [--max-output N] [--timeout MS] [--account same|hook] [--background] [--fresh] [--json] "question"
   orch recall "query" [--limit N] [--all-repos] [--json]  search past answers and results
-  orch do --model K --own GLOBS [--test CMD] [--worktree DIR|--no-worktree] [--cwd DIR] [--background] [--timeout MS] [--account same|hook] [--json] "requirement"
+  orch do --model K --own GLOBS [--test CMD] [--worktree DIR|--no-worktree] [--cwd DIR] [--background] [--timeout MS] [--account same|hook] [--diff-lines N] [--json] "requirement"
   orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
 	orch models [--markdown|--json]         seven canonical keys (codex-medium-h: deprecated Luna alias)
-  orch stats [--since 168h] [--json]     read-only local task and pane statistics
+  orch stats [--since 168h] [--json]     read-only local task, pane and Head statistics
   orch contract new <name> --role R --model K [--run ID]
            [--reviews AUTHOR --diff BASE..HEAD [--mech TASK|PATH] [--focus TEXT] [--cwd REPO]]
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]

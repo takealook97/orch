@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -77,6 +78,12 @@ func measureHeadCommand(args []string, stderr io.Writer) int {
 	} else {
 		// Reuse the public collector's validation, parsing, locking and dedupe path.
 		err = collectUsageCommand([]string{"--provider", "claude", "--session", *session, "--session-file", *file, "--subject", "head", "--entity", "head", "--period", *session, "--phase", "session"}, io.Discard)
+		// Both stores are attempted even when parsing or persistence in one fails.
+		summaryErr := collectHeadSessionFile(*session, *file)
+		if summaryErr != nil {
+			summaryErr = fmt.Errorf("head summary: %w", summaryErr)
+		}
+		err = errors.Join(err, summaryErr)
 	}
 	if err != nil {
 		// Session comes from hook input; keep even invalid identities on one log line.

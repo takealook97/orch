@@ -184,3 +184,109 @@ func TestStatsCorruptRunSkippedOnce(t *testing.T) {
 		t.Fatalf("report=%+v rows=%+v err=%v", report, report.Rows, err)
 	}
 }
+
+func TestStatsHeadAggregation(t *testing.T) {
+	t.Setenv("ORCH_HOME", t.TempDir())
+	now := time.Now().UTC()
+	for _, h := range []HeadSession{
+		{Version: 1, Session: "replaced", LastTS: now.Add(-300 * time.Hour), Requests: 999, Delegations: 999, MaxContext: ptrInt64(999)},
+		{Version: 1, Session: "replaced", LastTS: now.Add(-200 * time.Hour), Requests: 999},
+		{Version: 1, Session: "a", LastTS: now, Requests: 10, Delegations: 2, InspectBash: 3, MaxContext: ptrInt64(100)},
+		{Version: 1, Session: "b", LastTS: now, Requests: 20, Delegations: 3, InspectBash: 4, MaxContext: ptrInt64(200)},
+		{Version: 1, Session: "direct", LastTS: now, Requests: 100, MaxContext: ptrInt64(300)},
+		{Version: 1, Session: "missing", LastTS: now, Requests: 1},
+		{Version: 1, Session: "no-time", Requests: 999},
+	} {
+		if err := recordHeadSession(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := os.ReadFile(headSessionPath())
+	info, _ := os.Stat(headSessionPath())
+	var out bytes.Buffer
+	if statsCommand([]string{"--json"}, &out) != 0 {
+		t.Fatal(out.String())
+	}
+	var report statsReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	h := report.Head
+	if h.Sessions != 4 || h.Requests != 131 || h.Delegations != 5 || h.InspectBash != 7 || h.MedianMaxContext == nil || *h.MedianMaxContext != 200 || h.MaxContext == nil || *h.MaxContext != 300 || h.RequestsPerDelegation == nil || *h.RequestsPerDelegation != 6 {
+		t.Fatalf("unexpected head stats: %s", out.String())
+	}
+	if len(report.Rows) != 0 || report.Skipped != 0 {
+		t.Fatal("Head-only statistics require a runs directory")
+	}
+	out.Reset()
+	if statsCommand(nil, &out) != 0 || !strings.Contains(out.String(), "Head\n") || !strings.Contains(out.String(), "requests_per_delegation") || !strings.Contains(out.String(), "median_max_context") {
+		t.Fatal(out.String())
+	}
+	after, _ := os.ReadFile(headSessionPath())
+	afterInfo, _ := os.Stat(headSessionPath())
+	if !bytes.Equal(before, after) || !info.ModTime().Equal(afterInfo.ModTime()) {
+		t.Fatal("stats changed Head evidence")
+	}
+	entries, err := os.ReadDir(orchHome())
+	if err != nil || len(entries) != 1 || entries[0].Name() != "measurements" {
+		t.Fatalf("unexpected writes: %v %v", entries, err)
+	}
+}
+
+func TestStatsHeadMedianAndWindow(t *testing.T) {
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name   string
+		values []int64
+		want   *float64
+	}{
+		{"empty", nil, nil},
+		{"observed-zero", []int64{0}, func() *float64 { v := 0.0; return &v }()},
+		{"even", []int64{11, 20}, func() *float64 { v := 15.5; return &v }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ORCH_HOME", t.TempDir())
+			for i, n := range tc.values {
+				if err := recordHeadSession(HeadSession{Version: 1, Session: string(rune('a' + i)), LastTS: now, MaxContext: ptrInt64(n)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stats, err := collectHeadStats(now)
+			if err != nil || stats.Sessions != len(tc.values) || stats.RequestsPerDelegation != nil || (stats.MedianMaxContext == nil) != (tc.want == nil) {
+				t.Fatalf("%+v %v", stats, err)
+			}
+			if tc.want != nil && *stats.MedianMaxContext != *tc.want {
+				t.Fatal(*stats.MedianMaxContext)
+			}
+			stats, err = collectHeadStats(now.Add(time.Nanosecond))
+			if err != nil || stats.Sessions != 0 || stats.MaxContext != nil {
+				t.Fatalf("cutoff not based on last_ts: %+v %v", stats, err)
+			}
+		})
+	}
+}
+
+func TestStatsHeadMissingReadOnlyAndMalformed(t *testing.T) {
+	t.Setenv("ORCH_HOME", filepath.Join(t.TempDir(), "absent"))
+	var out bytes.Buffer
+	if statsCommand([]string{"--json"}, &out) != 0 || !strings.Contains(out.String(), `"head":{"sessions":0`) || !strings.Contains(out.String(), `"requests_per_delegation":null`) {
+		t.Fatal(out.String())
+	}
+	if _, err := os.Stat(orchHome()); !os.IsNotExist(err) {
+		t.Fatal("stats created ORCH_HOME")
+	}
+	if err := os.MkdirAll(filepath.Dir(headSessionPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(headSessionPath(), []byte("{\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if statsCommand(nil, &out) != 0 || strings.Contains(out.String(), "unavailable") {
+		t.Fatal(out.String())
+	}
+	b, _ := os.ReadFile(headSessionPath())
+	if string(b) != "{\n" {
+		t.Fatal("stats rewrote the summary log")
+	}
+}
