@@ -32,6 +32,7 @@ type Worker struct {
 	Merged          bool      `json:"merged,omitempty"`
 	ModelID         string    `json:"model_id,omitempty"`
 	Terminal        string    `json:"terminal,omitempty"`
+	Rollout         string    `json:"rollout,omitempty"` // Codex session log, found from the contract path
 	Name            string    `json:"name"`
 	Key             string    `json:"key"`
 	Family          string    `json:"family"`

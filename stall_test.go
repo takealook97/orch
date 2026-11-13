@@ -17,12 +17,25 @@ const blockScreen = "ⓘ This content can’t be shown\nWe take extra care with 
 // The cyber_policy event as Codex writes it to its session log.
 const blockJSON = `{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request.","codex_error_info":"cyber_policy"}}}`
 
+// realBlockScreen is the Codex TUI as captured: a tool block, then the notice at column zero,
+// its indented body, the prompt and an indented footer.
+const realBlockScreen = "• Ran python3 -m venv /var/folders/x/T/\n  │ rv-x/venv\n  └ (no output)\n" +
+	"ⓘ This content can’t be shown\n" +
+	"  We take extra care with some cybersecurity requests. If you’re doing authorized security\n" +
+	"  work, apply for Daybreak to get broader access.\n" +
+	"  Learn more: https://help.openai.com/en/articles/20001326\n" +
+	"  Apply for Daybreak: https://openai.com/form/enterprise-trusted-access-for-cyber/\n" +
+	"› Ask Codex to do anything\n" +
+	"  GPT-6.1-Sol high · ~/Projects/x"
+
 func TestBlockHeuristics(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string
 		want       bool
 	}{
 		{"tui curly", blockScreen, true},
+		{"real screen after a tool block", realBlockScreen, true},
+		{"real screen below long tool output", "• Ran ls -la\n" + strings.Repeat("  │ file\n", 14) + realBlockScreen, true},
 		{"tui straight", "This content can't be shown", true},
 		{"older wording", "We take extra caution with cybersecurity requests.", true},
 		{"daybreak on", "Some cybersecurity requests are still limited, even when Daybreak is on.", true},

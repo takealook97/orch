@@ -56,6 +56,7 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 	pending := slices.Clone(names)
 	idleSince := map[string]time.Time{}
 	capacityWaiting := map[string]bool{}
+	rolloutWaiting := map[string]bool{} // the Codex rollout's last turn ended in an incident
 	var outcomes []waitOutcome
 	deadline := time.Now().Add(timeout)
 	lastRead := time.Time{}
@@ -164,48 +165,39 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 					continue
 				}
 
-				if readErr == nil && (info.Status == "idle" || info.Status == "done") {
-					inc, isIncident := screenIncident(text)
+				// The Codex rollout shows a turn that ended in an error even while Herdr says working.
+				inc, isIncident := workerRolloutIncident(runID, w)
+				rolloutWaiting[name] = isIncident
+				switch {
+				case isIncident:
+					capacityWaiting[name] = true
+				case readErr == nil && (info.Status == "idle" || info.Status == "done"):
+					inc, isIncident = screenIncident(text)
 					capacityWaiting[name] = isIncident
 					noteRecovered(runID, w, text, false)
-					if isIncident {
-						_, acted, exhausted, resumeErr := resumeOnIncident(runID, w, text)
-						if resumeErr != nil {
-							return outcomes, resumeErr
+				}
+				if isIncident {
+					acted, exhausted, resumeErr := resumeOn(inc, runID, w)
+					if resumeErr != nil {
+						return outcomes, resumeErr
+					}
+					if acted {
+						delete(idleSince, name)
+					}
+					if exhausted {
+						out, nw, err := incidentExhausted(r, runID, w, inc, text, fallback)
+						if err != nil {
+							return outcomes, err
 						}
-						if acted {
-							delete(idleSince, name)
+						outcomes = append(outcomes, out)
+						if nw != "" {
+							still = append(still, nw)
 						}
-						if exhausted {
-							saveTail(r, w, text)
-							why := "model at capacity"
-							if inc.name == blockIncident.name {
-								why = "content blocked by Codex cyber_policy"
-							}
-							if fallback {
-								// A cyber_policy stop follows the request, not the account: leave Codex.
-								nw, ferr := doFallbackFrom(runID, name, why, inc.name == blockIncident.name && w.Kind == "codex")
-								if ferr == nil {
-									outcomes = append(outcomes, waitOutcome{name, "fallback:" + nw, why + " → " + nw})
-									still = append(still, nw)
-									continue
-								}
-								if err := setStatus(runID, name, inc.name); err != nil {
-									return outcomes, err
-								}
-								outcomes = append(outcomes, waitOutcome{name, inc.name, ferr.Error()})
-								continue
-							}
-							if err := setStatus(runID, name, inc.name); err != nil {
-								return outcomes, err
-							}
-							outcomes = append(outcomes, waitOutcome{name, inc.name, why + "; retries exhausted. orch fallback " + name + " moves it to another key"})
-							continue
-						}
+						continue
 					}
 				}
 			}
-			if info.Status == "working" {
+			if info.Status == "working" && !rolloutWaiting[name] {
 				noteCapacityRecovered(runID, w)
 				delete(capacityWaiting, name)
 			}
@@ -254,6 +246,34 @@ func waitWorkers(runFlag string, names []string, timeout time.Duration, fallback
 		time.Sleep(timings.WaitPoll)
 	}
 	return outcomes, nil
+}
+
+// incidentExhausted ends a worker whose incident outlasted its retries: a fallback when
+// asked (nw is the replacement to keep waiting for), otherwise the incident status.
+func incidentExhausted(r *Run, runID string, w *Worker, inc incident, text string, fallback bool) (out waitOutcome, nw string, err error) {
+	name := w.Name
+	if text != "" {
+		saveTail(r, w, text)
+	}
+	why := "model at capacity"
+	if inc.name == blockIncident.name {
+		why = "content blocked by Codex cyber_policy"
+	}
+	if fallback {
+		// A cyber_policy stop follows the request, not the account: leave Codex.
+		nw, ferr := doFallbackFrom(runID, name, why, inc.name == blockIncident.name && w.Kind == "codex")
+		if ferr == nil {
+			return waitOutcome{name, "fallback:" + nw, why + " → " + nw}, nw, nil
+		}
+		if err := setStatus(runID, name, inc.name); err != nil {
+			return out, "", err
+		}
+		return waitOutcome{name, inc.name, ferr.Error()}, "", nil
+	}
+	if err := setStatus(runID, name, inc.name); err != nil {
+		return out, "", err
+	}
+	return waitOutcome{name, inc.name, why + "; retries exhausted. orch fallback " + name + " moves it to another key"}, "", nil
 }
 
 // waitTimeoutDetail states the agent state and the exact rerun command. A
