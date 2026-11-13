@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -97,11 +98,69 @@ func findCodexRollout(w *Worker) string {
 	sort.Slice(cands, func(i, j int) bool { return cands[i].mod.After(cands[j].mod) })
 	needles := [][]byte{[]byte(promptMarker(w.Name)), []byte(w.Contract)}
 	for _, c := range cands {
-		if fileHeadContains(c.path, needles) {
+		if fileHeadContains(c.path, needles) && rolloutHasPrompt(c.path, w) {
 			return c.path
 		}
 	}
 	return ""
+}
+
+// rolloutPromptEvent covers the two shapes a user prompt takes in a rollout: a user
+// message response_item with input_text parts, and the older user_message event_msg.
+type rolloutPromptEvent struct {
+	Type    string `json:"type"`
+	Payload struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Message string `json:"message"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"payload"`
+}
+
+func (ev rolloutPromptEvent) prompts() []string {
+	switch {
+	case ev.Type == "response_item" && ev.Payload.Type == "message" && ev.Payload.Role == "user":
+		var out []string
+		for _, c := range ev.Payload.Content {
+			if c.Type == "input_text" {
+				out = append(out, c.Text)
+			}
+		}
+		return out
+	case ev.Type == "event_msg" && ev.Payload.Type == "user_message":
+		return []string{ev.Payload.Message}
+	}
+	return nil
+}
+
+// rolloutHasPrompt reports whether the session itself was prompted as the worker: one of
+// its own user prompts starts with the worker's marker and names its contract. Quotes of
+// that prompt in tool output or assistant text belong to other sessions and do not count.
+func rolloutHasPrompt(path string, w *Worker) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	marker := promptMarker(w.Name)
+	rd := bufio.NewReader(io.LimitReader(f, rolloutHeadBytes))
+	for {
+		line, err := rd.ReadBytes('\n')
+		var ev rolloutPromptEvent
+		if json.Unmarshal(line, &ev) == nil {
+			for _, text := range ev.prompts() {
+				if strings.HasPrefix(strings.TrimSpace(text), marker) && strings.Contains(text, w.Contract) {
+					return true
+				}
+			}
+		}
+		if err != nil {
+			return false
+		}
+	}
 }
 
 func fileHeadContains(path string, needles [][]byte) bool {

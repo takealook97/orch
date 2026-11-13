@@ -145,7 +145,7 @@ func TestCodexRolloutPathCachesAndRateLimits(t *testing.T) {
 		t.Fatalf("found %q before the file exists", p)
 	}
 	p := filepath.Join(dir, "rollout-x.jsonl")
-	writeRollout(t, p, promptMarker("b")+" Read contract "+contract, rolloutStarted)
+	writeRollout(t, p, fmt.Sprintf(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":%q}]}}`, promptMarker("b")+" Read contract "+contract), rolloutStarted)
 
 	// Assert: a second scan inside the gap is skipped.
 	if got := codexRolloutPath(r.ID, w); got != "" {
@@ -317,4 +317,101 @@ func hasEvent(r *Run, what string) bool {
 		}
 	}
 	return false
+}
+
+func TestFindCodexRolloutIgnoresQuotedPromptInToolOutput(t *testing.T) {
+	// Arrange: a newer reviewer session quotes the worker's prompt in a tool output.
+	now := time.Now()
+	dir := fakeCodexHome(t, now)
+	w := &Worker{Name: "impl", Kind: "codex", Contract: "/runs/unique/contracts/impl.md", Started: now.Add(-time.Minute)}
+	mine := filepath.Join(dir, "rollout-actual.jsonl")
+	other := filepath.Join(dir, "rollout-reviewer.jsonl")
+	prompt := promptMarker(w.Name) + " Read contract " + w.Contract
+	writeRollout(t, mine, fmt.Sprintf(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":%q}]}}`, prompt), rolloutBlockLine)
+	writeRollout(t, other,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"[orch worker reviewer] Read contract /runs/unique/contracts/reviewer.md"}]}}`,
+		fmt.Sprintf(`{"type":"response_item","payload":{"type":"function_call_output","output":%q}}`, prompt),
+		fmt.Sprintf(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}}`, prompt),
+		rolloutStarted)
+	future := now.Add(time.Second)
+	if err := os.Chtimes(other, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	got := findCodexRollout(w)
+
+	// Assert
+	if got != mine {
+		t.Fatalf("selected %s, want the worker's own rollout %s", got, mine)
+	}
+}
+
+func TestFindCodexRolloutAcceptsUserMessageEvent(t *testing.T) {
+	now := time.Now()
+	dir := fakeCodexHome(t, now)
+	w := &Worker{Name: "impl", Kind: "codex", Contract: "/runs/unique/contracts/impl.md", Started: now.Add(-time.Minute)}
+	p := filepath.Join(dir, "rollout-old.jsonl")
+	writeRollout(t, p, fmt.Sprintf(`{"type":"event_msg","payload":{"type":"user_message","message":%q}}`, "  "+promptMarker(w.Name)+" Read contract "+w.Contract))
+	if got := findCodexRollout(w); got != p {
+		t.Fatalf("got %q want %q", got, p)
+	}
+}
+
+func TestReaperRolloutKeepsApprovalAlertFirst(t *testing.T) {
+	// Arrange: an old turn error is last in the rollout while an approval dialog is up.
+	r, w, _ := rolloutFixture(t, "approval required", rolloutBlockLine)
+	base := herdrRun
+	herdrRun = func(args ...string) ([]byte, error) {
+		if len(args) >= 3 && args[0] == "agent" && args[1] == "get" {
+			return []byte(`{"result":{"agent":{"agent_status":"blocked"}}}`), nil
+		}
+		return base(args...)
+	}
+	rp := newReaper(r.ID)
+	var log strings.Builder
+
+	// Act
+	for range 3 {
+		if _, err := rp.once(&log); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Assert
+	got, _ := loadRun(r.ID)
+	b := got.worker(w.Name)
+	if !strings.Contains(b.Alert, "approval") || !b.BlockSeen.IsZero() {
+		t.Fatalf("alert=%q blockSeen=%s", b.Alert, b.BlockSeen)
+	}
+}
+
+func TestReaperRolloutKeepsQuotaAlertFirst(t *testing.T) {
+	for _, status := range []string{"idle", "working"} {
+		t.Run(status, func(t *testing.T) {
+			// Arrange: an old turn error is last in the rollout while the screen shows a quota stop.
+			screen := "You've hit your usage limit. Try again later."
+			r, w, texts := rolloutFixture(t, screen, rolloutBlockLine)
+			base := herdrRun
+			herdrRun = func(args ...string) ([]byte, error) {
+				if len(args) >= 3 && args[0] == "agent" && args[1] == "get" {
+					return []byte(fmt.Sprintf(`{"result":{"agent":{"agent_status":%q}}}`, status)), nil
+				}
+				return base(args...)
+			}
+
+			// Act
+			var log strings.Builder
+			if _, err := newReaper(r.ID).once(&log); err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert
+			got, _ := loadRun(r.ID)
+			b := got.worker(w.Name)
+			if !strings.Contains(b.Alert, "usage quota") || !b.BlockSeen.IsZero() || len(*texts) != 0 {
+				t.Fatalf("alert=%q blockSeen=%s sends=%d", b.Alert, b.BlockSeen, len(*texts))
+			}
+		})
+	}
 }

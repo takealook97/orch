@@ -135,17 +135,8 @@ func (rp *reaper) supervise(w *Worker, log io.Writer) {
 	}
 	// Herdr may keep reporting "working" after a Codex turn ended in an error; the rollout
 	// is authoritative, and while it shows the error a "working" status is no recovery.
-	if inc, ok := workerRolloutIncident(rp.runID, w); ok {
-		delete(rp.stalled, w.Name)
-		acted, exhausted, err := resumeOn(inc, rp.runID, w)
-		reportIncident(w, inc, acted, exhausted, err, stamp, alert)
-		return
-	}
+	// A current approval dialog or quota stop still comes first.
 	switch info.Status {
-	case "working":
-		delete(rp.stalled, w.Name)
-		noteRecovered(rp.runID, w, "", true)
-		return
 	case "blocked":
 		delete(rp.stalled, w.Name)
 		rp.blocked[w.Name]++
@@ -155,9 +146,25 @@ func (rp *reaper) supervise(w *Worker, log io.Writer) {
 		return
 	case "idle", "done":
 	default:
+		if inc, ok := workerRolloutIncident(rp.runID, w); ok {
+			screen, _ := agentRead(workerAgent(w), 40)
+			rp.onRolloutIncident(w, inc, screen, stamp, alert)
+			return
+		}
+		if info.Status == "working" {
+			delete(rp.stalled, w.Name)
+			noteRecovered(rp.runID, w, "", true)
+		}
 		return
 	}
 	screen, err := agentRead(workerAgent(w), 40)
+	if inc, ok := workerRolloutIncident(rp.runID, w); ok {
+		if err != nil {
+			screen = ""
+		}
+		rp.onRolloutIncident(w, inc, screen, stamp, alert)
+		return
+	}
 	if err != nil {
 		return
 	}
@@ -192,6 +199,18 @@ func (rp *reaper) supervise(w *Worker, log io.Writer) {
 	case exhausted:
 		alert("it stopped without writing a result and did not resume after a nudge")
 	}
+}
+
+// onRolloutIncident acts on a turn error from the rollout unless the screen shows a quota
+// stop, which keeps priority as it does in wait.
+func (rp *reaper) onRolloutIncident(w *Worker, inc incident, screen string, stamp func(string, ...any), alert func(string)) {
+	delete(rp.stalled, w.Name)
+	if quotaText(screen) {
+		alert("usage quota is exhausted; run orch fallback " + w.Name)
+		return
+	}
+	acted, exhausted, err := resumeOn(inc, rp.runID, w)
+	reportIncident(w, inc, acted, exhausted, err, stamp, alert)
 }
 
 // reportIncident logs a failed resume and alerts the Head once retries are exhausted.
