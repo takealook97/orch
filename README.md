@@ -105,6 +105,8 @@ make check       # go vet, go test, playbook schema check
 git config core.hooksPath .githooks
 ```
 
+The pre-commit hook runs `gofmt -l`, `go build ./...` and `go vet ./...` when Go files are staged; it does not run tests.
+
 Commits use an English `type: imperative summary` subject of at most 72 characters. The local hook enforces the format. Allowed types: `feat`, `fix`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `perf`, `security`, `revert`.
 
 ## Goals
