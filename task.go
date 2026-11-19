@@ -1325,7 +1325,7 @@ func testCommandCached(runID, line, cwd string, maxLines, timeout int, asJSON, f
 			fmt.Fprintln(stderr, "orch:", err)
 			return 1
 		}
-		fmt.Fprintln(stdout, taskReport(t, asJSON))
+		fmt.Fprintln(stdout, testCacheReport(taskReport(t, asJSON), entry.Disabled, asJSON))
 		if err := recordTaskMeasurement(t); err != nil {
 			fmt.Fprintln(stderr, "orch: warning: persist test measurement:", err)
 		}
@@ -1346,12 +1346,12 @@ func testCommandCached(runID, line, cwd string, maxLines, timeout int, asJSON, f
 	}
 	if asJSON {
 		b, _ := json.Marshal(map[string]any{"status": testStatus(tr, e), "exit_code": tr.ExitCode, "duration_ms": tr.DurationMS, "test": tr, "dir": filepath.Dir(path)})
-		fmt.Fprintln(stdout, string(b))
+		fmt.Fprintln(stdout, testCacheReport(string(b), entry.Disabled, asJSON))
 	} else {
 		var b strings.Builder
 		fmt.Fprintf(&b, "status: %s\nduration: %d ms\n", testStatus(tr, e), tr.DurationMS)
 		writeTest(&b, "", tr)
-		fmt.Fprint(stdout, b.String())
+		fmt.Fprintln(stdout, testCacheReport(b.String(), entry.Disabled, asJSON))
 	}
 	if testStatus(tr, e) != "done" {
 		return 1

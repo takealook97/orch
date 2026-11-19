@@ -184,3 +184,107 @@ func TestTestCacheHelp(t *testing.T) {
 		t.Fatalf("help: %d %s %s", code, out.String(), errs.String())
 	}
 }
+
+func TestTestCacheNestedRepositories(t *testing.T) {
+	for _, mode := range []string{"ignored", "ignored-container", "gitfile", "submodule"} {
+		t.Run(mode, func(t *testing.T) {
+			repo, line := testCacheFixture(t)
+			if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("nested/\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			testCacheGit(t, repo, "add", ".gitignore")
+			testCacheGit(t, repo, "commit", "-qm", "ignore nested repositories")
+			// Seed a receipt to prove detection blocks reading an existing pass.
+			testCacheCall(t, repo, line)
+			if mode == "submodule" {
+				sha, err := cacheGit(repo, "rev-parse", "HEAD")
+				if err != nil {
+					t.Fatal(err)
+				}
+				testCacheGit(t, repo, "update-index", "--add", "--cacheinfo", "160000,"+sha+",nested")
+				testCacheGit(t, repo, "commit", "-qm", "add gitlink")
+			} else {
+				nested := filepath.Join(repo, "nested")
+				if mode == "ignored-container" || mode == "gitfile" {
+					nested = filepath.Join(nested, "deep", "child")
+				}
+				if err := os.MkdirAll(nested, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "gitfile" {
+					testCacheGit(t, repo, "worktree", "add", "--detach", nested)
+				} else {
+					testCacheGit(t, nested, "init", "-q")
+				}
+			}
+			for i := 0; i < 2; i++ {
+				code, out := testCacheCall(t, repo, line)
+				if code != 0 || strings.Contains(out, "cached") || !strings.Contains(out, "cache: disabled (nested repositories)") {
+					t.Fatalf("nested reuse: %d %s", code, out)
+				}
+			}
+			testCacheCount(t, 3)
+			key, entry := testCacheKey(line, repo)
+			if key != "" || entry.Disabled != "disabled (nested repositories)" {
+				t.Fatalf("nested key: %q %#v", key, entry)
+			}
+			var v map[string]any
+			_, out := testCacheCall(t, repo, line, "--json")
+			if err := json.Unmarshal([]byte(out), &v); err != nil || v["cache"] != entry.Disabled {
+				t.Fatalf("JSON: %s (%v)", out, err)
+			}
+			// No new receipts may be written while nested repositories exist.
+			receipts, err := os.ReadDir(filepath.Join(orchHome(), "test-cache"))
+			if err != nil || len(receipts) != 1 {
+				t.Fatalf("receipts: %v %v", receipts, err)
+			}
+		})
+	}
+}
+
+func TestTestCacheEnvironment(t *testing.T) {
+	repo, line := testCacheFixture(t)
+	t.Setenv("FOO", "0")
+	testCacheCall(t, repo, line)
+	if _, out := testCacheCall(t, repo, line); !strings.Contains(out, "cached") {
+		t.Fatalf("same env missed: %s", out)
+	}
+	t.Setenv("FOO", "1")
+	if code, out := testCacheCall(t, repo, line); code != 0 || strings.Contains(out, "cached") {
+		t.Fatalf("changed env reused: %d %s", code, out)
+	}
+	if _, out := testCacheCall(t, repo, line); !strings.Contains(out, "cached") {
+		t.Fatalf("same changed env missed: %s", out)
+	}
+	testCacheCount(t, 2)
+	// Reproduce the original false pass, including its exit status.
+	line += `; test "$FOO" = 0`
+	t.Setenv("FOO", "0")
+	testCacheCall(t, repo, line)
+	t.Setenv("FOO", "1")
+	if code, out := testCacheCall(t, repo, line); code != 1 || strings.Contains(out, "cached") {
+		t.Fatalf("false pass: %d %s", code, out)
+	}
+}
+
+func TestTestCacheVolatileEnvironment(t *testing.T) {
+	repo, line := testCacheFixture(t)
+	testCacheCall(t, repo, line)
+	for _, key := range []string{"PWD", "OLDPWD", "SHLVL", "_", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "WINDOWID", "SSH_AUTH_SOCK", "SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY", "ORCH_RUN", "ORCH_WORKER"} {
+		t.Setenv(key, "different-volatile-value")
+		if code, out := testCacheCall(t, repo, line); code != 0 || !strings.Contains(out, "cached") {
+			t.Fatalf("%s missed: %d %s", key, code, out)
+		}
+	}
+	testCacheCount(t, 1)
+	t.Setenv("ORCH_RUN", "")
+	for _, key := range []string{"ORCH_MODEL", "ORCH_SOME_FUTURE_OPTION"} {
+		t.Setenv(key, "different-setting")
+		if _, out := testCacheCall(t, repo, line); strings.Contains(out, "cached") {
+			t.Fatalf("%s wrongly excluded: %s", key, out)
+		}
+	}
+	if testCacheEnvironment([]string{"B=2", "A=1"}) != testCacheEnvironment([]string{"A=1", "B=2"}) {
+		t.Fatal("environment order affected digest")
+	}
+}
