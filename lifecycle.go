@@ -328,9 +328,11 @@ func markReported(runID, name string) error {
 	})
 }
 
+// setStatus never rewrites a closed worker: a wait or fallback that read its
+// state before a competing close must not replace the recorded outcome.
 func setStatus(runID, name, st string) error {
 	return withRun(runID, func(r *Run) error {
-		if w := r.worker(name); w != nil && w.Status != st {
+		if w := r.worker(name); w != nil && w.Closed.IsZero() && w.Status != st {
 			w.Status = st
 			r.event("status %s=%s", name, st)
 		}
