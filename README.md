@@ -42,8 +42,10 @@ orch ask --model codex-low-h "list the implementations of Store and their call p
 orch do  --model codex-high-m --own 'parser/**' --test "go test ./parser/..." "handle empty input in Parse"
 orch do  --model codex-high-l --own 'docs/**' --background "draft the changelog for v0.4"      # returns task-N at once
 orch wait task-2                                                                             # same report when it finishes
-orch test "go test ./..."                                                                    # no model: exit code, failing names, capped excerpt
+orch test "<repo canonical affected check>"                                                  # no model: exit code, failing names, capped excerpt
 ```
+
+`orch test` reuses a pass for the same command and cwd on an identical clean Git tree. Dirty trees and failed commands are never cached. Use `orch test --fresh "<repo canonical affected check>"` after an environment change; a successful fresh run updates the cache. Run the repository's canonical affected check once on the final tree.
 
 Flags go before the text; a text that starts with `-` goes after `--` (`orch ask --model codex-low-h -- "-1 or 1?"`).
 

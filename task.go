@@ -1054,6 +1054,8 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 	var fresh bool
 	if kind == "ask" {
 		fs.BoolVar(&fresh, "fresh", false, "bypass cached answer")
+	} else if kind == "test" {
+		fs.BoolVar(&fresh, "fresh", false, "bypass cached test pass (use after an environment change)")
 	}
 	var own ownedFlags
 	fs.Var(&own, "own", "owned globs")
@@ -1071,6 +1073,12 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		fs.IntVar(&diffLines, "diff-lines", defaultDiffLines, "include the net diff when added+deleted lines are at most N; 0 disables")
 		fs.StringVar(&servesFlag, "serves", "", "goal criteria, comma-separated")
 		fs.StringVar(&fixOf, "fix-of", "", "fix shard")
+	}
+	if kind == "test" && len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprintln(stdout, `Usage: orch test [--fresh] [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"`)
+		fs.SetOutput(stdout)
+		fs.PrintDefaults()
+		return 0
 	}
 	pos, err := parseTask(fs, args)
 	if err != nil {
@@ -1113,7 +1121,7 @@ func taskCommand(kind string, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if kind == "test" {
-		return testCommand(pos[0], *cwd, *maxLines, *timeout, *asJSON, stdout, stderr)
+		return testCommandCached("", pos[0], *cwd, *maxLines, *timeout, *asJSON, fresh, stdout, stderr)
 	}
 	m, err := modelByKey(*key)
 	if err != nil {
@@ -1280,6 +1288,17 @@ func testCommand(line, cwd string, maxLines, timeout int, asJSON bool, stdout, s
 }
 
 func testCommandForRun(runID, line, cwd string, maxLines, timeout int, asJSON bool, stdout, stderr io.Writer) int {
+	return testCommandCached(runID, line, cwd, maxLines, timeout, asJSON, false, stdout, stderr)
+}
+
+func testCommandCached(runID, line, cwd string, maxLines, timeout int, asJSON, fresh bool, stdout, stderr io.Writer) int {
+	cacheKey, entry := testCacheKey(line, cwd)
+	if !fresh {
+		if cached := lookupTestCache(cacheKey, entry); cached != nil {
+			fmt.Fprintln(stdout, cachedTestReport(cached, asJSON))
+			return 0
+		}
+	}
 	var path string
 	var err error
 	if runID == "" {
@@ -1313,6 +1332,7 @@ func testCommandForRun(runID, line, cwd string, maxLines, timeout int, asJSON bo
 		if t.Status != "done" {
 			return 1
 		}
+		storeTestCache(cacheKey, entry, t.Dir, path, t.ID, t.Run)
 		return 0
 	}
 	path = filepath.Join(orchHome(), "tests", time.Now().Format("20060102-150405.000")+".log")
@@ -1333,9 +1353,10 @@ func testCommandForRun(runID, line, cwd string, maxLines, timeout int, asJSON bo
 		writeTest(&b, "", tr)
 		fmt.Fprint(stdout, b.String())
 	}
-	if tr.ExitCode != 0 || e != nil {
+	if testStatus(tr, e) != "done" {
 		return 1
 	}
+	storeTestCache(cacheKey, entry, filepath.Dir(path), path, filepath.Base(path), "")
 	return 0
 }
 

@@ -25,7 +25,7 @@ Delegation
   orch ask --model K [--cwd DIR] [--max-output N] [--timeout MS] [--account same|hook] [--background] [--fresh] [--json] "question"
   orch recall "query" [--limit N] [--all-repos] [--json]  search past answers and results
   orch do --model K --own GLOBS [--test CMD] [--worktree DIR|--no-worktree] [--cwd DIR] [--background] [--timeout MS] [--account same|hook] [--diff-lines N] [--json] "requirement"
-  orch test [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
+  orch test [--fresh] [--cwd DIR] [--max-lines N] [--timeout MS] [--json] "CMD"
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
 	orch models [--markdown|--json]         seven canonical keys (codex-medium-h: deprecated Luna alias)

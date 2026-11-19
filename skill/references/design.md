@@ -680,8 +680,8 @@ If it doesn't pass, one writer proceeds at a time. Recon and verification prep s
 - Only one worker writes to a given checkout. Split into worktrees for concurrent writers.
 - If a read-only worker shares a checkout with a writer, the writer that changes its input must not run at the same time — or hand the reader a snapshot (a worktree or commit hash) as input.
 - If several shards must change a shared file (config, a lock file, a schema), give that file to **exactly one worker** and have the rest wait for its result. This is a legitimate case for serialization.
-- Even after every shard's verification passes, **run one full verification pass on the integrated result.** Shard-level verification can't catch interactions between shards.
-- **Merge clean worktrees in one pass, verify once.** Run the build, type check, full test suite, and interface contract tests against the merged tree. Worktrees only prevent file conflicts, not semantic conflicts (§17 C2), and those contract tests are what catch them. On failure, revert merges newest first to find the culprit. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema).
+- Even after every shard's verification passes, **run the repository's canonical affected check, once on the final tree.** Shard-level verification can't catch interactions between shards.
+- **Merge clean worktrees in one pass, verify once.** Run the repository's canonical affected check, once on the final tree. Worktrees only prevent file conflicts, not semantic conflicts (§17 C2), and the canonical check must cover the affected interfaces. On failure, revert merges newest first to find the culprit. Merge one at a time only for worktrees that touch shared files (config, lockfiles, schema).
 
 ### 11.5 Example flow
 
@@ -694,7 +694,7 @@ produce                 [codex-high-m:1 wt1][codex-high-l:2 wt2][claude-high-m:3
 verify                        [codex-low-h mech:1][claude-medium-m critical:1][gemini-medium-m neutral:1]  ← as soon as shard 1 finishes
                                     [codex-low-h mech:2][claude-medium-m critical:2][gemini-medium-m neutral:2]
                                          [codex-low-h mech:3][codex-high-m critical:3][gemini-medium-m neutral:3]
-integrate                                                    [codex-high-m merge][codex-low-h full tests][gemini-medium-m full checklist]
+integrate                                                    [codex-high-m merge][codex-low-h the repository's canonical affected check, once on the final tree][gemini-medium-m full checklist]
 verdict                                                                         [Head]
 ```
 
@@ -714,7 +714,7 @@ Playbooks live at `~/.orch/playbooks/<type>.yaml`. Head picks a type, adjusts it
 | Documentation | light | `codex-low-h`/`gemini-medium-m` gather material | `claude-medium-m` | neutral `gemini-medium-m` + critical `codex-high-m` (facts, consistency) |
 | Analysis | full | `codex-low-h` (data extraction) | `codex-high-m`/`claude-high-m` | mechanical `codex-low-h` (recompute) + critical (different family) |
 | Image generation | light | `gemini-medium-m` (references, style analysis) | whichever CLI has generation tooling (D4) | neutral `gemini-medium-m` (requirements check) + critical `claude-medium-m` (visual quality) |
-| Refactoring | full | `codex-low-h` (impact scope) | `claude-high-m` (core) + `codex-high-l` per mechanical shard | mechanical (full tests, same behavior) + critical `claude-high-m` |
+| Refactoring | full | `codex-low-h` (impact scope) | `claude-high-m` (core) + `codex-high-l` per mechanical shard | mechanical (the repository's canonical affected check, once on the final tree; same behavior) + critical `claude-high-m` |
 | Design/architecture review | full | `codex-low-h` + `gemini-medium-m` | `claude-high-m` | critical `codex-high-m` + neutral `gemini-medium-m` if user-facing output changed |
 | Simple question, single-file edit | direct | — | Head | orch workers/test, if needed |
 

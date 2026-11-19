@@ -40,6 +40,8 @@ Before selecting full/full+, read [advanced procedures — modes, contracts and 
 
 Before choosing a key for repeated work, check `orch stats`.
 
+`orch test` reuses a pass for an identical clean tree; use `--fresh` only after an environment change.
+
 Before new research, use `orch recall "query"`; use `--all-repos` when needed. Ask caches successful identical questions; `--fresh` bypasses the cache.
 
 | Work | Channel |
