@@ -96,7 +96,7 @@ func TestUpdateDryRunLeavesCheckout(t *testing.T) {
 	if updateTestGit(t, clone, "rev-parse", "HEAD") != before || fileExists(filepath.Join(clone, "installed.marker")) {
 		t.Fatal("dry run changed the checkout")
 	}
-	if !strings.Contains(out.String(), "would fast-forward 1") {
+	if !strings.Contains(out.String(), "would fetch origin/main") {
 		t.Fatal(out.String())
 	}
 }
@@ -175,16 +175,20 @@ func TestUpdateSecondRunSkipsWhileLocked(t *testing.T) {
 	}
 }
 
-func TestUpdateModelsSkippedWhenOrchSkipped(t *testing.T) {
+func TestUpdateModelsRunsRefreshEvenWhenCheckoutSkipped(t *testing.T) {
 	clone, _ := updateFixture(t)
 	os.WriteFile(filepath.Join(clone, "a.txt"), []byte("local\n"), 0600)
 	writeUpdateConfig(t, clone, "")
+	var got []string
+	orig := updateRefreshModels
+	updateRefreshModels = func(_ context.Context, o modelsRefreshOptions) error { got = append(got, o.Repo); return nil }
+	t.Cleanup(func() { updateRefreshModels = orig })
 	var out bytes.Buffer
 	if err := runUpdate(context.Background(), updateOptions{Models: true, Out: &out}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "models: skip") {
-		t.Fatal(out.String())
+	if len(got) != 1 || got[0] != clone || !strings.Contains(out.String(), "orch: skip: working tree is dirty") || !strings.Contains(out.String(), "models: done") {
+		t.Fatalf("refresh calls %v, out %s", got, out.String())
 	}
 }
 
@@ -261,8 +265,8 @@ func TestInstallLaunchAgentDarwin(t *testing.T) {
 		t.Fatalf("launchctl calls: %v", calls)
 	}
 	calls = nil
-	if _, err := install(repo, false); err != nil || len(calls) != 0 {
-		t.Fatal("reinstall re-registered an unchanged agent", err, calls)
+	if _, err := install(repo, false); err != nil || strings.Join(calls, ",") != "print" {
+		t.Fatal("reinstall re-registered a loaded, unchanged agent", err, calls)
 	}
 	rep := &installReport{}
 	if err := uninstallLaunchAgent(rep, true); err != nil {

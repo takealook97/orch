@@ -109,27 +109,37 @@ func installLaunchAgent(rep *installReport, bin string, dry bool, save func(stri
 		rep.add("preserve foreign launch agent: %s", path)
 		return nil
 	}
+	same := false
 	if cur, err := os.ReadFile(path); err == nil && string(cur) == want {
-		rep.add("launch agent up to date: %s", path)
-		return nil
+		same = true
+		// An identical file is not proof of registration: a past bootstrap may have failed.
+		if launchctlRun("print", launchDomain()+"/"+launchAgentLabel) == nil {
+			rep.add("launch agent up to date: %s", path)
+			return nil
+		}
+		rep.add("launch agent not loaded, registering: %s", path)
+	} else {
+		rep.add("launch agent: %s (daily 03:00 orch update --models)", path)
 	}
-	rep.add("launch agent: %s (daily 03:00 orch update --models)", path)
-	if err := save(path); err != nil {
-		return err
+	if !same {
+		if err := save(path); err != nil {
+			return err
+		}
 	}
 	if dry {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	if err := atomicStateWrite(path, []byte(want)); err != nil {
-		return err
+	if !same {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return err
+		}
+		if err := atomicStateWrite(path, []byte(want)); err != nil {
+			return err
+		}
 	}
 	_ = launchctlRun("bootout", launchDomain(), path)
 	if err := launchctlRun("bootstrap", launchDomain(), path); err != nil {
-		// The file is in place; launchd loads it at next login even if bootstrap failed now.
-		rep.add("launchd: bootstrap failed (loads at next login): %v", err)
+		return fmt.Errorf("launch agent %s written but not registered (rerun orch install): %w", path, err)
 	}
 	return nil
 }
