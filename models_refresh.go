@@ -292,6 +292,9 @@ func repoSkipReason(ctx context.Context, repo string) (string, error) {
 	if branch != def {
 		return fmt.Sprintf("on branch %s, not default branch %s", branch, def), nil
 	}
+	if updateLiveWriters(repo) > 0 {
+		return "live orch writer in checkout", nil
+	}
 	if _, err := gitOut(ctx, repo, "fetch", "--quiet"); err != nil {
 		return "git fetch failed: " + err.Error(), nil
 	}
