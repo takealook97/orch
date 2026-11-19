@@ -57,6 +57,7 @@ Maintenance
   orch measure import|collect|report             explicit local usage and quality evidence (JSON import on stdin)
   orch uninstall [--repo DIR] [--apply]   preview owned removal; --apply backs up before removal
   orch install [--repo DIR] [--dry-run]   install constitution, hooks, skill, and playbooks (after backup)
+  orch update [--dry-run] [--quiet] [--models]  fast-forward registered checkouts from origin, then reinstall
   orch playbook check [DIR]
   orch goal new|freeze|status|check|note|extend|end  Frozen goals and budgets
   orch spawn ... --serves N[,M] [--fix-of SHARD]  Work for an active goal
@@ -71,6 +72,7 @@ func main() {
 	if len(os.Args) < 2 || os.Args[1] != "stats" {
 		maybeAutoPrune(os.Args[1:])
 	}
+	maybeAutoUpdate(os.Args[1:])
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
@@ -118,7 +120,7 @@ func splitList(s string) []string {
 // Repository/documentation utilities do not manage runs or panes.
 // Worker authorization remains a separate gate in run.
 func commandNeedsHeadIdentity(name string) bool {
-	return !contains1([]string{"docs", "models", "help", "playbook", "doctor", "measure", "__measure-head", "stats"}, name)
+	return !contains1([]string{"docs", "models", "help", "playbook", "doctor", "measure", "__measure-head", "stats", "update"}, name)
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -167,12 +169,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 		rep, err := uninstall(*repo, *apply && !*dry)
+		if err == nil {
+			err = uninstallLaunchAgent(rep, *apply && !*dry)
+		}
 		if rep != nil {
 			for _, l := range rep.lines {
 				fmt.Fprintln(stdout, l)
 			}
 		}
 		return failIf(fail, err)
+	case "update":
+		return updateCommand(rest, stdout, stderr)
 	case "recall":
 		return recallCommand(rest, stdout, stderr)
 	case "ask", "do", "test":

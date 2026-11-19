@@ -133,6 +133,18 @@ orch doctor
 
 The skill and playbooks are symlinks, so pulling updates them immediately. The constitution block and hooks are copies, so rerun `make install` after every pull; `orch doctor` reports "differs from source" when they are stale. If a hook changed, trust it again in Codex `/hooks`.
 
+### Automatic updates
+
+`orch update` does the pull and reinstall for every checkout in `~/.orch/update.json` (default: `~/Projects/orch`, `~/Projects/vat`, `~/Projects/herdr-cockpit`):
+
+```json
+{"repos": [{"name": "orch", "path": "~/Projects/orch", "install": "make build link && ./bin/orch install --repo ."}]}
+```
+
+For each checkout it runs `git fetch` and `git merge --ff-only`, then the install command through `sh -c` in the checkout. It skips a checkout, and logs why, when the working tree is dirty, the branch is not origin's default branch, a live orch worker writes there, or the local branch is ahead of or diverged from origin. It never pushes. A global lock (`~/.orch/update.lock`) allows one run at a time, and every outcome is one line in `~/.orch/update.log`. `--dry-run` reports without merging; `--models` then runs the model id refresh when the orch checkout was not skipped.
+
+Any orch command starts a detached `orch update --quiet` when `~/.orch/update.stamp` is older than 6 hours (`ORCH_AUTO_UPDATE_INTERVAL`, a Go duration such as `12h`) and does not wait for it. Workers (`ORCH_ROLE=worker`) never trigger it; `ORCH_AUTO_UPDATE=0` turns it off. On macOS `orch install` also registers `~/Library/LaunchAgents/ai.deepeet.orch-update.plist`, which runs `orch update --models` daily at 03:00 with output in `~/.orch/update.launchd.log`; `orch uninstall --apply` removes it.
+
 ## 7. Rollback and uninstall
 
 `orch install` backs up existing files immediately before changes:

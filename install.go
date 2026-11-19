@@ -404,6 +404,10 @@ func install(repo string, dry bool) (*installReport, error) {
 			}
 		}
 	}
+	// ⑤ nightly self-update agent (macOS)
+	if err := installLaunchAgent(rep, bin, dry, save); err != nil {
+		return rep, err
+	}
 	if !dry {
 		if ownership != nil && (ownership.Bin != bin || ownership.Block != constitutionBlock) {
 			if err := save(ownershipPath()); err != nil {
