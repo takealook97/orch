@@ -212,7 +212,7 @@ func TestRefreshPushesFromWorktreeAndSyncsCheckout(t *testing.T) {
 	if !slices.Equal(rec.calls, wantCalls) {
 		t.Fatalf("calls = %q", rec.calls)
 	}
-	if !strings.Contains(out.String(), "fable: skip") {
+	if !strings.Contains(out.String(), "opus: skip") {
 		t.Fatalf("claude family should be skipped with a reason:\n%s", out.String())
 	}
 	assertNoRefreshLeftovers(t, repo)

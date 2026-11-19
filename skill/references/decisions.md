@@ -10,6 +10,8 @@ Head only plans/evaluates/instructs/reviews/judges/communicates. All execution g
 
 2026-11-03: Concurrent writers automatically get Git worktrees, including across Heads and backends. Scope checks and collect commits run in each worker's checkout. `orch merge` explicitly integrates committed branches, aborts conflicts, and removes worktree directories and branches only after integration checks pass; run end and gc preserve unmerged or dirty work. Explicit `--worktree`, `--no-worktree`, and DAG `worktree: none` retain caller control.
 
+2026-11-19: claude-high-m reverted from fable-5.2-medium to opus-5.5-medium at the owner's request.
+
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Opus uses `--effort medium` (or low); Sonnet uses `--effort medium` | Design-doc recommendation; Opus effort: medium or low only, never high |
