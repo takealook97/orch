@@ -13,9 +13,11 @@ orch prompt impl
 orch wait impl                 # judged by the status line in the result file -> finished panes close immediately
 orch spawn --model claude-medium-m --name crit --role verify-critical --reviews impl
 orch prompt crit && orch wait crit
-# If concurrent writers created worktrees: orch merge --test "go test ./..." (merge, test, remove)
+# If concurrent writers created worktrees: orch merge --test "<repo canonical affected check>" (merge, test, remove)
 orch run end                   # close all remaining panes and confirm removal
 ```
+
+Use the repository's canonical affected check once on the final tree; do not substitute the full suite.
 
 ## DAG and effect measurement
 
@@ -134,7 +136,7 @@ The goal file has `## Request`, `## Criteria`, `## Non-goals`, `## Scope`, and `
 ```markdown
 ## Criteria
 1. The requested behavior passes its regression test
-   - check: go test ./...
+   - check: <repo canonical affected check>
 ## Scope
 - ~/Projects/example/**
 ## Budget
@@ -174,7 +176,7 @@ orch run end                                                  # close every pane
   nodes:
     - {name: recon-api, model: codex-low-h, role: recon, purpose: explore}
     - {name: impl-api, model: codex-high-m, role: produce, purpose: impl, needs: [recon-api], worktree: ../wt-api}
-    - {name: mech-api, run: "go vet ./... && go test ./...", role: verify-mech, worktree: ../wt-api, needs: [impl-api]}
+    - {name: mech-api, run: "<repo canonical affected check>", role: verify-mech, worktree: ../wt-api, needs: [impl-api]}
     - {name: crit-api, model: claude-medium-m, role: verify-critical, reviews: [impl-api], needs: [mech-api]}
     - {name: neu-api, model: gemini-medium-m, role: verify-neutral, reviews: [impl-api], needs: [mech-api]}
   ```
@@ -232,7 +234,7 @@ Design is the Head's job: the Head writes decisions.md and the plans in each con
 
 Model defaults and overrides: [canonical generated catalog](../../README.md#model-catalog).
 
-Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default. For implementation, put the plan into the contract: `mech-impl` defaults to Terra for scoped fixes, then escalates through Sol low, Sol medium, and Sonnet. Larger complete plans explicitly start at `codex-high-l`. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
+Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Fable defaults; Gemini remains the independent neutral-review default. For implementation, put the plan into the contract: `mech-impl` defaults to Terra for scoped fixes, then escalates through Sol low, Sol medium, and Sonnet. Larger complete plans explicitly start at `codex-high-l`. `claude-high-m` effort: medium or low only, never high. No model has a fixed role, but `gemini-medium-m` can never be the sole verifier.
 
 **Fallback chains**: explore: `codex-low-h` -> `codex-medium-m` -> `gemini-medium-m`; extract: `codex-low-h` -> `codex-medium-m` -> `codex-high-m` -> `claude-medium-m`; mech-impl: `codex-medium-m` -> `codex-high-l` -> `codex-high-m` -> `claude-medium-m`. Terra never falls back to Luna; legacy aliases count as the same attempted key.
 

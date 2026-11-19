@@ -11,6 +11,7 @@ func TestClaudeModelArgs(t *testing.T) {
 		{"sonnet-5.5-high", "claude-sonnet-5-5", "high"},
 		{"opus-5", "claude-opus-5", ""},
 		{"fable-5.1-max", "claude-fable-5-1", "max"},
+		{"fable-5.2-medium", "claude-fable-5-2", "medium"},
 		{"claude-opus-5-5", "claude-opus-5-5", ""},
 		{"opus", "opus", ""},
 		{"opus-5.5-ultra", "opus-5.5-ultra", ""},

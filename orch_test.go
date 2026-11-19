@@ -19,7 +19,7 @@ func TestCatalogFixed(t *testing.T) {
 		"codex-medium-m":  {"terra", "medium"},
 		"codex-high-l":    {"sol", "low"},
 		"codex-high-m":    {"sol", "medium"},
-		"claude-high-m":   {"opus", ""},
+		"claude-high-m":   {"fable", ""},
 		"claude-medium-m": {"sonnet", ""},
 		"gemini-medium-m": {"gemini-flash", ""},
 	}
@@ -84,7 +84,7 @@ func TestLaunchArgs(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	m, _ = modelByKey("claude-high-m")
-	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-opus-5-5 --effort medium" {
+	if got := joinArgs(t, m, false); got != "--dangerously-skip-permissions --model claude-fable-5-2 --effort medium" {
 		t.Fatalf("got %q", got)
 	}
 	m, _ = modelByKey("claude-medium-m")

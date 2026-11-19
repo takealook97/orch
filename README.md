@@ -42,8 +42,10 @@ orch ask --model codex-low-h "list the implementations of Store and their call p
 orch do  --model codex-high-m --own 'parser/**' --test "go test ./parser/..." "handle empty input in Parse"
 orch do  --model codex-high-l --own 'docs/**' --background "draft the changelog for v0.4"      # returns task-N at once
 orch wait task-2                                                                             # same report when it finishes
-orch test "go test ./..."                                                                    # no model: exit code, failing names, capped excerpt
+orch test "<repo canonical affected check>"                                                  # no model: exit code, failing names, capped excerpt
 ```
+
+`orch test` reuses a pass for the same command and cwd on an identical clean Git tree. Dirty trees and failed commands are never cached. Use `orch test --fresh "<repo canonical affected check>"` after an environment change; a successful fresh run updates the cache. Run the repository's canonical affected check once on the final tree.
 
 Flags go before the text; a text that starts with `-` goes after `--` (`orch ask --model codex-low-h -- "-1 or 1?"`).
 
@@ -91,7 +93,7 @@ Old `tests/*.log`, `codex-goal-cache/*.json` and `cache/ask/*.json` files are re
 | `codex-medium-m` | codex | openai | Terra | `gpt-6.1-terra` | medium | `CODEX_MEDIUM_M` |
 | `codex-high-l` | codex | openai | Sol | `gpt-6.2-sol` | low | `CODEX_HIGH_L` |
 | `codex-high-m` | codex | openai | Sol | `gpt-6.2-sol` | medium | `CODEX_HIGH_M` |
-| `claude-high-m` | claude | anthropic | Opus | `opus-5.5-medium` | — | `CLAUDE_HIGH_M` |
+| `claude-high-m` | claude | anthropic | Fable | `fable-5.2-medium` | — | `CLAUDE_HIGH_M` |
 | `claude-medium-m` | claude | anthropic | Sonnet | `sonnet-5.5-medium` | — | `CLAUDE_MEDIUM_M` |
 | `gemini-medium-m` | agy | google | Gemini | `gemini-3.8-flash-medium` | — | `GEMINI_MEDIUM_M` |
 
@@ -100,7 +102,7 @@ OpenAI tiers: Luna < Terra < Sol (independent of effort). Deprecated alias: code
 Defaults are generated from `models.yaml`. Override shared model ids in `~/.orch/models.yaml` (or `ORCH_MODELS_FILE`), for example `models: {sol: new-model-id}` updates both Sol keys. An overlay may also set per-key effort with `keys: [{key: codex-high-l, effort: low}]`; other fields are rejected. Per-key environment variables override overlay model ids. `orch models` shows resolved ids and their source.
 <!-- orch:models:end -->
 
-Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default.
+Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Fable defaults; Gemini remains the independent neutral-review default.
 
 ## Development
 
