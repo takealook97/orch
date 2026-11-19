@@ -1,13 +1,41 @@
-#!/bin/sh
-# Fast checks on staged Go files: gofmt, build, vet. Tests run elsewhere.
-files=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go')
-[ -z "$files" ] && exit 0
-cd "$(git rev-parse --show-toplevel)" || exit 1
-unformatted=$(echo "$files" | xargs gofmt -l)
-if [ -n "$unformatted" ]; then
+#!/bin/bash
+# Fast checks on the staged Go content: gofmt, build, vet. Tests run elsewhere.
+# Everything is read from the index, so unstaged edits cannot hide or fake a result.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+has_go=0
+while IFS= read -r -d '' _; do
+	has_go=1
+	break
+done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.go')
+[ "$has_go" -eq 0 ] && exit 0
+
+tmp=$(mktemp -d)
+trap '[ -n "${tmp:-}" ] && rm -r -- "$tmp"' EXIT
+
+failed=""
+while IFS= read -r -d '' path; do
+	staged="$tmp/staged.go"
+	git show ":$path" >"$staged"
+	if ! out=$(gofmt -l "$staged" 2>&1); then
+		failed="$failed$path: $out"$'\n'
+	elif [ -n "$out" ]; then
+		failed="$failed$path"$'\n'
+	fi
+done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.go')
+
+if [ -n "$failed" ]; then
 	echo "pre-commit: gofmt needed:" >&2
-	echo "$unformatted" >&2
+	printf '%s' "$failed" >&2
 	exit 1
 fi
+
+snap="$tmp/snapshot"
+mkdir "$snap"
+git checkout-index -a --prefix="$snap/"
+cd "$snap"
 go build ./... || { echo "pre-commit: go build failed" >&2; exit 1; }
 go vet ./... || { echo "pre-commit: go vet failed" >&2; exit 1; }
