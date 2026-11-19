@@ -29,7 +29,7 @@ Delegation
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
 	orch models [--markdown|--json]         seven canonical keys (codex-medium-h: deprecated Luna alias)
-  orch models refresh [--dry-run] [--repo DIR]  probe newest CLI-listed ids, update models.yaml, commit, push, reinstall
+  orch models refresh [--dry-run] [--repo DIR]  probe newest ids; commit and push from a temp worktree, then update
   orch stats [--since 168h] [--json]     read-only local task, pane and Head statistics
   orch contract new <name> --role R --model K [--run ID]
            [--reviews AUTHOR --diff BASE..HEAD [--mech TASK|PATH] [--focus TEXT] [--cwd REPO]]

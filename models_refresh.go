@@ -28,9 +28,11 @@ type refreshDeps struct {
 	run   func(ctx context.Context, dir, name string, args ...string) (string, error)
 	probe func(ctx context.Context, m Model, id string) error
 	now   func() time.Time
+	// sync brings the user's checkout to the pushed commit through the update path.
+	sync func(ctx context.Context, repo string) (string, error)
 }
 
-var refreshHooks = refreshDeps{run: refreshRun, probe: refreshProbe, now: time.Now}
+var refreshHooks = refreshDeps{run: refreshRun, probe: refreshProbe, now: time.Now, sync: refreshSyncCheckout}
 
 const (
 	refreshTestPattern  = "Catalog|Models|Docs"
@@ -272,52 +274,6 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
-// repoSkipReason returns why the checkout must not be touched, or "" when it is safe.
-func repoSkipReason(ctx context.Context, repo string) (string, error) {
-	status, err := gitOut(ctx, repo, "status", "--porcelain")
-	if err != nil {
-		return "", err
-	}
-	if status != "" {
-		return "working tree is dirty", nil
-	}
-	branch, err := gitOut(ctx, repo, "rev-parse", "--abbrev-ref", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	def := "main"
-	if head, err := gitOut(ctx, repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil && head != "" {
-		def = strings.TrimPrefix(head, "origin/")
-	}
-	if branch != def {
-		return fmt.Sprintf("on branch %s, not default branch %s", branch, def), nil
-	}
-	if updateLiveWriters(repo) > 0 {
-		return "live orch writer in checkout", nil
-	}
-	if _, err := gitOut(ctx, repo, "fetch", "--quiet"); err != nil {
-		return "git fetch failed: " + err.Error(), nil
-	}
-	counts, err := gitOut(ctx, repo, "rev-list", "--left-right", "--count", "@{u}...HEAD")
-	if err != nil {
-		return "no upstream to compare with", nil
-	}
-	f := strings.Fields(counts)
-	if len(f) != 2 {
-		return "unreadable upstream comparison: " + counts, nil
-	}
-	behind, ahead := f[0] != "0", f[1] != "0"
-	switch {
-	case behind && ahead:
-		return "diverged from upstream", nil
-	case behind:
-		return "behind upstream", nil
-	case ahead:
-		return "ahead of upstream (unpushed commits)", nil
-	}
-	return "", nil
-}
-
 func readRepoModels(repo string) ([]byte, map[string]string, error) {
 	data, err := os.ReadFile(filepath.Join(repo, "models.yaml"))
 	if err != nil {
@@ -396,12 +352,14 @@ func writeDecision(repo string, changes []modelChange) error {
 	return os.WriteFile(path, []byte(next), 0644)
 }
 
-func refreshCommitSubject(changes []modelChange) string {
-	parts := make([]string, 0, len(changes))
+// refreshCommitMessage keeps a fixed subject (the commit-msg hook caps it at 72 chars)
+// and lists every alias change in the body.
+func refreshCommitMessage(changes []modelChange) (subject, body string) {
+	lines := make([]string, 0, len(changes))
 	for _, c := range changes {
-		parts = append(parts, c.old+" -> "+c.new)
+		lines = append(lines, fmt.Sprintf("%s: %s -> %s", c.alias, c.old, c.new))
 	}
-	return "chore: update model ids (" + strings.Join(parts, ", ") + ")"
+	return "chore: update model ids", strings.Join(lines, "\n")
 }
 
 // applyChanges edits files, regenerates docs from the new manifest and runs catalog tests.
@@ -430,34 +388,11 @@ func applyChanges(ctx context.Context, repo string, data []byte, changes []model
 	return nil
 }
 
-func restoreRepo(ctx context.Context, repo string, out io.Writer) {
-	if _, err := gitOut(ctx, repo, "checkout", "--", "."); err != nil {
-		fmt.Fprintf(out, "restore failed, inspect %s: %v\n", repo, err)
-	}
-}
-
-func publishChanges(ctx context.Context, repo string, changes []modelChange, out io.Writer) error {
-	subject := refreshCommitSubject(changes)
-	if _, err := gitOut(ctx, repo, "commit", "-q", "-am", subject); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "committed: %s\n", subject)
-	if _, err := gitOut(ctx, repo, "push"); err != nil {
-		return fmt.Errorf("committed but push failed: %w", err)
-	}
-	fmt.Fprintln(out, "pushed")
-	if _, err := refreshHooks.run(ctx, repo, "sh", "-c", refreshInstallShell); err != nil {
-		return fmt.Errorf("pushed but reinstall failed: %w", err)
-	}
-	fmt.Fprintln(out, "reinstalled")
-	return nil
-}
-
 // modelsRefreshCommand parses `models refresh [--dry-run] [--repo DIR]`.
 func modelsRefreshCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("models refresh", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dryRun := fs.Bool("dry-run", false, "print candidates and probe results only")
+	dryRun := fs.Bool("dry-run", false, "print candidates only: no fetch, probe, or write")
 	repo := fs.String("repo", ".", "orch checkout to update")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -471,48 +406,22 @@ func modelsRefreshCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "orch: ORCH_ROLE=worker: workers cannot refresh models (Head only)")
 		return 1
 	}
+	if !*dryRun {
+		// Same lock as `orch update`, which calls refreshModels while holding it.
+		if err := os.MkdirAll(orchHome(), 0700); err != nil {
+			fmt.Fprintln(stderr, "orch:", err)
+			return 1
+		}
+		lock, err := diskLock(updateLockPath(), true)
+		if err != nil {
+			fmt.Fprintln(stderr, "orch: models refresh: another orch update is running or the lock failed:", err)
+			return 1
+		}
+		defer unlockDisk(lock)
+	}
 	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: *repo, DryRun: *dryRun, Out: stdout}); err != nil {
 		fmt.Fprintln(stderr, "orch:", err)
 		return 1
 	}
 	return 0
-}
-
-// refreshModels updates models.yaml aliases to the newest CLI-listed ids that answer a live probe.
-func refreshModels(ctx context.Context, opts modelsRefreshOptions) error {
-	out := opts.Out
-	if out == nil {
-		out = io.Discard
-	}
-	repo := opts.Repo
-	if repo == "" {
-		repo = "."
-	}
-	reason, err := repoSkipReason(ctx, repo)
-	if err != nil {
-		return err
-	}
-	if reason != "" && !opts.DryRun {
-		fmt.Fprintf(out, "skip: %s (%s)\n", reason, repo)
-		return nil
-	}
-	if reason != "" {
-		fmt.Fprintf(out, "note: a real refresh would skip: %s\n", reason)
-	}
-	data, models, err := readRepoModels(repo)
-	if err != nil {
-		return err
-	}
-	changes := probeChanges(ctx, discoverChanges(ctx, models, out), out)
-	if opts.DryRun || len(changes) == 0 {
-		if len(changes) == 0 {
-			fmt.Fprintln(out, "no verified model id changes")
-		}
-		return nil
-	}
-	if err := applyChanges(ctx, repo, data, changes, out); err != nil {
-		restoreRepo(ctx, repo, out)
-		return err
-	}
-	return publishChanges(ctx, repo, changes, out)
 }

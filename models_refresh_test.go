@@ -90,7 +90,7 @@ type refreshRecorder struct {
 	probes []string
 }
 
-// stubRefresh fakes CLI lists, go and install commands; git runs for real except push.
+// stubRefresh fakes CLI lists, probes and go commands; git runs for real against a temp bare origin.
 func stubRefresh(t *testing.T, failProbe map[string]bool) *refreshRecorder {
 	t.Helper()
 	rec := &refreshRecorder{}
@@ -106,18 +106,18 @@ func stubRefresh(t *testing.T, failProbe map[string]bool) *refreshRecorder {
 			return nil
 		},
 		run: func(ctx context.Context, dir, name string, args ...string) (string, error) {
-			line := strings.TrimSpace(name + " " + strings.Join(args, " "))
-			switch {
-			case name == "codex":
+			switch name {
+			case "codex":
 				return codexListSample, nil
-			case name == "agy":
+			case "agy":
 				return agyListSample, nil
-			case name == "go" || name == "sh" || line == "git push":
-				rec.calls = append(rec.calls, line)
+			case "go", "sh":
+				rec.calls = append(rec.calls, strings.TrimSpace(name+" "+strings.Join(args, " ")))
 				return "", nil
 			}
 			return refreshRun(ctx, dir, name, args...)
 		},
+		sync: refreshSyncCheckout,
 	}
 	return rec
 }
@@ -133,15 +133,20 @@ func gitT(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// refreshRepo builds a clean main checkout tracking a local bare origin.
-func refreshRepo(t *testing.T) string {
+// refreshRepo builds a clean main checkout tracking a local bare origin, with HOME,
+// ORCH_HOME and the update config isolated so the checkout sync installs a marker only.
+func refreshRepo(t *testing.T) (repo, remote string) {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ORCH_HOME", filepath.Join(home(), ".orch"))
+	t.Setenv("TMPDIR", t.TempDir())
 	root := t.TempDir()
-	remote, repo := filepath.Join(root, "remote.git"), filepath.Join(root, "repo")
+	remote, repo = filepath.Join(root, "remote.git"), filepath.Join(root, "repo")
 	gitT(t, root, "init", "-q", "--bare", "-b", "main", remote)
 	gitT(t, root, "init", "-q", "-b", "main", repo)
 	gitT(t, repo, "config", "user.email", "t@example.com")
 	gitT(t, repo, "config", "user.name", "t")
+	gitT(t, repo, "config", "commit.gpgsign", "false")
 	decisions, err := os.ReadFile("skill/references/decisions.md")
 	if err != nil {
 		t.Fatal(err)
@@ -159,87 +164,114 @@ func refreshRepo(t *testing.T) string {
 	gitT(t, repo, "commit", "-q", "-m", "init")
 	gitT(t, repo, "remote", "add", "origin", remote)
 	gitT(t, repo, "push", "-q", "-u", "origin", "main")
-	return repo
+	updateLiveWriters = func(string) int { return 0 }
+	t.Cleanup(func() { updateLiveWriters = func(root string) int { return len(liveWritersIn(root, nil)) } })
+	writeUpdateConfig(t, repo, "touch installed.marker")
+	return repo, remote
 }
 
-func TestRefreshAppliesVerifiedChangesAndCommits(t *testing.T) {
-	repo := refreshRepo(t)
+// assertNoRefreshLeftovers checks that only the main worktree remains and TMPDIR is empty.
+func assertNoRefreshLeftovers(t *testing.T, repo string) {
+	t.Helper()
+	if n := strings.Count(gitT(t, repo, "worktree", "list", "--porcelain"), "worktree "); n != 1 {
+		t.Fatalf("temporary worktree left behind:\n%s", gitT(t, repo, "worktree", "list"))
+	}
+	if left, _ := os.ReadDir(os.Getenv("TMPDIR")); len(left) != 0 {
+		t.Fatalf("temp entries left: %v", left)
+	}
+}
+
+func TestRefreshPushesFromWorktreeAndSyncsCheckout(t *testing.T) {
+	repo, remote := refreshRepo(t)
 	rec := stubRefresh(t, map[string]bool{"gemini-3.9-flash-medium": true})
 	var out bytes.Buffer
 	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, Out: &out}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	data, _ := os.ReadFile(filepath.Join(repo, "models.yaml"))
-	if !strings.Contains(string(data), "  sol: gpt-6.3-sol\n") {
-		t.Fatalf("sol not updated:\n%s", data)
-	}
-	if !strings.Contains(string(data), "  gemini-flash: gemini-3.8-flash-medium\n") {
-		t.Fatalf("failed probe must not be applied:\n%s", data)
-	}
-	if got := gitT(t, repo, "log", "-1", "--format=%s"); got != "chore: update model ids (gpt-6.2-sol -> gpt-6.3-sol)" {
+	if got := gitT(t, remote, "log", "-1", "--format=%s", "main"); got != "chore: update model ids" {
 		t.Fatalf("subject = %q", got)
+	}
+	if body := gitT(t, remote, "log", "-1", "--format=%b", "main"); !strings.Contains(body, "sol: gpt-6.2-sol -> gpt-6.3-sol") {
+		t.Fatalf("body lacks the alias change: %q", body)
+	}
+	if gitT(t, repo, "rev-parse", "HEAD") != gitT(t, remote, "rev-parse", "main") {
+		t.Fatalf("checkout not fast-forwarded through update:\n%s", out.String())
+	}
+	data, _ := os.ReadFile(filepath.Join(repo, "models.yaml"))
+	if !strings.Contains(string(data), "  sol: gpt-6.3-sol\n") || !strings.Contains(string(data), "  gemini-flash: gemini-3.8-flash-medium\n") {
+		t.Fatalf("models.yaml:\n%s", data)
 	}
 	dec, _ := os.ReadFile(filepath.Join(repo, "skill", "references", "decisions.md"))
 	if !strings.Contains(string(dec), "2026-12-01: Sol upgraded from gpt-6.2-sol to gpt-6.3-sol.") {
 		t.Fatal("decision line missing")
 	}
-	if gitT(t, repo, "status", "--porcelain") != "" {
-		t.Fatal("repo left dirty after commit")
+	if !fileExists(filepath.Join(repo, "installed.marker")) {
+		t.Fatal("reinstall did not run through the update path")
 	}
-	wantCalls := []string{"go run . docs gen --root .", "go test -count=1 -run " + refreshTestPattern + " .", "git push", "sh -c " + refreshInstallShell}
+	wantCalls := []string{"go run . docs gen --root .", "go test -count=1 -run " + refreshTestPattern + " ."}
 	if !slices.Equal(rec.calls, wantCalls) {
-		t.Fatalf("calls = %q\nout:\n%s", rec.calls, out.String())
+		t.Fatalf("calls = %q", rec.calls)
 	}
 	if !strings.Contains(out.String(), "opus: skip") {
 		t.Fatalf("claude family should be skipped with a reason:\n%s", out.String())
 	}
+	assertNoRefreshLeftovers(t, repo)
 }
 
-func TestRefreshSkipsDirtyRepo(t *testing.T) {
-	repo := refreshRepo(t)
-	rec := stubRefresh(t, nil)
-	if err := os.WriteFile(filepath.Join(repo, "stray.txt"), []byte("x"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, Out: &out}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "skip: working tree is dirty") || len(rec.probes) != 0 || len(rec.calls) != 0 {
-		t.Fatalf("out=%s probes=%v calls=%v", out.String(), rec.probes, rec.calls)
-	}
-}
-
-func TestRefreshSkipsNonDefaultBranch(t *testing.T) {
-	repo := refreshRepo(t)
+func TestRefreshNeverTouchesUserCheckout(t *testing.T) {
+	repo, remote := refreshRepo(t)
 	stubRefresh(t, nil)
 	gitT(t, repo, "checkout", "-q", "-b", "feature")
+	os.WriteFile(filepath.Join(repo, "models.yaml"), []byte("user edit\n"), 0644)
+	os.WriteFile(filepath.Join(repo, "stray.txt"), []byte("x"), 0644)
+	head := gitT(t, repo, "rev-parse", "HEAD")
 	var out bytes.Buffer
 	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, Out: &out}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "skip: on branch feature") {
+	if data, _ := os.ReadFile(filepath.Join(repo, "models.yaml")); string(data) != "user edit\n" {
+		t.Fatalf("user edit lost: %q", data)
+	}
+	if !fileExists(filepath.Join(repo, "stray.txt")) || gitT(t, repo, "rev-parse", "HEAD") != head {
+		t.Fatal("user checkout changed")
+	}
+	if gitT(t, remote, "log", "-1", "--format=%s", "main") != "chore: update model ids" {
+		t.Fatal("refresh should still publish from origin/main")
+	}
+	if !strings.Contains(out.String(), "checkout: skip: working tree is dirty") {
 		t.Fatalf("out=%s", out.String())
 	}
+	assertNoRefreshLeftovers(t, repo)
 }
 
 func TestRefreshDryRunWritesNothing(t *testing.T) {
-	repo := refreshRepo(t)
+	repo, remote := refreshRepo(t)
 	rec := stubRefresh(t, nil)
+	other := filepath.Join(t.TempDir(), "other")
+	gitT(t, filepath.Dir(other), "clone", "-q", remote, other)
+	os.WriteFile(filepath.Join(other, "n.txt"), []byte("n"), 0644)
+	gitT(t, other, "add", ".")
+	gitT(t, other, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "n")
+	gitT(t, other, "push", "-q", "origin", "main")
+	ref := gitT(t, repo, "rev-parse", "refs/remotes/origin/main")
 	var out bytes.Buffer
 	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, DryRun: true, Out: &out}); err != nil {
 		t.Fatal(err)
 	}
-	if gitT(t, repo, "status", "--porcelain") != "" || len(rec.calls) != 0 {
-		t.Fatalf("dry run changed something: calls=%v", rec.calls)
+	if gitT(t, repo, "status", "--porcelain") != "" || len(rec.calls) != 0 || len(rec.probes) != 0 {
+		t.Fatalf("dry run changed or probed: calls=%v probes=%v", rec.calls, rec.probes)
 	}
-	if !slices.Contains(rec.probes, "gpt-6.3-sol") || !strings.Contains(out.String(), "candidate gpt-6.2-sol -> gpt-6.3-sol") {
+	if fileExists(filepath.Join(repo, ".git", "FETCH_HEAD")) || gitT(t, repo, "rev-parse", "refs/remotes/origin/main") != ref {
+		t.Fatal("dry run wrote git refs")
+	}
+	if !strings.Contains(out.String(), "candidate gpt-6.2-sol -> gpt-6.3-sol") {
 		t.Fatalf("out=%s", out.String())
 	}
+	assertNoRefreshLeftovers(t, repo)
 }
 
-func TestRefreshRestoresOnTestFailure(t *testing.T) {
-	repo := refreshRepo(t)
+func TestRefreshTestFailureChangesNothing(t *testing.T) {
+	repo, remote := refreshRepo(t)
 	stubRefresh(t, nil)
 	inner := refreshHooks.run
 	refreshHooks.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
@@ -248,8 +280,60 @@ func TestRefreshRestoresOnTestFailure(t *testing.T) {
 		}
 		return inner(ctx, dir, name, args...)
 	}
+	before := gitT(t, remote, "rev-parse", "main")
 	err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, Out: &bytes.Buffer{}})
-	if err == nil || gitT(t, repo, "status", "--porcelain") != "" {
-		t.Fatalf("err=%v, repo must be restored", err)
+	if err == nil || gitT(t, repo, "status", "--porcelain") != "" || gitT(t, remote, "rev-parse", "main") != before {
+		t.Fatalf("err=%v; origin and checkout must be unchanged", err)
+	}
+	assertNoRefreshLeftovers(t, repo)
+}
+
+func TestRefreshPushFailureIsRetriedNextRun(t *testing.T) {
+	repo, remote := refreshRepo(t)
+	stubRefresh(t, nil)
+	inner := refreshHooks.run
+	failPush := true
+	refreshHooks.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
+		if name == "git" && len(args) > 0 && args[0] == "push" && failPush {
+			return "", errors.New("network down")
+		}
+		return inner(ctx, dir, name, args...)
+	}
+	before := gitT(t, remote, "rev-parse", "main")
+	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, Out: &bytes.Buffer{}}); err == nil {
+		t.Fatal("push failure not reported")
+	}
+	if gitT(t, remote, "rev-parse", "main") != before || gitT(t, repo, "rev-parse", "HEAD") != before {
+		t.Fatal("failed push changed origin or the checkout")
+	}
+	failPush = false
+	var out bytes.Buffer
+	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, Out: &out}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if gitT(t, remote, "log", "-1", "--format=%s", "main") != "chore: update model ids" {
+		t.Fatalf("retry did not publish:\n%s", out.String())
+	}
+	assertNoRefreshLeftovers(t, repo)
+}
+
+func TestRefreshReinstallFailureIsRetriedByUpdate(t *testing.T) {
+	repo, remote := refreshRepo(t)
+	stubRefresh(t, nil)
+	writeUpdateConfig(t, repo, "exit 7")
+	err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo, Out: &bytes.Buffer{}})
+	if err == nil || !strings.Contains(err.Error(), "pushed to origin/main but updating") {
+		t.Fatalf("reinstall failure: %v", err)
+	}
+	if gitT(t, repo, "rev-parse", "HEAD") != gitT(t, remote, "rev-parse", "main") {
+		t.Fatal("checkout should be fast-forwarded before the install")
+	}
+	writeUpdateConfig(t, repo, "touch installed.marker")
+	var out bytes.Buffer
+	if err := runUpdate(context.Background(), updateOptions{Out: &out}); err != nil {
+		t.Fatal(err, out.String())
+	}
+	if !fileExists(filepath.Join(repo, "installed.marker")) {
+		t.Fatalf("update did not retry the install: %s", out.String())
 	}
 }
