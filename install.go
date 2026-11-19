@@ -551,41 +551,9 @@ func probeModels(selection string, out io.Writer) error {
 	failures := 0
 	for i, item := range models {
 		m := item.model
-		log := filepath.Join(dir, fmt.Sprintf("%d.log", i))
-		answerPath := filepath.Join(dir, fmt.Sprintf("%d.answer", i))
-		versionResult, versionErr := probeExec(dir, m.Kind, []string{"--version"}, 10*time.Second, log)
-		versionBytes, _ := os.ReadFile(log)
-		version := probeExcerpt(string(versionBytes))
-		_ = os.Remove(log)
-		args, err := taskArgs(m, "ask", dir, answerPath, "Reply with exactly: OK")
+		version, problems, err := probeModelOnce(dir, i, m)
 		if err != nil {
 			return err
-		}
-		res, runErr := probeExec(dir, m.Kind, args, 120*time.Second, log)
-		raw, _ := os.ReadFile(log)
-		answer, _ := parseAnswer(m.Kind, raw)
-		if m.Kind == "codex" {
-			if data, err := os.ReadFile(answerPath); err == nil && len(data) > 0 {
-				answer = string(data)
-			}
-		}
-		var problems []string
-		if versionErr != nil {
-			problems = append(problems, "CLI --version: "+versionErr.Error())
-		} else if versionResult.Timed || versionResult.Interrupted || versionResult.Code != 0 {
-			problems = append(problems, fmt.Sprintf("CLI --version failed (exit %d): %s", versionResult.Code, version))
-		}
-		switch {
-		case runErr != nil:
-			problems = append(problems, runErr.Error())
-		case res.Timed:
-			problems = append(problems, "timed out after 120s")
-		case res.Interrupted:
-			problems = append(problems, "interrupted")
-		case res.Code != 0:
-			problems = append(problems, fmt.Sprintf("exit %d: %s", res.Code, string(raw)))
-		case strings.TrimSpace(answer) != "OK":
-			problems = append(problems, "expected OK: "+answer)
 		}
 		status := "ok"
 		if len(problems) > 0 {
@@ -602,6 +570,48 @@ func probeModels(selection string, out io.Writer) error {
 		return fmt.Errorf("%d model probe(s) failed", failures)
 	}
 	return nil
+}
+
+// probeModelOnce runs one --version check and one "Reply with exactly: OK" call for a model
+// whose id is already frozen. It returns the CLI version excerpt and any problems found.
+func probeModelOnce(dir string, i int, m Model) (string, []string, error) {
+	log := filepath.Join(dir, fmt.Sprintf("%d.log", i))
+	answerPath := filepath.Join(dir, fmt.Sprintf("%d.answer", i))
+	versionResult, versionErr := probeExec(dir, m.Kind, []string{"--version"}, 10*time.Second, log)
+	versionBytes, _ := os.ReadFile(log)
+	version := probeExcerpt(string(versionBytes))
+	_ = os.Remove(log)
+	args, err := taskArgs(m, "ask", dir, answerPath, "Reply with exactly: OK")
+	if err != nil {
+		return version, nil, err
+	}
+	res, runErr := probeExec(dir, m.Kind, args, 120*time.Second, log)
+	raw, _ := os.ReadFile(log)
+	answer, _ := parseAnswer(m.Kind, raw)
+	if m.Kind == "codex" {
+		if data, err := os.ReadFile(answerPath); err == nil && len(data) > 0 {
+			answer = string(data)
+		}
+	}
+	var problems []string
+	if versionErr != nil {
+		problems = append(problems, "CLI --version: "+versionErr.Error())
+	} else if versionResult.Timed || versionResult.Interrupted || versionResult.Code != 0 {
+		problems = append(problems, fmt.Sprintf("CLI --version failed (exit %d): %s", versionResult.Code, version))
+	}
+	switch {
+	case runErr != nil:
+		problems = append(problems, runErr.Error())
+	case res.Timed:
+		problems = append(problems, "timed out after 120s")
+	case res.Interrupted:
+		problems = append(problems, "interrupted")
+	case res.Code != 0:
+		problems = append(problems, fmt.Sprintf("exit %d: %s", res.Code, string(raw)))
+	case strings.TrimSpace(answer) != "OK":
+		problems = append(problems, "expected OK: "+answer)
+	}
+	return version, problems, nil
 }
 
 func probeExcerpt(s string) string {
