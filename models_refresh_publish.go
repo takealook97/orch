@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +14,7 @@ import (
 // It never edits the user's checkout: the change is made, tested, committed and pushed from a
 // detached temporary worktree at origin's default branch, then the checkout follows through
 // the normal `orch update` path (fast-forward when safe, then reinstall).
-func refreshModels(ctx context.Context, opts modelsRefreshOptions) error {
+func refreshModels(ctx context.Context, opts modelsRefreshOptions) (err error) {
 	out := opts.Out
 	if out == nil {
 		out = io.Discard
@@ -32,11 +33,16 @@ func refreshModels(ctx context.Context, opts modelsRefreshOptions) error {
 	if _, err := gitOut(ctx, repo, "fetch", "--quiet", "origin", "+refs/heads/"+def+":refs/remotes/origin/"+def); err != nil {
 		return err
 	}
-	wt, cleanup, err := refreshWorktree(ctx, repo, "origin/"+def, out)
+	// The full ref name cannot resolve to a local branch called origin/<def>.
+	base, err := gitOut(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+def+"^{commit}")
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	wt, err := refreshWorktree(ctx, repo, base)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, removeRefreshWorktree(ctx, repo, wt)) }()
 	pushed, err := refreshInWorktree(ctx, wt, def, out)
 	if err != nil || !pushed {
 		return err
@@ -69,21 +75,33 @@ func refreshDryRun(ctx context.Context, repo, def string, out io.Writer) error {
 }
 
 // refreshWorktree adds a detached worktree at rev under the temp directory.
-func refreshWorktree(ctx context.Context, repo, rev string, out io.Writer) (string, func(), error) {
+// A failed add can still leave a registered, populated worktree, so it is removed too.
+func refreshWorktree(ctx context.Context, repo, rev string) (string, error) {
 	dir, err := os.MkdirTemp("", "orch-models-refresh-")
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if _, err := gitOut(ctx, repo, "worktree", "add", "--quiet", "--detach", dir, rev); err != nil {
-		_ = os.Remove(dir)
-		return "", nil, err
+		return "", errors.Join(err, removeRefreshWorktree(ctx, repo, dir))
 	}
-	cleanup := func() {
-		if _, err := gitOut(context.WithoutCancel(ctx), repo, "worktree", "remove", "--force", dir); err != nil {
-			fmt.Fprintf(out, "worktree cleanup failed, remove %s with `git worktree remove --force`: %v\n", dir, err)
+	return dir, nil
+}
+
+// removeRefreshWorktree unregisters and deletes dir. Git refuses to remove a directory it
+// never registered; that leftover is empty and is deleted directly.
+func removeRefreshWorktree(ctx context.Context, repo, dir string) error {
+	ctx = context.WithoutCancel(ctx)
+	_, removeErr := gitOut(ctx, repo, "worktree", "remove", "--force", dir)
+	if removeErr != nil {
+		if err := os.Remove(dir); err == nil || errors.Is(err, os.ErrNotExist) {
+			removeErr = nil
 		}
 	}
-	return dir, cleanup, nil
+	_, pruneErr := gitOut(ctx, repo, "worktree", "prune")
+	if err := errors.Join(removeErr, pruneErr); err != nil {
+		return fmt.Errorf("temporary worktree cleanup failed, remove %s with `git worktree remove --force`: %w", dir, err)
+	}
+	return nil
 }
 
 // refreshInWorktree discovers, probes, applies, tests, commits and pushes inside wt.
