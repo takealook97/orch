@@ -68,6 +68,10 @@ See [advanced procedures](skill/references/advanced.md) for full/full+, DAG, acc
 
 Claude Stop can collect Head usage automatically with phase `session`; `ORCH_AUTO_MEASURE=0` opts out and `~/.orch/measure.log` records errors. See [Automatic Head collection](docs/operations.md#automatic-head-collection) for installation and partial-coverage limits.
 
+## Automatic updates
+
+`orch update [--dry-run] [--quiet] [--models]` fast-forwards the registered checkouts from origin and reruns their install commands. It skips dirty checkouts, non-default branches, checkouts with a live orch writer, and local commits not on origin. Any orch command starts it in the background once every 6 hours (`ORCH_AUTO_UPDATE=0` turns this off), and on macOS `orch install` schedules it daily at 03:00 through launchd. See [Automatic updates](docs/setup.md#automatic-updates).
+
 ## Disk retention
 
 `orch gc [--orphans] [--disk]` also prunes old disk data. Use `orch gc --disk` for disk cleanup alone without pane access; `--disk` and `--orphans` cannot be combined. Head invocations automatically launch detached disk cleanup at most once per 24 hours, with output in `~/.orch/prune.log`.

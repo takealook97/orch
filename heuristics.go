@@ -230,3 +230,18 @@ func idleNudgeText(name, result string) string {
 	return promptMarker(name) + " You stopped before writing the result file " + result +
 		". If the contract is finished, write the result with its status line now. If you are blocked, write it with status: blocked and the reason. Otherwise continue from the next unfinished step."
 }
+
+// Self-update timings. The automatic trigger launches a detached `orch update` when the
+// stamp is older than autoUpdateInterval (ORCH_AUTO_UPDATE_INTERVAL overrides, Go duration).
+const (
+	autoUpdateInterval   = 6 * time.Hour
+	updateGitTimeout     = 2 * time.Minute  // one git fetch/merge/status call
+	updateInstallTimeout = 15 * time.Minute // one repository install command
+)
+
+func autoUpdateEvery() time.Duration {
+	if d, err := time.ParseDuration(envOrch("AUTO_UPDATE_INTERVAL")); err == nil && d > 0 {
+		return d
+	}
+	return autoUpdateInterval
+}
