@@ -187,4 +187,4 @@ Close any open runs first with `orch run end` or `orch gc --orphans`.
 Catalog: [README](../README.md#model-catalog); defaults come from `models.yaml`; inspect resolved values with `orch models`.
 <!-- orch:models:end -->
 
-Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Fable defaults; Gemini remains the independent neutral-review default.
+Use Luna for broad cheap lookup and extraction, Terra for constrained writing and scoped code fixes, and Sol for larger planned implementation and general debugging. Screen work is a candidate Terra role, not benchmark-proven superiority. Creative writing and deep document work keep the Sonnet/Opus defaults; Gemini remains the independent neutral-review default.
