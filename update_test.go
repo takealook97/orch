@@ -300,3 +300,28 @@ func TestInstallLaunchAgentPreservesForeignAndSkipsOtherOS(t *testing.T) {
 		t.Fatal("foreign launch agent changed")
 	}
 }
+
+func TestCrit4TruncatedStatePreservesBehindCheckout(t *testing.T) {
+	repo, upstream := updateFixture(t)
+	before := gitT(t, repo, "rev-parse", "HEAD")
+	remote := gitT(t, upstream, "rev-parse", "HEAD")
+	if before == remote {
+		t.Fatal("expected behind checkout")
+	}
+	if err := os.MkdirAll(orchHome(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(updateStatePath(), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(repo, "install-ran")
+	_, err := updateOneRepo(context.Background(), updateRepo{Path: repo, Install: "touch install-ran"}, false)
+	if err == nil || !strings.Contains(err.Error(), "unexpected end of JSON input") || fileExists(marker) {
+		t.Fatalf("expected parse error and no install, err=%v", err)
+	}
+	after := gitT(t, repo, "rev-parse", "HEAD")
+	if after != before {
+		content, readErr := os.ReadFile(filepath.Join(repo, "a.txt"))
+		t.Fatalf("update returned %v after moving HEAD %s -> %s (remote=%s, a.txt=%q, readErr=%v)", err, before, after, remote, content, readErr)
+	}
+}

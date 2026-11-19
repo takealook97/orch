@@ -87,21 +87,49 @@ func refreshWorktree(ctx context.Context, repo, rev string) (string, error) {
 	return dir, nil
 }
 
-// removeRefreshWorktree unregisters and deletes dir. Git refuses to remove a directory it
-// never registered; that leftover is empty and is deleted directly.
+// removeRefreshWorktree unregisters and deletes dir, touching no other worktree
+// registration. Git refuses to remove a directory it never registered; that leftover is
+// deleted directly. A registration for dir that survives is reported as an error.
 func removeRefreshWorktree(ctx context.Context, repo, dir string) error {
 	ctx = context.WithoutCancel(ctx)
+	paths := []string{dir}
+	if real, err := filepath.EvalSymlinks(dir); err == nil && real != dir {
+		paths = append(paths, real)
+	}
 	_, removeErr := gitOut(ctx, repo, "worktree", "remove", "--force", dir)
 	if removeErr != nil {
-		if err := os.Remove(dir); err == nil || errors.Is(err, os.ErrNotExist) {
-			removeErr = nil
+		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			removeErr = errors.Join(removeErr, err)
 		}
 	}
-	_, pruneErr := gitOut(ctx, repo, "worktree", "prune")
-	if err := errors.Join(removeErr, pruneErr); err != nil {
-		return fmt.Errorf("temporary worktree cleanup failed, remove %s with `git worktree remove --force`: %w", dir, err)
+	registered, listErr := worktreeRegistered(ctx, repo, paths)
+	switch {
+	case listErr != nil:
+		return fmt.Errorf("temporary worktree cleanup failed, remove %s with `git worktree remove --force`: %w", dir, errors.Join(removeErr, listErr))
+	case registered:
+		return fmt.Errorf("temporary worktree %s is still registered, remove it with `git worktree remove --force`: %w", dir, errors.Join(removeErr, errors.New("registration remains")))
 	}
 	return nil
+}
+
+// worktreeRegistered reports whether git still lists one of paths as a worktree.
+func worktreeRegistered(ctx context.Context, repo string, paths []string) (bool, error) {
+	list, err := gitOut(ctx, repo, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(list, "\n") {
+		path, ok := strings.CutPrefix(line, "worktree ")
+		if !ok {
+			continue
+		}
+		for _, p := range paths {
+			if path == p {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // refreshInWorktree discovers, probes, applies, tests, commits and pushes inside wt.

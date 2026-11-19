@@ -141,6 +141,12 @@ func updateOneRepo(ctx context.Context, r updateRepo, dry bool) (string, error) 
 	if dry {
 		return dryRunOutcome(ctx, r, def, head)
 	}
+	// Read the install record before touching the checkout, so a corrupt file stops the
+	// update with HEAD unchanged.
+	st, err := loadInstallState(r)
+	if err != nil {
+		return "", err
+	}
 	if _, err := git("fetch", "--quiet", "origin", "+refs/heads/"+def+":refs/remotes/origin/"+def); err != nil {
 		return "", err
 	}
@@ -164,7 +170,7 @@ func updateOneRepo(ctx context.Context, r updateRepo, dry bool) (string, error) 
 	case ahead > 0:
 		return fmt.Sprintf("skip: ahead of origin/%s by %d", def, ahead), nil
 	case behind == 0:
-		return installPending(ctx, r, head, "up to date")
+		return installPending(ctx, r, st, head, "up to date")
 	}
 	// The checks above ran before a network call; repeat them right before merging.
 	skip, again, err := repoGate(ctx, r.Path, def)
@@ -181,18 +187,22 @@ func updateOneRepo(ctx context.Context, r updateRepo, dry bool) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return installPending(ctx, r, after, fmt.Sprintf("updated %s..%s", short(head), short(after)))
+	return installPending(ctx, r, st, after, fmt.Sprintf("updated %s..%s", short(head), short(after)))
+}
+
+// loadInstallState reads the install record when r has an install command.
+func loadInstallState(r updateRepo) (updateState, error) {
+	if strings.TrimSpace(r.Install) == "" {
+		return updateState{Repos: map[string]updateRepoState{}}, nil
+	}
+	return loadUpdateState()
 }
 
 // installPending runs the install command unless head is known to be installed.
 // A checkout without a record counts as not installed; only a successful install is recorded.
-func installPending(ctx context.Context, r updateRepo, head, outcome string) (string, error) {
+func installPending(ctx context.Context, r updateRepo, st updateState, head, outcome string) (string, error) {
 	if strings.TrimSpace(r.Install) == "" {
 		return outcome, nil
-	}
-	st, err := loadUpdateState()
-	if err != nil {
-		return "", err
 	}
 	if st.Repos[updateStateKey(r.Path)].InstalledCommit == head {
 		return outcome, nil

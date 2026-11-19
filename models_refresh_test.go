@@ -337,3 +337,28 @@ func TestRefreshReinstallFailureIsRetriedByUpdate(t *testing.T) {
 		t.Fatalf("update did not retry the install: %s", out.String())
 	}
 }
+
+func TestCrit4CleanupPreservesUnrelatedWorktreeRegistration(t *testing.T) {
+	repo, _ := refreshRepo(t)
+	stubRefresh(t, nil)
+	root := t.TempDir()
+	wt := filepath.Join(root, "user-worktree")
+	gitT(t, repo, "worktree", "add", "--quiet", "-b", "user-topic", wt)
+	if err := os.Rename(wt, filepath.Join(root, "temporarily-offline")); err != nil {
+		t.Fatal(err)
+	}
+	registration := filepath.Join(repo, ".git", "worktrees", "user-worktree", "gitdir")
+	old := time.Now().AddDate(-1, 0, 0)
+	if err := os.Chtimes(registration, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if list := gitT(t, repo, "worktree", "list", "--porcelain"); !strings.Contains(list, wt) {
+		t.Fatalf("fixture registration missing: %s", list)
+	}
+	if err := refreshModels(context.Background(), modelsRefreshOptions{Repo: repo}); err != nil {
+		t.Fatal(err)
+	}
+	if list := gitT(t, repo, "worktree", "list", "--porcelain"); !strings.Contains(list, wt) {
+		t.Fatalf("successful refresh removed unrelated worktree registration: %s", list)
+	}
+}
