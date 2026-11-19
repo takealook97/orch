@@ -112,19 +112,26 @@ func TestUpdateRetriesFailedInstall(t *testing.T) {
 	}
 }
 
-func TestUpdateFirstSightRecordsBaselineWithoutInstall(t *testing.T) {
+// A checkout without an install record is not known to be installed: install runs once
+// and its success is recorded, so the next run does not repeat it.
+func TestUpdateFirstSightRunsInstallOnce(t *testing.T) {
 	clone, _ := updateFixture(t)
 	updateTestGit(t, clone, "pull", "--quiet", "--ff-only")
-	writeUpdateConfig(t, clone, "touch installed.marker")
-	if err := runUpdate(context.Background(), updateOptions{Out: &bytes.Buffer{}}); err != nil {
-		t.Fatal(err)
+	// The marker lives outside the checkout so the second run is not skipped as dirty.
+	marker := filepath.Join(t.TempDir(), "installed.marker")
+	writeUpdateConfig(t, clone, "echo x >> "+marker)
+	for range 2 {
+		var out bytes.Buffer
+		if err := runUpdate(context.Background(), updateOptions{Out: &out}); err != nil || strings.Contains(out.String(), "skip:") {
+			t.Fatalf("%v %s", err, &out)
+		}
 	}
 	st, err := loadUpdateState()
 	if err != nil || st.Repos[updateStateKey(clone)].InstalledCommit != updateTestGit(t, clone, "rev-parse", "HEAD") {
-		t.Fatalf("baseline not recorded: %+v %v", st, err)
+		t.Fatalf("install not recorded: %+v %v", st, err)
 	}
-	if fileExists(filepath.Join(clone, "installed.marker")) {
-		t.Fatal("first sight of an up-to-date checkout ran install")
+	if data, _ := os.ReadFile(marker); string(data) != "x\n" {
+		t.Fatalf("install ran %q, want exactly once", data)
 	}
 }
 

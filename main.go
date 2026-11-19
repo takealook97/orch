@@ -69,12 +69,36 @@ roles: recon design produce integrate verify-mech verify-critical verify-neutral
 `
 
 func main() {
-	// A statistics query must never trigger disk cleanup or create lock files.
-	if len(os.Args) < 2 || os.Args[1] != "stats" {
-		maybeAutoPrune(os.Args[1:])
-	}
-	maybeAutoUpdate(os.Args[1:])
+	entryMaintenance(os.Args[1:])
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// entryMaintenance starts the automatic prune and update checks for one command.
+// A statistics query and a models refresh dry run must not clean up disk or create lock files.
+func entryMaintenance(args []string) {
+	if isModelsRefreshDryRun(args) {
+		return
+	}
+	if len(args) == 0 || args[0] != "stats" {
+		maybeAutoPrune(args)
+	}
+	maybeAutoUpdate(args)
+}
+
+func isModelsRefreshDryRun(args []string) bool {
+	if len(args) < 2 || args[0] != "models" || args[1] != "refresh" {
+		return false
+	}
+	for _, a := range args[2:] {
+		if a == "--" {
+			break
+		}
+		name, value, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if strings.HasPrefix(a, "-") && name == "dry-run" && (!hasValue || value != "false") {
+			return true
+		}
+	}
+	return false
 }
 
 // parse lets flags appear after positional arguments.

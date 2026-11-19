@@ -35,17 +35,25 @@ func updateStateKey(path string) string {
 	return path
 }
 
+// loadUpdateState reads the install record. A missing file, JSON null or a value of the
+// wrong shape means nothing is known to be installed; invalid JSON such as a truncated
+// file is an error and the file is left for the user to inspect.
 func loadUpdateState() (updateState, error) {
-	st := updateState{Repos: map[string]updateRepoState{}}
+	empty := updateState{Repos: map[string]updateRepoState{}}
 	data, err := os.ReadFile(updateStatePath())
 	if errors.Is(err, os.ErrNotExist) {
-		return st, nil
+		return empty, nil
 	}
 	if err != nil {
-		return st, err
+		return empty, err
 	}
+	var st updateState
 	if err := json.Unmarshal(data, &st); err != nil {
-		return st, fmt.Errorf("%s: %w", updateStatePath(), err)
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) {
+			return empty, nil
+		}
+		return empty, fmt.Errorf("%s: %w", updateStatePath(), err)
 	}
 	if st.Repos == nil {
 		st.Repos = map[string]updateRepoState{}
@@ -136,7 +144,13 @@ func updateOneRepo(ctx context.Context, r updateRepo, dry bool) (string, error) 
 	if _, err := git("fetch", "--quiet", "origin", "+refs/heads/"+def+":refs/remotes/origin/"+def); err != nil {
 		return "", err
 	}
-	counts, err := git("rev-list", "--left-right", "--count", "HEAD...origin/"+def)
+	// The full ref name cannot resolve to a local branch called origin/<def>; the OID
+	// pins the merge to the commit compared here.
+	remote, err := git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+def+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	counts, err := git("rev-list", "--left-right", "--count", "HEAD..."+remote)
 	if err != nil {
 		return "", err
 	}
@@ -160,10 +174,7 @@ func updateOneRepo(ctx context.Context, r updateRepo, dry bool) (string, error) 
 	if again != head {
 		return "skip: HEAD moved during update", nil
 	}
-	if err := ensureInstallBaseline(r, head); err != nil {
-		return "", err
-	}
-	if _, err := git("merge", "--ff-only", "--no-overwrite-ignore", "--quiet", "origin/"+def); err != nil {
+	if _, err := git("merge", "--ff-only", "--no-overwrite-ignore", "--quiet", remote); err != nil {
 		return "", err
 	}
 	after, err := git("rev-parse", "HEAD")
@@ -173,24 +184,8 @@ func updateOneRepo(ctx context.Context, r updateRepo, dry bool) (string, error) 
 	return installPending(ctx, r, after, fmt.Sprintf("updated %s..%s", short(head), short(after)))
 }
 
-// ensureInstallBaseline records the pre-merge commit as installed when no record exists,
-// so a failed install after the merge is retried instead of becoming the baseline.
-func ensureInstallBaseline(r updateRepo, head string) error {
-	if strings.TrimSpace(r.Install) == "" {
-		return nil
-	}
-	st, err := loadUpdateState()
-	if err != nil {
-		return err
-	}
-	if _, ok := st.Repos[updateStateKey(r.Path)]; ok {
-		return nil
-	}
-	return recordInstalled(r.Path, head)
-}
-
-// installPending runs the install command when head is not the last installed commit.
-// A checkout seen for the first time without a merge only records its baseline.
+// installPending runs the install command unless head is known to be installed.
+// A checkout without a record counts as not installed; only a successful install is recorded.
 func installPending(ctx context.Context, r updateRepo, head, outcome string) (string, error) {
 	if strings.TrimSpace(r.Install) == "" {
 		return outcome, nil
@@ -199,11 +194,7 @@ func installPending(ctx context.Context, r updateRepo, head, outcome string) (st
 	if err != nil {
 		return "", err
 	}
-	prev, ok := st.Repos[updateStateKey(r.Path)]
-	if !ok {
-		return outcome, recordInstalled(r.Path, head)
-	}
-	if prev.InstalledCommit == head {
+	if st.Repos[updateStateKey(r.Path)].InstalledCommit == head {
 		return outcome, nil
 	}
 	if err := runUpdateInstall(ctx, r); err != nil {
@@ -227,10 +218,8 @@ func dryRunOutcome(ctx context.Context, r updateRepo, def, head string) (string,
 	}
 	pending := ""
 	if strings.TrimSpace(r.Install) != "" {
-		if st, err := loadUpdateState(); err == nil {
-			if prev, ok := st.Repos[updateStateKey(r.Path)]; ok && prev.InstalledCommit != head {
-				pending = "; install pending at " + short(head)
-			}
+		if st, err := loadUpdateState(); err == nil && st.Repos[updateStateKey(r.Path)].InstalledCommit != head {
+			pending = "; install pending at " + short(head)
 		}
 	}
 	if remote == head {
@@ -280,7 +269,9 @@ func updateGit(ctx context.Context, dir string, args ...string) (string, error) 
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	// GIT_OPTIONAL_LOCKS=0 keeps the read-only gate (status, rev-parse, rev-list) from
+	// rewriting the user's index stat cache; commands that must write still lock.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
