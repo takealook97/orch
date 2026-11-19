@@ -85,8 +85,8 @@ Old `tests/*.log`, `codex-goal-cache/*.json` and `cache/ask/*.json` files are re
 |---|---|---|---|---|---|---|
 | `codex-low-h` | codex | openai | Luna | `gpt-6-luna` | high | `CODEX_LOW_H` |
 | `codex-medium-m` | codex | openai | Terra | `gpt-6.1-terra` | medium | `CODEX_MEDIUM_M` |
-| `codex-high-l` | codex | openai | Sol | `gpt-6.1-sol` | low | `CODEX_HIGH_L` |
-| `codex-high-m` | codex | openai | Sol | `gpt-6.1-sol` | medium | `CODEX_HIGH_M` |
+| `codex-high-l` | codex | openai | Sol | `gpt-6.2-sol` | low | `CODEX_HIGH_L` |
+| `codex-high-m` | codex | openai | Sol | `gpt-6.2-sol` | medium | `CODEX_HIGH_M` |
 | `claude-high-m` | claude | anthropic | Opus | `opus-5.5-medium` | — | `CLAUDE_HIGH_M` |
 | `claude-medium-m` | claude | anthropic | Sonnet | `sonnet-5.5-medium` | — | `CLAUDE_MEDIUM_M` |
 | `gemini-medium-m` | agy | google | Gemini | `gemini-3.8-flash-medium` | — | `GEMINI_MEDIUM_M` |

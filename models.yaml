@@ -1,6 +1,6 @@
 version: 1
 models:
-  sol: gpt-6.1-sol
+  sol: gpt-6.2-sol
   terra: gpt-6.1-terra
   luna: gpt-6-luna
   opus: opus-5.5-medium

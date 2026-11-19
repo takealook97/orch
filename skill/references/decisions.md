@@ -183,6 +183,8 @@ Embed `models.yaml` as the source for named model ids, canonical keys, tiers, al
 Generate marked catalog documentation from embedded defaults and reject drift in `make check`; keep historical decisions unchanged. Record the resolved model id on worker and task records.
 Keep each CLI's pane and one-shot argv in one adapter, pinned by golden tests. Live compatibility probes are opt-in through `doctor --probe-models`; tests use stubs and `make check` never probes models.
 
+2026-11-19: Sol upgraded from gpt-6.1-sol to gpt-6.2-sol; Terra stays gpt-6.1-terra.
+
 ## D21. Claude models named like GPT and Gemini (2026-11-03)
 
 Claude manifest ids read `opus-5.5-medium` and `sonnet-5.5-medium`: family, version and effort joined with `-`, key effort empty (as for Gemini). The Claude CLI accepts none of this directly. Verified live: `--model opus-5.5-medium` is an unknown model, and `--model claude-opus-5.5` silently resolves to Opus 5, which is wrong. The correct form is `--model claude-opus-5-5 --effort medium`.
