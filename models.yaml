@@ -3,7 +3,7 @@ models:
   sol: gpt-6.2-sol
   terra: gpt-6.1-terra
   luna: gpt-6-luna
-  opus: opus-5.5-medium
+  fable: fable-5.2-medium
   sonnet: sonnet-5.5-medium
   gemini-flash: gemini-3.8-flash-medium
 keys:
@@ -42,8 +42,8 @@ keys:
   - key: claude-high-m
     kind: claude
     family: anthropic
-    tier: Opus
-    model: opus
+    tier: Fable
+    model: fable
     effort: ""
     cost: "highest"
     use: "hard implementation and debugging, ambiguous design, deep review, adversarial verification"

@@ -185,6 +185,8 @@ Keep each CLI's pane and one-shot argv in one adapter, pinned by golden tests. L
 
 2026-11-19: Sol upgraded from gpt-6.1-sol to gpt-6.2-sol; Terra stays gpt-6.1-terra.
 
+2026-11-19: claude-high-m moved from opus-5.5-medium to fable-5.2-medium (CLI id claude-fable-5-2, effort medium). Claude Code 2.1.319 prints an unrecognized_model notice for this id but the API serves it.
+
 ## D21. Claude models named like GPT and Gemini (2026-11-03)
 
 Claude manifest ids read `opus-5.5-medium` and `sonnet-5.5-medium`: family, version and effort joined with `-`, key effort empty (as for Gemini). The Claude CLI accepts none of this directly. Verified live: `--model opus-5.5-medium` is an unknown model, and `--model claude-opus-5.5` silently resolves to Opus 5, which is wrong. The correct form is `--model claude-opus-5-5 --effort medium`.
