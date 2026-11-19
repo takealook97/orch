@@ -29,6 +29,7 @@ Delegation
                                         ask/do/test: flags first; the text starts at the first
                                         non-flag argument (use -- before text that starts with -)
 	orch models [--markdown|--json]         seven canonical keys (codex-medium-h: deprecated Luna alias)
+  orch models refresh [--dry-run] [--repo DIR]  probe newest CLI-listed ids, update models.yaml, commit, push, reinstall
   orch stats [--since 168h] [--json]     read-only local task, pane and Head statistics
   orch contract new <name> --role R --model K [--run ID]
            [--reviews AUTHOR --diff BASE..HEAD [--mech TASK|PATH] [--focus TEXT] [--cwd REPO]]
@@ -197,6 +198,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHook(rest[0], stdin, stdout, stderr)
 
 	case "models":
+		if len(rest) > 0 && rest[0] == "refresh" {
+			return modelsRefreshCommand(rest[1:], stdout, stderr)
+		}
 		markdown := fs.Bool("markdown", false, "print the embedded catalog as Markdown")
 		jsonOutput := fs.Bool("json", false, "print the resolved catalog as JSON")
 		pos, err := parse(fs, rest)
