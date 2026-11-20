@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>orch run 보고서 · {{.Run.ID}}</title>
+<link rel="icon" href="data:,">
+<style>
+{{.TokensCSS}}
+{{.ReportCSS}}
+</style>
+</head>
+<body>
+<a class="skip" href="#document">본문으로 바로가기</a>
+<main id="document" class="sheet" tabindex="-1">
+<header>
+<div class="title"><p class="eyebrow">orch run 보고서 · {{.Run.ID}}</p><h1>{{.Title}}</h1><p class="badge-row"><span class="badge st-{{.RunClass}}">{{.Status}}</span></p></div>
+<dl class="metadata">
+<div><dt>일시</dt><dd>{{.DateRange}}</dd></div>
+<div><dt>총 소요</dt><dd>{{.Wall}}</dd></div>
+</dl>
+</header>
+{{if .Final.Present}}<section class="conclusion card-{{.RunClass}}" aria-labelledby="conclusion"><h2 id="conclusion">결론</h2>{{range .Conclusion}}<p>{{.}}</p>{{end}}</section>
+{{else}}<section class="conclusion card-neutral" aria-labelledby="conclusion"><h2 id="conclusion">결론</h2><p>Head 최종 보고 없음 — 진행 상황만 표시합니다.</p></section>
+{{end}}<section aria-labelledby="s02">
+<h2 id="s02">주요 지표</h2>
+<dl class="kpis kpis-{{.KPICols}}">{{range .KPIs}}<div><dt>{{.Label}}</dt><dd>{{.Value}}{{if .Unit}} <small>{{.Unit}}</small>{{end}}</dd></div>{{end}}</dl>
+</section>
+{{range .Blocks}}<section class="final-block card kind-{{.Kind}}">
+<header class="card-head"><h2>{{.Heading}}</h2>{{if .Label}}<span class="kind-label">{{.Label}}</span>{{end}}</header>
+<div class="card-body">
+{{if eq .Kind "checklist"}}{{if .Text}}<p class="intro">{{.Text}}</p>{{end}}<ul class="checks">{{range .Views}}<li class="{{if .Checked}}is-checked{{end}}"><span class="box st-{{if .Checked}}done{{else}}neutral{{end}}" role="img" aria-label="{{if .Checked}}확인함{{else}}확인 전{{end}}">{{if .Checked}}✓{{end}}</span><span>{{.Text}}</span></li>{{end}}</ul>
+{{else if eq .Kind "risks"}}{{if .Text}}<p class="intro">{{.Text}}</p>{{end}}<ul class="risks">{{range .Views}}<li><span class="badge st-{{.Class}}">{{.Label}}</span><span>{{.Text}}</span></li>{{end}}</ul>
+{{else if eq .Kind "table"}}{{if .Text}}<p class="intro">{{.Text}}</p>{{end}}<div class="card-table"><table><thead><tr>{{range .Header}}<th>{{.}}</th>{{end}}</tr></thead><tbody>{{range .Rows}}<tr>{{range .}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody></table></div>
+{{else if eq .Kind "list"}}<ul class="dots">{{range .Views}}<li>{{.Text}}</li>{{end}}</ul>
+{{else}}<div class="body">{{.TextHTML}}</div>
+{{end}}</div>
+</section>
+{{end}}{{if .ShowTimeline}}<section aria-labelledby="progress">
+<h2 id="progress">진행</h2>
+{{.Timeline}}
+</section>
+{{end}}{{if .Full}}<section class="appendix" aria-labelledby="appendix">
+<h2 id="appendix">실행 기록</h2>
+<section aria-labelledby="s02a">
+<h3 id="s02a">주요 지표</h3>
+<dl class="kpis kpis-{{.FullKPICols}}">{{range .FullKPIs}}<div><dt>{{.Label}}</dt><dd>{{.Value}}{{if .Unit}} <small>{{.Unit}}</small>{{end}}</dd></div>{{end}}</dl>
+</section>
+<section aria-labelledby="s03">
+<h3 id="s03"><span class="section-number">01</span>요청</h3>
+<div class="body">{{.Request}}</div>
+</section>
+<section aria-labelledby="s04">
+<h3 id="s04"><span class="section-number">02</span>수용 기준</h3>
+<div class="body">{{.Acceptance}}</div>
+</section>
+<section aria-labelledby="s05">
+<h3 id="s05"><span class="section-number">03</span>Head 결정</h3>
+<div class="body">{{.Decisions}}</div>
+</section>
+<section aria-labelledby="s06">
+<h3 id="s06"><span class="section-number">04</span>작업 타임라인</h3>
+{{if .ShowTimeline}}<p class="note">타임라인 차트는 위 진행 항목과 같습니다.</p>{{else}}{{.Timeline}}{{end}}
+<p class="note">막대 무늬: 완료=채움 · 실패=사선 · 막힘/부분 완료=외곽선 · 진행 중=점선 외곽선 · 기타=옅은 채움. 상태는 오른쪽 글자로도 표시합니다.</p>
+</section>
+<section aria-labelledby="s07">
+<h3 id="s07"><span class="section-number">05</span>작업</h3>
+<div class="body">{{.Work}}</div>
+</section>
+<section aria-labelledby="s08">
+<h3 id="s08"><span class="section-number">06</span>키별 소요</h3>
+{{.ByKey}}
+</section>
+<section aria-labelledby="s09">
+<h3 id="s09"><span class="section-number">07</span>검증 결과</h3>
+<div class="body">{{.Findings}}</div>
+</section>
+<section aria-labelledby="s10">
+<h3 id="s10"><span class="section-number">08</span>이벤트</h3>
+<div class="body">{{.Events}}</div>
+</section>
+</section>
+{{end}}<footer class="document-footer"><span>orch run 보고서</span><span>{{.Run.ID}}</span></footer>
+</main>
+</body>
+</html>

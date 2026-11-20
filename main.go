@@ -31,6 +31,7 @@ Delegation
 	orch models [--markdown|--json]         seven canonical keys (codex-medium-h: deprecated Luna alias)
   orch models refresh [--dry-run] [--repo DIR]  probe newest ids; commit and push from a temp worktree, then update
   orch stats [--since 168h] [--json]     read-only local task, pane and Head statistics
+  orch report [--run ID|--for-terminal T] [--json|--html [--open]] [--full]  concise run report: report.md (default), JSON, or HTML in the run dir; --full appends the run record
   orch contract new <name> --role R --model K [--run ID]
            [--reviews AUTHOR --diff BASE..HEAD [--mech TASK|PATH] [--focus TEXT] [--cwd REPO]]
   orch spawn --model K --name N --role R [--purpose P] [--reviews a,b] [--author-family head|openai|anthropic|google]
@@ -159,7 +160,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	cmd, rest := args[0], args[1:]
 	// A worker may only read: every command that changes runs or panes is Head-only.
-	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "recall", "stats"}, cmd) ||
+	readOnly := contains1([]string{"hook", "models", "doctor", "playbook", "help", "install", "status", "checklist", "recall", "stats", "report"}, cmd) ||
 		(cmd == "goal" && len(rest) > 0 && (rest[0] == "status" || rest[0] == "check")) ||
 		(cmd == "run" && len(rest) > 0 && rest[0] == "list") ||
 		(cmd == "dag" && len(rest) > 0 && (rest[0] == "check" || rest[0] == "status"))
@@ -183,6 +184,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "stats":
 		return statsCommand(rest, stdout)
+	case "report":
+		return reportCommand(rest, stdout, stderr)
 	case "measure":
 		return failIf(fail, measurementCommand(rest, stdin, stdout))
 	case "uninstall":
@@ -367,6 +370,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				return fail(err)
 			}
 			fmt.Fprintf(stdout, "run %s ended; removal of all recorded panes confirmed\n", id)
+			writeRunEndReport(id, stdout, stderr)
 			return 0
 		case "list":
 			runs, err := allRuns()

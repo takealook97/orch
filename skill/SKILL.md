@@ -82,4 +82,6 @@ Keep panes across active-goal turns. Close finished or stalled/unneeded owned wo
 
 At task/goal completion, failure, cancellation or early exit, call `orch run end` and report its removal confirmation. Report retained worktrees and their reason; do not remove unmerged/foreign worktrees. Read [advanced procedures — cleanup](references/advanced.md) before recovering orphaned runs or worktrees.
 
+Before `orch run end` in a light or higher run, write the Head final report to `<run>/final.md` (same content as the chat report; Korean for a Korean user). Use `# title`, then `## 결론`, `## 한 일`, `## 검증`, `## 남은 위험` (`- [높음|중간|낮음] ...`), `## 확인할 것` (`- [ ] ...`); other headings are allowed. Keep it to conclusion first (1~3 sentences the user can act on alone), one page and two pages at most (~60 lines), at most 5 bullets per section, verification as outcomes only; do not include per-worker progress, review rounds, model or pane details. `orch run end` writes the concise `report.html` from it (`orch report --full` adds the run record), the cockpit Report view shows it, and it warns on stderr when final.md is missing or longer than 80 lines.
+
 Report mode, keys/fallbacks/escalations, confirmed defects and fixes, plausible risks, unknowns and mechanical evidence. A successful technical review alone is insufficient for acceptance.

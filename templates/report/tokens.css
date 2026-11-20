@@ -1,0 +1,173 @@
+/* source: deepeet design system f98b6ac tokens/tokens.css */
+:root {
+  --color-black: #000000;
+  --color-white: #FFFFFF;
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f5f5f5;
+  --color-neutral-200: #e5e5e5;
+  --color-neutral-300: #d4d4d4;
+  --color-neutral-400: #a3a3a3;
+  --color-neutral-500: #737373;
+  --color-neutral-600: #525252;
+  --color-neutral-700: #404040;
+  --color-neutral-800: #262626;
+  --color-neutral-900: #171717;
+  --color-neutral-950: #0a0a0a;
+  --color-status-success: #404040;
+  --color-status-warning: #525252;
+  --color-status-danger: #262626;
+  --color-status-info: #737373;
+
+  --spacing-0: 0;
+  --spacing-1: 0.25rem;
+  --spacing-2: 0.5rem;
+  --spacing-3: 0.75rem;
+  --spacing-4: 1rem;
+  --spacing-5: 1.25rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
+  --spacing-10: 2.5rem;
+  --spacing-12: 3rem;
+  --spacing-16: 4rem;
+  --spacing-20: 5rem;
+  --spacing-24: 6rem;
+
+  --radius-none: 0;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 9999px;
+
+  --typography-family-sans: Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --typography-family-serif: Georgia, 'Times New Roman', serif;
+  --typography-family-numeric: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  --typography-family-mono: Inter, 'SFMono-Regular', Consolas, monospace;
+  --typography-size-xs: 0.75rem;
+  --typography-size-sm: 0.875rem;
+  --typography-size-md: 1rem;
+  --typography-size-lg: 1.125rem;
+  --typography-size-xl: 1.25rem;
+  --typography-size-2xl: 1.5rem;
+  --typography-weight-regular: 400;
+  --typography-weight-medium: 500;
+  --typography-weight-semibold: 600;
+  --typography-weight-bold: 700;
+  --typography-line-height-tight: 1.2;
+  --typography-line-height-normal: 1.5;
+  --typography-line-height-relaxed: 1.7;
+
+  --shadow-none: none;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.12);
+  --shadow-md: 0 4px 8px rgb(0 0 0 / 0.16);
+  --shadow-lg: 0 12px 24px rgb(0 0 0 / 0.2);
+
+  --semantic-light-surface-canvas: var(--color-white);
+  --semantic-light-surface-raised: var(--color-neutral-50);
+  --semantic-light-surface-inverted: var(--color-black);
+  --semantic-light-text-primary: var(--color-black);
+  --semantic-light-text-secondary: var(--color-neutral-600);
+  --semantic-light-text-inverse: var(--color-white);
+  --semantic-light-border-default: var(--color-neutral-300);
+  --semantic-light-border-strong: var(--color-neutral-500);
+  --semantic-light-status-success: var(--color-neutral-700);
+  --semantic-light-status-warning: var(--color-neutral-600);
+  --semantic-light-status-danger: var(--color-neutral-800);
+  --semantic-light-status-info: var(--color-neutral-500);
+  --semantic-light-disabled-surface: var(--color-neutral-100);
+  --semantic-light-disabled-text: var(--color-neutral-400);
+  --semantic-light-disabled-border: var(--color-neutral-200);
+  --semantic-light-focus: var(--color-black);
+
+  --semantic-dark-surface-canvas: var(--color-black);
+  --semantic-dark-surface-raised: var(--color-neutral-900);
+  --semantic-dark-surface-inverted: var(--color-white);
+  --semantic-dark-text-primary: var(--color-white);
+  --semantic-dark-text-secondary: var(--color-neutral-400);
+  --semantic-dark-text-inverse: var(--color-black);
+  --semantic-dark-border-default: var(--color-neutral-700);
+  --semantic-dark-border-strong: var(--color-neutral-400);
+  --semantic-dark-status-success: var(--color-neutral-300);
+  --semantic-dark-status-warning: var(--color-neutral-400);
+  --semantic-dark-status-danger: var(--color-neutral-100);
+  --semantic-dark-status-info: var(--color-neutral-500);
+  --semantic-dark-disabled-surface: var(--color-neutral-800);
+  --semantic-dark-disabled-text: var(--color-neutral-500);
+  --semantic-dark-disabled-border: var(--color-neutral-700);
+  --semantic-dark-focus: var(--color-white);
+
+  --surface-canvas: var(--semantic-light-surface-canvas);
+  --surface-raised: var(--semantic-light-surface-raised);
+  --surface-inverted: var(--semantic-light-surface-inverted);
+  --text-primary: var(--semantic-light-text-primary);
+  --text-secondary: var(--semantic-light-text-secondary);
+  --text-inverse: var(--semantic-light-text-inverse);
+  --border-default: var(--semantic-light-border-default);
+  --border-strong: var(--semantic-light-border-strong);
+  --status-success: var(--semantic-light-status-success);
+  --status-warning: var(--semantic-light-status-warning);
+  --status-danger: var(--semantic-light-status-danger);
+  --status-info: var(--semantic-light-status-info);
+  --disabled-surface: var(--semantic-light-disabled-surface);
+  --disabled-text: var(--semantic-light-disabled-text);
+  --disabled-border: var(--semantic-light-disabled-border);
+  --focus: var(--semantic-light-focus);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-canvas: var(--semantic-dark-surface-canvas);
+    --surface-raised: var(--semantic-dark-surface-raised);
+    --surface-inverted: var(--semantic-dark-surface-inverted);
+    --text-primary: var(--semantic-dark-text-primary);
+    --text-secondary: var(--semantic-dark-text-secondary);
+    --text-inverse: var(--semantic-dark-text-inverse);
+    --border-default: var(--semantic-dark-border-default);
+    --border-strong: var(--semantic-dark-border-strong);
+    --status-success: var(--semantic-dark-status-success);
+    --status-warning: var(--semantic-dark-status-warning);
+    --status-danger: var(--semantic-dark-status-danger);
+    --status-info: var(--semantic-dark-status-info);
+    --disabled-surface: var(--semantic-dark-disabled-surface);
+    --disabled-text: var(--semantic-dark-disabled-text);
+    --disabled-border: var(--semantic-dark-disabled-border);
+    --focus: var(--semantic-dark-focus);
+  }
+}
+
+[data-theme="light"] {
+  --surface-canvas: var(--semantic-light-surface-canvas);
+  --surface-raised: var(--semantic-light-surface-raised);
+  --surface-inverted: var(--semantic-light-surface-inverted);
+  --text-primary: var(--semantic-light-text-primary);
+  --text-secondary: var(--semantic-light-text-secondary);
+  --text-inverse: var(--semantic-light-text-inverse);
+  --border-default: var(--semantic-light-border-default);
+  --border-strong: var(--semantic-light-border-strong);
+  --status-success: var(--semantic-light-status-success);
+  --status-warning: var(--semantic-light-status-warning);
+  --status-danger: var(--semantic-light-status-danger);
+  --status-info: var(--semantic-light-status-info);
+  --disabled-surface: var(--semantic-light-disabled-surface);
+  --disabled-text: var(--semantic-light-disabled-text);
+  --disabled-border: var(--semantic-light-disabled-border);
+  --focus: var(--semantic-light-focus);
+}
+
+[data-theme="dark"] {
+  --surface-canvas: var(--semantic-dark-surface-canvas);
+  --surface-raised: var(--semantic-dark-surface-raised);
+  --surface-inverted: var(--semantic-dark-surface-inverted);
+  --text-primary: var(--semantic-dark-text-primary);
+  --text-secondary: var(--semantic-dark-text-secondary);
+  --text-inverse: var(--semantic-dark-text-inverse);
+  --border-default: var(--semantic-dark-border-default);
+  --border-strong: var(--semantic-dark-border-strong);
+  --status-success: var(--semantic-dark-status-success);
+  --status-warning: var(--semantic-dark-status-warning);
+  --status-danger: var(--semantic-dark-status-danger);
+  --status-info: var(--semantic-dark-status-info);
+  --disabled-surface: var(--semantic-dark-disabled-surface);
+  --disabled-text: var(--semantic-dark-disabled-text);
+  --disabled-border: var(--semantic-dark-disabled-border);
+  --focus: var(--semantic-dark-focus);
+}

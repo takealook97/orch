@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -34,6 +35,7 @@ func headExecutionReason(in hookInput) string {
 			if !filepath.IsAbs(p) && !strings.HasPrefix(p, "~/") {
 				p = filepath.Join(in.Cwd, p)
 			}
+			lexical := p
 			p = goalPath(p)
 			if filepath.Base(p) == "goal.md" {
 				if g, err := newestGoal(headID(), "draft"); err == nil && g != nil && p == goalPath(filepath.Join(g.dir(), "goal.md")) {
@@ -47,8 +49,11 @@ func headExecutionReason(in hookInput) string {
 			if err != nil || strings.HasPrefix(rel, "..") {
 				return reason
 			}
-			if !(strings.HasPrefix(rel, "contracts"+string(filepath.Separator)) || rel == "dag.yaml" || rel == "acceptance.md" || rel == "decisions.md" || rel == "findings.md") {
+			if !(strings.HasPrefix(rel, "contracts"+string(filepath.Separator)) || rel == "dag.yaml" || rel == "acceptance.md" || rel == "decisions.md" || rel == "findings.md" || rel == finalFileName) {
 				return reason
+			}
+			if rel == finalFileName && isSymlink(lexical) {
+				return reason // a link (even a dangling one) could redirect the write outside the run
 			}
 		}
 		if !goalShellTool.MatchString(in.tool()) {
@@ -161,4 +166,14 @@ func inspectionProgramExecution(prefix, body string) bool {
 		}
 	}
 	return false
+}
+
+// isSymlink reports whether path itself (not its target) is a symbolic link.
+func isSymlink(path string) bool {
+	if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, path[2:])
+	}
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
 }
